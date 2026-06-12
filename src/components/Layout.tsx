@@ -11,6 +11,7 @@ import { LionOverlay } from './LionOverlay'
 import { ScrollWatcher } from './ScrollWatcher'
 import { CommandPalette } from './CommandPalette'
 import { Onboarding } from './Onboarding'
+import { PresenceTracker } from './PresenceTracker'
 import { useNotificationEngine } from '../hooks/useNotifications'
 import { cn, levelForXp } from '../lib/utils'
 
@@ -47,6 +48,7 @@ export function Layout() {
       <LionOverlay />
       <CommandPalette />
       <Onboarding />
+      <PresenceTracker />
 
       {/* ---- desktop sidebar ---- */}
       <aside className="fixed left-4 top-4 bottom-4 z-40 hidden w-60 flex-col lg:flex">

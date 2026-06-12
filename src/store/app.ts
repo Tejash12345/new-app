@@ -25,6 +25,8 @@ type AppState = {
   activeScroll: ActiveScroll
   startScroll: (s: NonNullable<ActiveScroll>) => void
   stopScroll: () => void
+  onlineIds: string[]
+  setOnlineIds: (ids: string[]) => void
 }
 
 const prefersDark =
@@ -50,4 +52,6 @@ export const useApp = create<AppState>((set) => ({
   activeScroll: null,
   startScroll: (s) => set({ activeScroll: s }),
   stopScroll: () => set({ activeScroll: null }),
+  onlineIds: [],
+  setOnlineIds: (ids) => set({ onlineIds: ids }),
 }))

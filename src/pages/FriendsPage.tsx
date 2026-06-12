@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Search, UserPlus, Check, X, Flame, UserMinus, Clock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
+import { useApp } from '../store/app'
 import { Button, Empty, GlassCard, Input, Page, SectionTitle } from '../components/ui'
 
 type SearchRow = { id: string; full_name: string; xp: number; study_streak: number }
@@ -24,11 +25,16 @@ function avatarColor(id: string) {
   return colors[Math.abs(h) % colors.length]
 }
 
-function Avatar({ id, name }: { id: string; name: string }) {
+function Avatar({ id, name, online }: { id: string; name: string; online?: boolean }) {
   return (
-    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-bold text-white"
-      style={{ background: avatarColor(id) }}>
-      {(name || '?').slice(0, 1).toUpperCase()}
+    <div className="relative shrink-0">
+      <div className="flex h-11 w-11 items-center justify-center rounded-full text-base font-bold text-white"
+        style={{ background: avatarColor(id) }}>
+        {(name || '?').slice(0, 1).toUpperCase()}
+      </div>
+      {online && (
+        <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />
+      )}
     </div>
   )
 }
@@ -36,6 +42,7 @@ function Avatar({ id, name }: { id: string; name: string }) {
 export function FriendsPage() {
   const { user } = useAuth()
   const qc = useQueryClient()
+  const onlineIds = useApp((s) => s.onlineIds)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchRow[]>([])
   const [searching, setSearching] = useState(false)
@@ -78,6 +85,7 @@ export function FriendsPage() {
   const accepted = friends.filter((f) => f.status === 'accepted')
   const incoming = friends.filter((f) => f.status === 'pending' && f.direction === 'incoming')
   const outgoing = friends.filter((f) => f.status === 'pending' && f.direction === 'outgoing')
+  const onlineCount = accepted.filter((f) => onlineIds.includes(f.friend_id)).length
 
   async function sendRequest(addresseeId: string) {
     if (!user) return
@@ -170,30 +178,49 @@ export function FriendsPage() {
 
           {/* my friends */}
           <GlassCard>
-            <SectionTitle>My friends ({accepted.length})</SectionTitle>
+            <SectionTitle
+              right={
+                onlineCount > 0 ? (
+                  <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" /> {onlineCount} online
+                  </span>
+                ) : undefined
+              }
+            >
+              My friends ({accepted.length})
+            </SectionTitle>
             {accepted.length === 0 ? (
               <Empty emoji="🤝" text="No friends yet. Search for students and send a request!" />
             ) : (
               <div className="space-y-2">
                 {accepted
                   .slice()
-                  .sort((a, b) => b.xp - a.xp)
-                  .map((f) => (
-                    <div key={f.friendship_id} className="group flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                      <Avatar id={f.friend_id} name={f.full_name} />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold text-slate-900 dark:text-white">{f.full_name}</div>
-                        <div className="flex items-center gap-2 text-xs text-slate-500">
-                          <span>⭐ {f.xp} XP</span>
-                          <span className="flex items-center gap-0.5"><Flame size={11} /> {f.study_streak} day streak</span>
+                  .sort((a, b) => {
+                    const ao = onlineIds.includes(a.friend_id) ? 1 : 0
+                    const bo = onlineIds.includes(b.friend_id) ? 1 : 0
+                    if (ao !== bo) return bo - ao
+                    return b.xp - a.xp
+                  })
+                  .map((f) => {
+                    const online = onlineIds.includes(f.friend_id)
+                    return (
+                      <div key={f.friendship_id} className="group flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
+                        <Avatar id={f.friend_id} name={f.full_name} online={online} />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-semibold text-slate-900 dark:text-white">{f.full_name}</div>
+                          <div className="flex items-center gap-2 text-xs text-slate-500">
+                            {online
+                              ? <span className="font-semibold text-emerald-500">● Online now</span>
+                              : <><span>⭐ {f.xp} XP</span><span className="flex items-center gap-0.5"><Flame size={11} /> {f.study_streak}</span></>}
+                          </div>
                         </div>
+                        <button onClick={() => removeFriendship(f.friendship_id)}
+                          className="rounded-full p-2 text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-500">
+                          <UserMinus size={16} />
+                        </button>
                       </div>
-                      <button onClick={() => removeFriendship(f.friendship_id)}
-                        className="rounded-full p-2 text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-500">
-                        <UserMinus size={16} />
-                      </button>
-                    </div>
-                  ))}
+                    )
+                  })}
               </div>
             )}
           </GlassCard>
