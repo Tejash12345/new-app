@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { Send, Trash2, Users, ArrowLeft, MessageCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { getSocket } from '../lib/socket'
 import { useAuth } from '../hooks/useAuth'
 import { useOnlineCheck } from '../hooks/useOnline'
 import { GlassCard, Page, Input, Button, Empty } from '../components/ui'
@@ -144,6 +145,37 @@ function FriendsChat() {
     return () => { supabase.removeChannel(inbox) }
   }, [user?.id])
 
+  // socket.io fast path: when the chat server is configured, messages, typing
+  // and deletes arrive through it instantly (database delivery stays as backup)
+  useEffect(() => {
+    if (!user) return
+    const s = getSocket()
+    if (!s) return
+    const onDm = (m: DMessage) => {
+      if (m.recipient_id !== user.id) return
+      if (activeIdRef.current === m.sender_id) {
+        setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
+      } else {
+        setUnread((u) => ({ ...u, [m.sender_id]: (u[m.sender_id] ?? 0) + 1 }))
+      }
+    }
+    const onDel = (p: { id: string }) => setMessages((prev) => prev.filter((x) => x.id !== p.id))
+    const onTyping = (p: { from: string }) => {
+      if (activeIdRef.current !== p.from) return
+      setTyping(true)
+      if (typingTimer.current) clearTimeout(typingTimer.current)
+      typingTimer.current = setTimeout(() => setTyping(false), 2500)
+    }
+    s.on('dm', onDm)
+    s.on('dm:del', onDel)
+    s.on('typing', onTyping)
+    return () => {
+      s.off('dm', onDm)
+      s.off('dm:del', onDel)
+      s.off('typing', onTyping)
+    }
+  }, [user?.id])
+
   // load friends + refresh periodically so last_seen (online) stays current
   useEffect(() => {
     if (!user) return
@@ -226,13 +258,15 @@ function FriendsChat() {
     }
     const real = data as DMessage
     setMessages((m) => m.map((x) => (x.id === optimistic.id ? real : x)))
-    // instant push to the other side
+    // instant push to the other side — socket.io first, channel broadcast too
+    getSocket()?.emit('dm', real)
     channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
   }
 
   async function remove(id: string) {
     setMessages((m) => m.filter((x) => x.id !== id))
     await supabase.from('direct_messages').delete().eq('id', id)
+    if (active) getSocket()?.emit('dm:del', { id, to: active.friend_id })
     channelRef.current?.send({ type: 'broadcast', event: 'del', payload: { id } })
   }
 
@@ -379,8 +413,9 @@ function FriendsChat() {
                 onChange={(e) => {
                   setInput(e.target.value)
                   const now = Date.now()
-                  if (user && now - lastTypingSent.current > 1200) {
+                  if (user && active && now - lastTypingSent.current > 1200) {
                     lastTypingSent.current = now
+                    getSocket()?.emit('typing', { to: active.friend_id })
                     channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { from: user.id } })
                   }
                 }}
@@ -438,6 +473,23 @@ function RoomsChat() {
     return () => { cancelled = true; supabase.removeChannel(channel) }
   }, [room, user?.id, myName])
 
+  // socket.io fast path for rooms
+  useEffect(() => {
+    if (!user) return
+    const s = getSocket()
+    if (!s) return
+    s.emit('room:join', room)
+    const onMsg = (m: RoomMessage) => {
+      if (m.room !== room) return
+      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
+    }
+    s.on('room:msg', onMsg)
+    return () => {
+      s.emit('room:leave', room)
+      s.off('room:msg', onMsg)
+    }
+  }, [room, user?.id])
+
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   async function send() {
@@ -454,6 +506,7 @@ function RoomsChat() {
     if (data) {
       const real = data as RoomMessage
       setMessages((m) => m.map((x) => (x.id === optimistic.id ? real : x)))
+      getSocket()?.emit('room:msg', { room, msg: real })
       channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
     }
   }
