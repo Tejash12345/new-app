@@ -4,8 +4,12 @@
 alter table public.profiles
   add column if not exists last_seen timestamptz;
 
+-- drop first: return type (columns) changed, so CREATE OR REPLACE isn't allowed
+drop function if exists public.my_friends();
+drop function if exists public.suggested_users();
+
 -- my_friends now also returns last_seen so the client can show accurate status
-create or replace function public.my_friends()
+create function public.my_friends()
 returns table (
   friendship_id uuid,
   friend_id uuid,
@@ -33,7 +37,7 @@ $$;
 grant execute on function public.my_friends() to authenticated;
 
 -- people you can add (not yourself, not already connected), most recently active first
-create or replace function public.suggested_users()
+create function public.suggested_users()
 returns table (id uuid, full_name text, email text, xp int, study_streak int, last_seen timestamptz)
 language sql security definer set search_path = public as $$
   select p.id, coalesce(p.full_name, '') as full_name, p.email, p.xp, p.study_streak, p.last_seen
