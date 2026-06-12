@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, CalendarDays, CheckCircle2, Timer, Shield,
-  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users,
+  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download,
 } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
@@ -27,6 +27,7 @@ const NAV = [
   { to: '/chat', label: 'Community', icon: MessageCircle },
   { to: '/friends', label: 'Friends', icon: Users },
   { to: '/report', label: 'Report', icon: FileText },
+  { to: '/install', label: 'Get App', icon: Download },
 ]
 
 export function Layout() {
