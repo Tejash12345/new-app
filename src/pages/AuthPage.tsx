@@ -17,15 +17,40 @@ export function AuthPage() {
     setMsg(null)
     try {
       if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email, password,
           options: { data: { full_name: name } },
         })
-        if (error) throw error
+        if (error) {
+          // explicit duplicate error (when email confirmation is off)
+          if (/already|registered|exists/i.test(error.message)) {
+            setMsg({ kind: 'err', text: 'This email already has an account. Please log in instead.' })
+            setMode('login')
+            return
+          }
+          throw error
+        }
+        // when email confirmation is on, Supabase hides duplicates by returning
+        // a user with an empty identities array — detect and handle that
+        if (data.user && (data.user.identities?.length ?? 0) === 0) {
+          setMsg({ kind: 'err', text: 'This email already has an account. Please log in instead.' })
+          setMode('login')
+          return
+        }
         setMsg({ kind: 'ok', text: 'Account created! Check your email to confirm, then log in.' })
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password })
-        if (error) throw error
+        if (error) {
+          if (/invalid login|credentials/i.test(error.message)) {
+            setMsg({ kind: 'err', text: 'Wrong email or password. Try again, or sign up if you are new.' })
+            return
+          }
+          if (/not confirmed|confirm/i.test(error.message)) {
+            setMsg({ kind: 'err', text: 'Please confirm your email first — check your inbox for the link.' })
+            return
+          }
+          throw error
+        }
       }
     } catch (err: unknown) {
       setMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Something went wrong' })
