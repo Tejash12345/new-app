@@ -267,6 +267,26 @@ export function Layout() {
                 <span>⭐ {profile?.xp ?? 0} XP</span>
                 <span>Level {level}</span>
               </div>
+
+              {/* all pages grid */}
+              <div className="my-2 grid grid-cols-4 gap-1.5 px-1">
+                {NAV.map(({ to, label, icon: Icon }) => (
+                  <button key={to}
+                    onClick={() => { setMenuOpen(false); navigate(to) }}
+                    className={cn(
+                      'flex flex-col items-center gap-1 rounded-2xl py-2.5 text-[10px] font-semibold transition',
+                      location.pathname === to
+                        ? 'bg-gradient-to-br from-brand-500 to-purple-500 text-white'
+                        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-500/10',
+                    )}>
+                    <Icon size={18} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mx-2 my-1 h-px bg-slate-200/60 dark:bg-white/10" />
+
               {profile?.role === 'admin' && (
                 <button onClick={() => { setMenuOpen(false); navigate('/admin') }}
                   className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-500/10">
