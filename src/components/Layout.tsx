@@ -43,7 +43,7 @@ export function Layout() {
   const initial = (profile?.full_name || profile?.email || '?').slice(0, 1).toUpperCase()
 
   return (
-    <div className="aurora min-h-screen">
+    <div className="aurora min-h-screen overflow-x-hidden">
       <ScrollWatcher />
       <LionOverlay />
       <CommandPalette />
@@ -210,8 +210,8 @@ export function Layout() {
       </header>
 
       {/* ---- content ---- */}
-      <main className="pb-28 lg:pb-8 lg:pl-68" key={location.pathname}>
-        <div className="lg:pl-4">
+      <main className="min-w-0 overflow-x-hidden pb-32 lg:pb-8 lg:pl-68" key={location.pathname}>
+        <div className="min-w-0 lg:pl-4">
           <Outlet />
         </div>
       </main>

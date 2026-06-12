@@ -85,7 +85,8 @@ export function FriendsPage() {
   const accepted = friends.filter((f) => f.status === 'accepted')
   const incoming = friends.filter((f) => f.status === 'pending' && f.direction === 'incoming')
   const outgoing = friends.filter((f) => f.status === 'pending' && f.direction === 'outgoing')
-  const onlineCount = accepted.filter((f) => onlineIds.includes(f.friend_id)).length
+  const onlineFriends = accepted.filter((f) => onlineIds.includes(f.friend_id))
+  const onlineCount = onlineFriends.length
 
   async function sendRequest(addresseeId: string) {
     if (!user) return
@@ -189,6 +190,21 @@ export function FriendsPage() {
             >
               My friends ({accepted.length})
             </SectionTitle>
+
+            {/* online-now strip — names of friends online right now */}
+            {onlineFriends.length > 0 && (
+              <div className="mb-3 flex gap-3 overflow-x-auto rounded-2xl bg-emerald-500/5 p-3">
+                {onlineFriends.map((f) => (
+                  <div key={f.friendship_id} className="flex w-16 shrink-0 flex-col items-center gap-1">
+                    <Avatar id={f.friend_id} name={f.full_name} online />
+                    <span className="w-full truncate text-center text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      {f.full_name.split(' ')[0]}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {accepted.length === 0 ? (
               <Empty emoji="🤝" text="No friends yet. Search for students and send a request!" />
             ) : (
