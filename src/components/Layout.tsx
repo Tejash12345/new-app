@@ -1,5 +1,6 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { useState } from 'react'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, CalendarDays, CheckCircle2, Timer, Shield,
   BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle,
@@ -31,9 +32,12 @@ export function Layout() {
   const { dark, toggleDark } = useApp()
   const { profile, signOut } = useAuth()
   const location = useLocation()
+  const navigate = useNavigate()
+  const [menuOpen, setMenuOpen] = useState(false)
   useNotificationEngine()
 
   const level = levelForXp(profile?.xp ?? 0)
+  const initial = (profile?.full_name || profile?.email || '?').slice(0, 1).toUpperCase()
 
   return (
     <div className="aurora min-h-screen">
@@ -132,8 +136,70 @@ export function Layout() {
             >
               {dark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold text-white">
-              {(profile?.full_name || profile?.email || '?').slice(0, 1).toUpperCase()}
+            {/* profile menu */}
+            <div className="relative">
+              <button
+                onClick={() => setMenuOpen((o) => !o)}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold text-white ring-2 ring-transparent transition hover:ring-brand-300"
+                aria-label="Profile menu"
+              >
+                {initial}
+              </button>
+
+              <AnimatePresence>
+                {menuOpen && (
+                  <div className="hidden lg:block">
+                    {/* tap-away backdrop */}
+                    <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+                    <motion.div
+                      initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                      transition={{ duration: 0.16 }}
+                      className="glass-strong absolute right-0 z-50 mt-2 w-60 overflow-hidden rounded-3xl p-2"
+                    >
+                      {/* identity */}
+                      <div className="flex items-center gap-3 rounded-2xl px-3 py-3">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-base font-bold text-white">
+                          {initial}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate font-bold text-slate-900 dark:text-white">
+                            {profile?.full_name || 'Student'}
+                          </div>
+                          <div className="truncate text-xs text-slate-500">{profile?.email}</div>
+                        </div>
+                      </div>
+
+                      <div className="mx-3 my-1 flex items-center justify-between rounded-2xl bg-amber-400/15 px-3 py-2 text-xs font-bold text-amber-600 dark:text-amber-300">
+                        <span>⭐ {profile?.xp ?? 0} XP</span>
+                        <span>Level {level}</span>
+                      </div>
+
+                      <div className="my-1 h-px bg-slate-200/60 dark:bg-white/10" />
+
+                      <button
+                        onClick={() => { setMenuOpen(false); navigate('/settings') }}
+                        className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-500/10"
+                      >
+                        <Settings size={17} /> Settings
+                      </button>
+                      <button
+                        onClick={() => { setMenuOpen(false); toggleDark() }}
+                        className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-500/10"
+                      >
+                        {dark ? <Sun size={17} /> : <Moon size={17} />} {dark ? 'Light mode' : 'Dark mode'}
+                      </button>
+                      <button
+                        onClick={() => { setMenuOpen(false); signOut() }}
+                        className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold text-rose-500 hover:bg-rose-500/10"
+                      >
+                        <LogOut size={17} /> Log out
+                      </button>
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </div>
@@ -164,18 +230,65 @@ export function Layout() {
               )}
             </NavLink>
           ))}
-          <NavLink to="/settings" className="flex flex-col items-center gap-0.5 px-2 py-1">
-            {({ isActive }) => (
-              <>
-                <div className={cn('rounded-2xl p-2', isActive ? 'bg-slate-400/20 dark:bg-white/15 text-slate-900 dark:text-white ring-1 ring-white/60 dark:ring-white/20' : 'text-slate-500 dark:text-slate-400')}>
-                  <Settings size={19} />
-                </div>
-                <span className="text-[9px] font-semibold text-slate-400">More</span>
-              </>
-            )}
-          </NavLink>
+          <button onClick={() => setMenuOpen(true)} className="flex flex-col items-center gap-0.5 px-2 py-1">
+            <div className="flex h-[35px] w-[35px] items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-bold text-white">
+              {initial}
+            </div>
+            <span className="text-[9px] font-semibold text-slate-400">Profile</span>
+          </button>
         </div>
       </nav>
+
+      {/* ---- mobile profile sheet ---- */}
+      <AnimatePresence>
+        {menuOpen && (
+          <div className="lg:hidden">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-sm"
+              onClick={() => setMenuOpen(false)}
+            />
+            <motion.div
+              initial={{ y: 320 }} animate={{ y: 0 }} exit={{ y: 320 }}
+              transition={{ type: 'spring', damping: 30, stiffness: 320 }}
+              className="glass-strong fixed inset-x-3 bottom-3 z-[61] rounded-3xl p-4"
+            >
+              <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
+              <div className="flex items-center gap-3 px-2 py-2">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-lg font-bold text-white">
+                  {initial}
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-lg font-bold text-slate-900 dark:text-white">{profile?.full_name || 'Student'}</div>
+                  <div className="truncate text-xs text-slate-500">{profile?.email}</div>
+                </div>
+              </div>
+              <div className="mx-2 my-2 flex items-center justify-between rounded-2xl bg-amber-400/15 px-4 py-2.5 text-sm font-bold text-amber-600 dark:text-amber-300">
+                <span>⭐ {profile?.xp ?? 0} XP</span>
+                <span>Level {level}</span>
+              </div>
+              {profile?.role === 'admin' && (
+                <button onClick={() => { setMenuOpen(false); navigate('/admin') }}
+                  className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-500/10">
+                  <Crown size={18} /> Admin
+                </button>
+              )}
+              <button onClick={() => { setMenuOpen(false); navigate('/settings') }}
+                className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-500/10">
+                <Settings size={18} /> Settings
+              </button>
+              <button onClick={() => { setMenuOpen(false); toggleDark() }}
+                className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-500/10">
+                {dark ? <Sun size={18} /> : <Moon size={18} />} {dark ? 'Light mode' : 'Dark mode'}
+              </button>
+              <button onClick={() => { setMenuOpen(false); signOut() }}
+                className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-rose-500 hover:bg-rose-500/10">
+                <LogOut size={18} /> Log out
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
