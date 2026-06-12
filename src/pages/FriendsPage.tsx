@@ -55,6 +55,11 @@ export function FriendsPage() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchRow[]>([])
   const [searching, setSearching] = useState(false)
+  const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null)
+  function notify(text: string, ok = true) {
+    setToast({ text, ok })
+    setTimeout(() => setToast(null), 3000)
+  }
   // tick so online status (from last_seen) re-evaluates as time passes
   const [, setTick] = useState(0)
   useEffect(() => {
@@ -65,7 +70,7 @@ export function FriendsPage() {
   const { data: friends = [] } = useQuery<FriendRow[]>({
     queryKey: ['friends', user?.id],
     enabled: !!user,
-    refetchInterval: 25_000,
+    refetchInterval: 15_000,
     queryFn: async () => {
       const { data, error } = await supabase.rpc('my_friends')
       if (error) throw error
@@ -100,7 +105,8 @@ export function FriendsPage() {
     if (q.length < 2) { setResults([]); return }
     setSearching(true)
     const t = setTimeout(async () => {
-      const { data } = await supabase.rpc('search_users', { q })
+      const { data, error } = await supabase.rpc('search_users', { q })
+      if (error) notify(`Search failed: ${error.message}`, false)
       setResults((data as SearchRow[]) ?? [])
       setSearching(false)
     }, 350)
@@ -117,20 +123,56 @@ export function FriendsPage() {
 
   async function sendRequest(addresseeId: string) {
     if (!user) return
-    await supabase.from('friendships').insert({ requester_id: user.id, addressee_id: addresseeId })
+    // RPC handles every case: mutual request -> instant friends, duplicate -> no-op
+    const { data, error } = await supabase.rpc('send_friend_request', { target: addresseeId })
+    if (error) {
+      // fallback for a database that hasn't run upgrade-7 yet
+      const missing = error.code === 'PGRST202' || /find the function/i.test(error.message)
+      if (missing) {
+        const { error: e2 } = await supabase
+          .from('friendships')
+          .insert({ requester_id: user.id, addressee_id: addresseeId })
+        if (e2) { notify(`Could not send request: ${e2.message}`, false); return }
+        notify('Friend request sent! ✓')
+      } else {
+        notify(`Could not send request: ${error.message}`, false)
+        return
+      }
+    } else if (data === 'accepted') {
+      notify('They already added you — you are now friends! 🎉')
+    } else if (data === 'pending') {
+      notify('Request already sent — waiting for them to accept.')
+    } else {
+      notify('Friend request sent! ✓')
+    }
     qc.invalidateQueries({ queryKey: ['friends', user.id] })
+    qc.invalidateQueries({ queryKey: ['suggested', user.id] })
   }
   async function accept(id: string) {
-    await supabase.from('friendships').update({ status: 'accepted' }).eq('id', id)
+    const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', id)
+    if (error) { notify(`Could not accept: ${error.message}`, false); return }
+    notify('Friend added! Say hi in Chat. 💬')
     qc.invalidateQueries({ queryKey: ['friends', user?.id] })
   }
   async function removeFriendship(id: string) {
-    await supabase.from('friendships').delete().eq('id', id)
+    const { error } = await supabase.from('friendships').delete().eq('id', id)
+    if (error) { notify(`Could not remove: ${error.message}`, false); return }
     qc.invalidateQueries({ queryKey: ['friends', user?.id] })
+    qc.invalidateQueries({ queryKey: ['suggested', user?.id] })
   }
 
   return (
     <Page title="Friends" subtitle="Connect with other students, cheer each other on, study together. 🦁">
+      {toast && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+          className={`fixed left-1/2 top-5 z-50 -translate-x-1/2 rounded-2xl px-5 py-3 text-sm font-semibold text-white shadow-xl ${
+            toast.ok ? 'bg-emerald-500' : 'bg-rose-500'
+          }`}
+        >
+          {toast.text}
+        </motion.div>
+      )}
       <div className="grid gap-5 lg:grid-cols-2">
         {/* find friends */}
         <GlassCard>

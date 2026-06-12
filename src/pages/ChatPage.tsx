@@ -82,9 +82,33 @@ function FriendsChat() {
   const [active, setActive] = useState<Friend | null>(null)
   const [messages, setMessages] = useState<DMessage[]>([])
   const [input, setInput] = useState('')
+  const [unread, setUnread] = useState<Record<string, number>>({})
+  const [sendError, setSendError] = useState<string | null>(null)
   const [, setTick] = useState(0)
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const activeIdRef = useRef<string | null>(null)
+  useEffect(() => { activeIdRef.current = active?.friend_id ?? null }, [active?.friend_id])
+
+  // inbox: every incoming DM is delivered straight from the database, even if
+  // this thread (or no thread) is open — no need for the sender's broadcast
+  useEffect(() => {
+    if (!user) return
+    const inbox = supabase
+      .channel(`dm-inbox-${user.id}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'direct_messages', filter: `recipient_id=eq.${user.id}` },
+        (payload) => {
+          const m = payload.new as DMessage
+          if (activeIdRef.current === m.sender_id) {
+            setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
+          } else {
+            setUnread((u) => ({ ...u, [m.sender_id]: (u[m.sender_id] ?? 0) + 1 }))
+          }
+        })
+      .subscribe()
+    return () => { supabase.removeChannel(inbox) }
+  }, [user?.id])
 
   // load friends + refresh periodically so last_seen (online) stays current
   useEffect(() => {
@@ -93,7 +117,7 @@ function FriendsChat() {
       setFriends(((data as Friend[]) ?? []).filter((f) => f.status === 'accepted'))
     })
     load()
-    const t = setInterval(load, 25_000)
+    const t = setInterval(load, 15_000)
     const tick = setInterval(() => setTick((n) => n + 1), 20_000)
     return () => { clearInterval(t); clearInterval(tick) }
   }, [user?.id])
@@ -138,6 +162,7 @@ function FriendsChat() {
     const body = input.trim()
     if (!body || !user || !active) return
     setInput('')
+    setSendError(null)
     const optimistic: DMessage = {
       id: `tmp-${Date.now()}`, sender_id: user.id, recipient_id: active.friend_id,
       body, created_at: new Date().toISOString(),
@@ -149,6 +174,12 @@ function FriendsChat() {
       .select().single()
     if (error) {
       setMessages((m) => m.filter((x) => x.id !== optimistic.id))
+      setInput(body) // give the text back so nothing is lost
+      setSendError(
+        /row-level security|policy/i.test(error.message)
+          ? `Not sent — you and ${fname(active)} need to be accepted friends first. Check the Friends page.`
+          : `Not sent: ${error.message}`,
+      )
       return
     }
     const real = data as DMessage
@@ -175,11 +206,21 @@ function FriendsChat() {
             <div className="space-y-1">
               {friends
                 .slice()
-                .sort((a, b) => (isOnline(b.last_seen) ? 1 : 0) - (isOnline(a.last_seen) ? 1 : 0))
+                .sort((a, b) => {
+                  const ub = (unread[b.friend_id] ?? 0) - (unread[a.friend_id] ?? 0)
+                  if (ub !== 0) return ub
+                  return (isOnline(b.last_seen) ? 1 : 0) - (isOnline(a.last_seen) ? 1 : 0)
+                })
                 .map((f) => {
                   const online = isOnline(f.last_seen)
+                  const count = unread[f.friend_id] ?? 0
                   return (
-                    <button key={f.friend_id} onClick={() => setActive(f)}
+                    <button key={f.friend_id}
+                      onClick={() => {
+                        setActive(f)
+                        setSendError(null)
+                        setUnread((u) => ({ ...u, [f.friend_id]: 0 }))
+                      }}
                       className={cn('flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition',
                         active?.friend_id === f.friend_id ? 'bg-brand-500/15' : 'hover:bg-slate-500/10')}>
                       <Avatar id={f.friend_id} name={fname(f)} online={online} size={9} />
@@ -189,6 +230,11 @@ function FriendsChat() {
                           {online ? '● Online' : 'Offline'}
                         </div>
                       </div>
+                      {count > 0 && (
+                        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">
+                          {count > 9 ? '9+' : count}
+                        </span>
+                      )}
                     </button>
                   )
                 })}
@@ -243,6 +289,11 @@ function FriendsChat() {
               <div ref={bottomRef} />
             </div>
 
+            {sendError && (
+              <div className="mt-2 rounded-2xl bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-500">
+                {sendError}
+              </div>
+            )}
             <div className="mt-3 flex gap-2">
               <Input placeholder={`Message ${fname(active).split(' ')[0]}…`} value={input}
                 onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
@@ -281,6 +332,13 @@ function RoomsChat() {
         const m = payload as RoomMessage
         setMessages((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev, m])
       })
+      // database-backed delivery too, in case a sender's broadcast never goes out
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `room=eq.${room}` },
+        (payload) => {
+          const m = payload.new as RoomMessage
+          setMessages((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev, m])
+        })
       .on('broadcast', { event: 'del' }, ({ payload }) => {
         setMessages((prev) => prev.filter((x) => x.id !== (payload as { id: string }).id))
       })
