@@ -7,15 +7,24 @@ import { useAuth } from '../hooks/useAuth'
 import { useApp } from '../store/app'
 import { Button, Empty, GlassCard, Input, Page, SectionTitle } from '../components/ui'
 
-type SearchRow = { id: string; full_name: string; xp: number; study_streak: number }
+type SearchRow = { id: string; full_name: string; email: string; xp: number; study_streak: number }
 type FriendRow = {
   friendship_id: string
   friend_id: string
   full_name: string
+  email: string
   xp: number
   study_streak: number
   status: 'pending' | 'accepted'
   direction: 'incoming' | 'outgoing'
+}
+
+/** Best display name: full name, else the part of the email before @. */
+function displayName(r: { full_name?: string; email?: string }) {
+  const n = (r.full_name || '').trim()
+  if (n) return n
+  const e = r.email || ''
+  return e ? e.split('@')[0] : 'Student'
 }
 
 function avatarColor(id: string) {
@@ -111,7 +120,7 @@ export function FriendsPage() {
           <div className="relative">
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <Input
-              placeholder="Search by name…"
+              placeholder="Search by name or email…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="pl-10"
@@ -127,9 +136,9 @@ export function FriendsPage() {
               const already = friendIds.has(r.id)
               return (
                 <div key={r.id} className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                  <Avatar id={r.id} name={r.full_name} />
+                  <Avatar id={r.id} name={displayName(r)} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate font-semibold text-slate-900 dark:text-white">{r.full_name}</div>
+                    <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(r)}</div>
                     <div className="flex items-center gap-2 text-xs text-slate-500">
                       <span>⭐ {r.xp} XP</span><span className="flex items-center gap-0.5"><Flame size={11} /> {r.study_streak}</span>
                     </div>
@@ -158,9 +167,9 @@ export function FriendsPage() {
                   <motion.div key={f.friendship_id}
                     initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}
                     className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                    <Avatar id={f.friend_id} name={f.full_name} />
+                    <Avatar id={f.friend_id} name={displayName(f)} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-semibold text-slate-900 dark:text-white">{f.full_name}</div>
+                      <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(f)}</div>
                       <div className="text-xs text-slate-500">wants to be your friend</div>
                     </div>
                     <button onClick={() => accept(f.friendship_id)}
@@ -196,9 +205,9 @@ export function FriendsPage() {
               <div className="mb-3 flex gap-3 overflow-x-auto rounded-2xl bg-emerald-500/5 p-3">
                 {onlineFriends.map((f) => (
                   <div key={f.friendship_id} className="flex w-16 shrink-0 flex-col items-center gap-1">
-                    <Avatar id={f.friend_id} name={f.full_name} online />
+                    <Avatar id={f.friend_id} name={displayName(f)} online />
                     <span className="w-full truncate text-center text-xs font-semibold text-slate-700 dark:text-slate-200">
-                      {f.full_name.split(' ')[0]}
+                      {displayName(f).split(' ')[0]}
                     </span>
                   </div>
                 ))}
@@ -221,9 +230,9 @@ export function FriendsPage() {
                     const online = onlineIds.includes(f.friend_id)
                     return (
                       <div key={f.friendship_id} className="group flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                        <Avatar id={f.friend_id} name={f.full_name} online={online} />
+                        <Avatar id={f.friend_id} name={displayName(f)} online={online} />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate font-semibold text-slate-900 dark:text-white">{f.full_name}</div>
+                          <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(f)}</div>
                           <div className="flex items-center gap-2 text-xs text-slate-500">
                             {online
                               ? <span className="font-semibold text-emerald-500">● Online now</span>
@@ -248,9 +257,9 @@ export function FriendsPage() {
               <div className="space-y-2">
                 {outgoing.map((f) => (
                   <div key={f.friendship_id} className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                    <Avatar id={f.friend_id} name={f.full_name} />
+                    <Avatar id={f.friend_id} name={displayName(f)} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-semibold text-slate-900 dark:text-white">{f.full_name}</div>
+                      <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(f)}</div>
                       <div className="flex items-center gap-1 text-xs text-amber-500"><Clock size={11} /> Pending</div>
                     </div>
                     <button onClick={() => removeFriendship(f.friendship_id)}

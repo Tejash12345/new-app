@@ -22,7 +22,13 @@ type RoomMessage = {
   author_name: string
   created_at: string
 }
-type Friend = { friend_id: string; full_name: string; status: string }
+type Friend = { friend_id: string; full_name: string; email: string; status: string }
+
+function fname(f: Friend) {
+  const n = (f.full_name || '').trim()
+  if (n) return n
+  return f.email ? f.email.split('@')[0] : 'Student'
+}
 
 const ROOMS = [
   { key: 'general', label: 'General', emoji: '💬' },
@@ -172,9 +178,9 @@ function FriendsChat() {
                     <button key={f.friend_id} onClick={() => setActive(f)}
                       className={cn('flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition',
                         active?.friend_id === f.friend_id ? 'bg-brand-500/15' : 'hover:bg-slate-500/10')}>
-                      <Avatar id={f.friend_id} name={f.full_name} online={online} size={9} />
+                      <Avatar id={f.friend_id} name={fname(f)} online={online} size={9} />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{f.full_name}</div>
+                        <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{fname(f)}</div>
                         <div className={cn('text-xs', online ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
                           {online ? '● Online' : 'Offline'}
                         </div>
@@ -197,9 +203,9 @@ function FriendsChat() {
           <>
             <div className="mb-3 flex items-center gap-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
               <button onClick={() => setActive(null)} className="lg:hidden text-slate-500"><ArrowLeft size={20} /></button>
-              <Avatar id={active.friend_id} name={active.full_name} online={onlineIds.includes(active.friend_id)} size={9} />
+              <Avatar id={active.friend_id} name={fname(active)} online={onlineIds.includes(active.friend_id)} size={9} />
               <div>
-                <div className="font-bold text-slate-900 dark:text-white">{active.full_name}</div>
+                <div className="font-bold text-slate-900 dark:text-white">{fname(active)}</div>
                 <div className={cn('text-xs', onlineIds.includes(active.friend_id) ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
                   {onlineIds.includes(active.friend_id) ? '● Online now' : 'Offline'}
                 </div>
@@ -209,7 +215,7 @@ function FriendsChat() {
             <div className="flex-1 space-y-2 overflow-y-auto pr-1">
               {messages.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-center text-sm text-slate-400">
-                  Say hi to {active.full_name.split(' ')[0]}! 👋
+                  Say hi to {fname(active).split(' ')[0]}! 👋
                 </div>
               ) : messages.map((m) => {
                 const mine = m.sender_id === user?.id
@@ -234,7 +240,7 @@ function FriendsChat() {
             </div>
 
             <div className="mt-3 flex gap-2">
-              <Input placeholder={`Message ${active.full_name.split(' ')[0]}…`} value={input}
+              <Input placeholder={`Message ${fname(active).split(' ')[0]}…`} value={input}
                 onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
               <Button onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
             </div>
