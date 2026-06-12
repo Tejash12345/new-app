@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { Send, Trash2, Users } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { GlassCard, Page, Input, Button } from '../components/ui'
+import { useApp } from '../store/app'
+import { GlassCard, Page, Input, Button, Empty } from '../components/ui'
 import { cn } from '../lib/utils'
 
-type ChatMessage = {
+type DMessage = {
+  id: string
+  sender_id: string
+  recipient_id: string
+  body: string
+  created_at: string
+}
+type RoomMessage = {
   id: string
   user_id: string
   room: string
@@ -15,6 +22,7 @@ type ChatMessage = {
   author_name: string
   created_at: string
 }
+type Friend = { friend_id: string; full_name: string; status: string }
 
 const ROOMS = [
   { key: 'general', label: 'General', emoji: '💬' },
@@ -30,283 +38,338 @@ function avatarColor(id: string) {
   for (let i = 0; i < id.length; i++) h = id.charCodeAt(i) + ((h << 5) - h)
   return colors[Math.abs(h) % colors.length]
 }
+function Avatar({ id, name, online, size = 11 }: { id: string; name: string; online?: boolean; size?: number }) {
+  const px = size * 4
+  return (
+    <div className="relative shrink-0">
+      <div className="flex items-center justify-center rounded-full font-bold text-white"
+        style={{ background: avatarColor(id), height: px, width: px, fontSize: px * 0.4 }}>
+        {(name || '?').slice(0, 1).toUpperCase()}
+      </div>
+      {online && <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />}
+    </div>
+  )
+}
 
 export function ChatPage() {
-  const { user, profile } = useAuth()
-  const [room, setRoom] = useState('general')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [mode, setMode] = useState<'friends' | 'rooms'>('friends')
+  return (
+    <Page title="Chat" subtitle="Message your friends privately, or join the student community. 🦁">
+      <div className="mb-4 flex gap-2">
+        {(['friends', 'rooms'] as const).map((m) => (
+          <button key={m} onClick={() => setMode(m)}
+            className={cn('flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-bold transition',
+              mode === m ? 'bg-gradient-to-r from-brand-500 to-purple-500 text-white shadow-lg shadow-brand-500/30' : 'glass text-slate-600 dark:text-slate-300')}>
+            {m === 'friends' ? <><MessageCircle size={16} /> Friends</> : <><Users size={16} /> Community</>}
+          </button>
+        ))}
+      </div>
+      {mode === 'friends' ? <FriendsChat /> : <RoomsChat />}
+    </Page>
+  )
+}
+
+// ============ FRIEND DIRECT MESSAGES ============
+function FriendsChat() {
+  const { user } = useAuth()
+  const onlineIds = useApp((s) => s.onlineIds)
+  const [friends, setFriends] = useState<Friend[]>([])
+  const [active, setActive] = useState<Friend | null>(null)
+  const [messages, setMessages] = useState<DMessage[]>([])
   const [input, setInput] = useState('')
-  const [online, setOnline] = useState(0)
-  const [onlineNames, setOnlineNames] = useState<{ id: string; name: string }[]>([])
-  const [typingUsers, setTypingUsers] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  useEffect(() => {
+    if (!user) return
+    supabase.rpc('my_friends').then(({ data }) => {
+      const accepted = ((data as Friend[]) ?? []).filter((f) => f.status === 'accepted')
+      setFriends(accepted)
+    })
+  }, [user?.id])
+
+  const pairKey = useMemo(() => {
+    if (!user || !active) return ''
+    return [user.id, active.friend_id].sort().join('__')
+  }, [user?.id, active?.friend_id])
+
+  // open a conversation: load history + subscribe to broadcast for instant delivery
+  useEffect(() => {
+    if (!user || !active) return
+    let cancelled = false
+    setMessages([])
+
+    supabase
+      .from('direct_messages')
+      .select('*')
+      .or(`and(sender_id.eq.${user.id},recipient_id.eq.${active.friend_id}),and(sender_id.eq.${active.friend_id},recipient_id.eq.${user.id})`)
+      .order('created_at', { ascending: true })
+      .limit(200)
+      .then(({ data }) => { if (!cancelled) setMessages((data as DMessage[]) ?? []) })
+
+    const channel = supabase.channel(`dm-${pairKey}`)
+    channel
+      .on('broadcast', { event: 'msg' }, ({ payload }) => {
+        const m = payload as DMessage
+        setMessages((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev, m])
+      })
+      .on('broadcast', { event: 'del' }, ({ payload }) => {
+        setMessages((prev) => prev.filter((x) => x.id !== (payload as { id: string }).id))
+      })
+      .subscribe()
+    channelRef.current = channel
+
+    return () => { cancelled = true; supabase.removeChannel(channel) }
+  }, [pairKey])
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  async function send() {
+    const body = input.trim()
+    if (!body || !user || !active) return
+    setInput('')
+    const optimistic: DMessage = {
+      id: `tmp-${Date.now()}`, sender_id: user.id, recipient_id: active.friend_id,
+      body, created_at: new Date().toISOString(),
+    }
+    setMessages((m) => [...m, optimistic])
+    const { data, error } = await supabase
+      .from('direct_messages')
+      .insert({ sender_id: user.id, recipient_id: active.friend_id, body })
+      .select().single()
+    if (error) {
+      setMessages((m) => m.filter((x) => x.id !== optimistic.id))
+      return
+    }
+    const real = data as DMessage
+    setMessages((m) => m.map((x) => (x.id === optimistic.id ? real : x)))
+    // instant push to the other side
+    channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
+  }
+
+  async function remove(id: string) {
+    setMessages((m) => m.filter((x) => x.id !== id))
+    await supabase.from('direct_messages').delete().eq('id', id)
+    channelRef.current?.send({ type: 'broadcast', event: 'del', payload: { id } })
+  }
+
+  // mobile: show list OR thread
+  return (
+    <div className="grid gap-5 lg:grid-cols-3">
+      <div className={cn('lg:col-span-1', active && 'hidden lg:block')}>
+        <GlassCard className="!p-3">
+          <div className="mb-2 px-2 text-xs font-bold uppercase tracking-widest text-slate-400">Friends</div>
+          {friends.length === 0 ? (
+            <Empty emoji="🤝" text={'No friends yet.\nAdd friends in the Friends page to chat!'} />
+          ) : (
+            <div className="space-y-1">
+              {friends
+                .slice()
+                .sort((a, b) => (onlineIds.includes(b.friend_id) ? 1 : 0) - (onlineIds.includes(a.friend_id) ? 1 : 0))
+                .map((f) => {
+                  const online = onlineIds.includes(f.friend_id)
+                  return (
+                    <button key={f.friend_id} onClick={() => setActive(f)}
+                      className={cn('flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition',
+                        active?.friend_id === f.friend_id ? 'bg-brand-500/15' : 'hover:bg-slate-500/10')}>
+                      <Avatar id={f.friend_id} name={f.full_name} online={online} size={9} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{f.full_name}</div>
+                        <div className={cn('text-xs', online ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
+                          {online ? '● Online' : 'Offline'}
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+            </div>
+          )}
+        </GlassCard>
+      </div>
+
+      <GlassCard className={cn('flex h-[34rem] flex-col lg:col-span-2', !active && 'hidden lg:flex')}>
+        {!active ? (
+          <div className="flex h-full flex-col items-center justify-center text-center">
+            <div className="text-4xl">💬</div>
+            <p className="mt-2 text-sm text-slate-500">Pick a friend to start chatting.</p>
+          </div>
+        ) : (
+          <>
+            <div className="mb-3 flex items-center gap-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
+              <button onClick={() => setActive(null)} className="lg:hidden text-slate-500"><ArrowLeft size={20} /></button>
+              <Avatar id={active.friend_id} name={active.full_name} online={onlineIds.includes(active.friend_id)} size={9} />
+              <div>
+                <div className="font-bold text-slate-900 dark:text-white">{active.full_name}</div>
+                <div className={cn('text-xs', onlineIds.includes(active.friend_id) ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
+                  {onlineIds.includes(active.friend_id) ? '● Online now' : 'Offline'}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 space-y-2 overflow-y-auto pr-1">
+              {messages.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-center text-sm text-slate-400">
+                  Say hi to {active.full_name.split(' ')[0]}! 👋
+                </div>
+              ) : messages.map((m) => {
+                const mine = m.sender_id === user?.id
+                return (
+                  <div key={m.id} className={cn('group flex', mine ? 'justify-end' : 'justify-start')}>
+                    <div className="flex items-center gap-1.5">
+                      {mine && (
+                        <button onClick={() => remove(m.id)} className="opacity-0 transition group-hover:opacity-100 text-slate-400 hover:text-rose-500">
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                      <div className={cn('max-w-[78vw] sm:max-w-md rounded-2xl px-3.5 py-2 text-sm',
+                        mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
+                             : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
+                        {m.body}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+              <div ref={bottomRef} />
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <Input placeholder={`Message ${active.full_name.split(' ')[0]}…`} value={input}
+                onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
+              <Button onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
+            </div>
+          </>
+        )}
+      </GlassCard>
+    </div>
+  )
+}
+
+// ============ COMMUNITY ROOMS ============
+function RoomsChat() {
+  const { user, profile } = useAuth()
+  const [room, setRoom] = useState('general')
+  const [messages, setMessages] = useState<RoomMessage[]>([])
+  const [input, setInput] = useState('')
+  const [online, setOnline] = useState(1)
+  const channelRef = useRef<RealtimeChannel | null>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
   const myName = profile?.full_name?.trim() || 'Anonymous lion'
 
-  // load history + subscribe to realtime for the active room
   useEffect(() => {
     if (!user) return
     let cancelled = false
-    setLoading(true)
     setMessages([])
-    setTypingUsers([])
 
-    supabase
-      .from('chat_messages')
-      .select('*')
-      .eq('room', room)
-      .order('created_at', { ascending: true })
-      .limit(100)
-      .then(({ data }) => {
-        if (!cancelled) {
-          setMessages((data as ChatMessage[]) ?? [])
-          setLoading(false)
-        }
-      })
+    supabase.from('chat_messages').select('*').eq('room', room)
+      .order('created_at', { ascending: true }).limit(100)
+      .then(({ data }) => { if (!cancelled) setMessages((data as RoomMessage[]) ?? []) })
 
-    const channel = supabase.channel(`room-${room}`, {
-      config: { presence: { key: user.id } },
-    })
-
+    const channel = supabase.channel(`room-${room}`, { config: { presence: { key: user.id } } })
     channel
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `room=eq.${room}` },
-        (payload) => {
-          setMessages((m) => {
-            const msg = payload.new as ChatMessage
-            if (m.some((x) => x.id === msg.id)) return m
-            return [...m, msg]
-          })
-        })
-      .on('postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'chat_messages' },
-        (payload) => {
-          setMessages((m) => m.filter((x) => x.id !== (payload.old as { id: string }).id))
-        })
-      .on('presence', { event: 'sync' }, () => {
-        const state = channel.presenceState<{ name: string }>()
-        const ids = Object.keys(state)
-        setOnline(ids.length)
-        setOnlineNames(
-          ids.map((id) => ({ id, name: state[id]?.[0]?.name || 'Lion' })),
-        )
+      .on('broadcast', { event: 'msg' }, ({ payload }) => {
+        const m = payload as RoomMessage
+        setMessages((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev, m])
       })
-      .on('broadcast', { event: 'typing' }, ({ payload }) => {
-        const name = payload.name as string
-        if (payload.userId === user.id) return
-        setTypingUsers((t) => (t.includes(name) ? t : [...t, name]))
-        setTimeout(() => setTypingUsers((t) => t.filter((n) => n !== name)), 2500)
+      .on('broadcast', { event: 'del' }, ({ payload }) => {
+        setMessages((prev) => prev.filter((x) => x.id !== (payload as { id: string }).id))
       })
+      .on('presence', { event: 'sync' }, () => setOnline(Object.keys(channel.presenceState()).length))
       .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.track({ name: myName, at: Date.now() })
-        }
+        if (status === 'SUBSCRIBED') await channel.track({ name: myName })
       })
-
     channelRef.current = channel
-    return () => {
-      cancelled = true
-      supabase.removeChannel(channel)
-    }
+    return () => { cancelled = true; supabase.removeChannel(channel) }
   }, [room, user?.id, myName])
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, typingUsers])
-
-  function broadcastTyping() {
-    if (!channelRef.current || !user) return
-    channelRef.current.send({
-      type: 'broadcast', event: 'typing',
-      payload: { userId: user.id, name: myName },
-    })
-  }
-
-  function onType(v: string) {
-    setInput(v)
-    if (typingTimeout.current) clearTimeout(typingTimeout.current)
-    broadcastTyping()
-    typingTimeout.current = setTimeout(() => {}, 1500)
-  }
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   async function send() {
     const body = input.trim()
     if (!body || !user) return
     setInput('')
-    // optimistic
-    const optimistic: ChatMessage = {
-      id: `tmp-${Date.now()}`,
-      user_id: user.id, room, body, author_name: myName,
+    const optimistic: RoomMessage = {
+      id: `tmp-${Date.now()}`, user_id: user.id, room, body, author_name: myName,
       created_at: new Date().toISOString(),
     }
     setMessages((m) => [...m, optimistic])
-    const { data } = await supabase
-      .from('chat_messages')
-      .insert({ user_id: user.id, room, body, author_name: myName })
-      .select()
-      .single()
+    const { data } = await supabase.from('chat_messages')
+      .insert({ user_id: user.id, room, body, author_name: myName }).select().single()
     if (data) {
-      setMessages((m) => m.map((x) => (x.id === optimistic.id ? (data as ChatMessage) : x)))
+      const real = data as RoomMessage
+      setMessages((m) => m.map((x) => (x.id === optimistic.id ? real : x)))
+      channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
     }
   }
-
   async function remove(id: string) {
     setMessages((m) => m.filter((x) => x.id !== id))
     await supabase.from('chat_messages').delete().eq('id', id)
+    channelRef.current?.send({ type: 'broadcast', event: 'del', payload: { id } })
   }
 
-  const grouped = useMemo(() => {
-    return messages.map((m, i) => ({
-      ...m,
-      showHeader: i === 0 || messages[i - 1].user_id !== m.user_id,
-    }))
-  }, [messages])
-
   const activeRoom = ROOMS.find((r) => r.key === room)!
+  const grouped = messages.map((m, i) => ({ ...m, showHeader: i === 0 || messages[i - 1].user_id !== m.user_id }))
 
   return (
-    <Page
-      title="Community"
-      subtitle="Study together, stay motivated — real-time chat with students everywhere. 🦁"
-    >
-      <div className="grid gap-5 lg:grid-cols-4">
-        {/* room list */}
-        <div className="lg:col-span-1">
-          <GlassCard className="!p-3">
-            <div className="mb-2 px-2 text-xs font-bold uppercase tracking-widest text-slate-400">Rooms</div>
-            <div className="space-y-1">
-              {ROOMS.map((r) => (
-                <button key={r.key}
-                  onClick={() => setRoom(r.key)}
-                  className={cn(
-                    'flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition',
-                    room === r.key
-                      ? 'bg-gradient-to-r from-brand-500 to-purple-500 text-white shadow-lg shadow-brand-500/30'
-                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-500/10',
-                  )}
-                >
-                  <span className="text-lg">{r.emoji}</span> {r.label}
-                </button>
-              ))}
-            </div>
-          </GlassCard>
-        </div>
-
-        {/* chat window */}
-        <GlassCard className="flex h-[36rem] flex-col lg:col-span-3">
-          <div className="mb-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
-                <span className="text-xl">{activeRoom.emoji}</span> {activeRoom.label}
-              </div>
-              <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                <Users size={13} /> {online} online
-              </div>
-            </div>
-            {/* online members */}
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              {onlineNames.map((m) => (
-                <div key={m.id}
-                  className="flex items-center gap-1.5 rounded-full bg-white/50 dark:bg-white/10 py-0.5 pl-0.5 pr-2.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                  <span className="relative flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white"
-                    style={{ background: avatarColor(m.id) }}>
-                    {m.name.slice(0, 1).toUpperCase()}
-                    <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-white bg-emerald-500 dark:border-slate-900" />
-                  </span>
-                  {m.id === user?.id ? 'You' : m.name}
-                </div>
-              ))}
-            </div>
+    <div className="grid gap-5 lg:grid-cols-4">
+      <div className="lg:col-span-1">
+        <GlassCard className="!p-3">
+          <div className="mb-2 px-2 text-xs font-bold uppercase tracking-widest text-slate-400">Rooms</div>
+          <div className="space-y-1">
+            {ROOMS.map((r) => (
+              <button key={r.key} onClick={() => setRoom(r.key)}
+                className={cn('flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition',
+                  room === r.key ? 'bg-gradient-to-r from-brand-500 to-purple-500 text-white shadow-lg shadow-brand-500/30' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-500/10')}>
+                <span className="text-lg">{r.emoji}</span> {r.label}
+              </button>
+            ))}
           </div>
-
-          <div className="flex-1 space-y-1 overflow-y-auto pr-1">
-            {loading ? (
-              <div className="flex h-full items-center justify-center text-3xl animate-pulse">🦁</div>
-            ) : grouped.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center text-center">
-                <div className="text-4xl">{activeRoom.emoji}</div>
-                <p className="mt-2 text-sm text-slate-500">No messages yet in {activeRoom.label}.<br />Be the first to say hi! 👋</p>
-              </div>
-            ) : (
-              grouped.map((m) => {
-                const mine = m.user_id === user?.id
-                return (
-                  <div key={m.id} className={cn('group flex gap-2.5', mine && 'flex-row-reverse')}>
-                    <div className="w-8 shrink-0">
-                      {m.showHeader && (
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white"
-                          style={{ background: avatarColor(m.user_id) }}>
-                          {m.author_name.slice(0, 1).toUpperCase()}
-                        </div>
-                      )}
-                    </div>
-                    <div className={cn('max-w-[75%]', mine && 'flex flex-col items-end')}>
-                      {m.showHeader && (
-                        <div className={cn('mb-0.5 px-1 text-xs font-semibold text-slate-500', mine && 'text-right')}>
-                          {mine ? 'You' : m.author_name}
-                        </div>
-                      )}
-                      <div className="flex items-center gap-1.5">
-                        {mine && (
-                          <button onClick={() => remove(m.id)}
-                            className="opacity-0 transition group-hover:opacity-100 text-slate-400 hover:text-rose-500">
-                            <Trash2 size={13} />
-                          </button>
-                        )}
-                        <div className={cn(
-                          'rounded-2xl px-3.5 py-2 text-sm',
-                          mine
-                            ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
-                            : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100',
-                        )}>
-                          {m.body}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-
-            <AnimatePresence>
-              {typingUsers.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                  className="flex items-center gap-2 px-1 py-1 text-xs text-slate-400"
-                >
-                  <div className="flex gap-1">
-                    {[0, 1, 2].map((d) => (
-                      <motion.span key={d}
-                        animate={{ y: [0, -3, 0] }}
-                        transition={{ repeat: Infinity, duration: 0.7, delay: d * 0.15 }}
-                        className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-                    ))}
-                  </div>
-                  {typingUsers.slice(0, 2).join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing…
-                </motion.div>
-              )}
-            </AnimatePresence>
-            <div ref={bottomRef} />
-          </div>
-
-          <div className="mt-3 flex gap-2">
-            <Input
-              placeholder={`Message ${activeRoom.label}…`}
-              value={input}
-              onChange={(e) => onType(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && send()}
-              maxLength={500}
-            />
-            <Button onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
-          </div>
-          <p className="mt-2 px-1 text-[11px] text-slate-400">
-            Be kind 🦁 — this is a shared space for students. Messages are public to all FocusLion users.
-          </p>
         </GlassCard>
       </div>
-    </Page>
+
+      <GlassCard className="flex h-[34rem] flex-col lg:col-span-3">
+        <div className="mb-3 flex items-center justify-between border-b border-slate-200/50 dark:border-white/10 pb-3">
+          <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+            <span className="text-xl">{activeRoom.emoji}</span> {activeRoom.label}
+          </div>
+          <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" /> {online} online
+          </div>
+        </div>
+        <div className="flex-1 space-y-1 overflow-y-auto pr-1">
+          {grouped.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center text-center">
+              <div className="text-4xl">{activeRoom.emoji}</div>
+              <p className="mt-2 text-sm text-slate-500">No messages yet. Be the first! 👋</p>
+            </div>
+          ) : grouped.map((m) => {
+            const mine = m.user_id === user?.id
+            return (
+              <div key={m.id} className={cn('group flex gap-2.5', mine && 'flex-row-reverse')}>
+                <div className="w-8 shrink-0">
+                  {m.showHeader && <Avatar id={m.user_id} name={m.author_name} size={8} />}
+                </div>
+                <div className={cn('max-w-[72vw] sm:max-w-[75%]', mine && 'flex flex-col items-end')}>
+                  {m.showHeader && <div className={cn('mb-0.5 px-1 text-xs font-semibold text-slate-500', mine && 'text-right')}>{mine ? 'You' : m.author_name}</div>}
+                  <div className="flex items-center gap-1.5">
+                    {mine && <button onClick={() => remove(m.id)} className="opacity-0 transition group-hover:opacity-100 text-slate-400 hover:text-rose-500"><Trash2 size={13} /></button>}
+                    <div className={cn('rounded-2xl px-3.5 py-2 text-sm',
+                      mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white' : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
+                      {m.body}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+          <div ref={bottomRef} />
+        </div>
+        <div className="mt-3 flex gap-2">
+          <Input placeholder={`Message ${activeRoom.label}…`} value={input}
+            onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
+          <Button onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
+        </div>
+      </GlassCard>
+    </div>
   )
 }
