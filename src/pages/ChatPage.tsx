@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { useAuth } from '../hooks/useAuth'
@@ -14,6 +14,9 @@ type DMessage = {
   recipient_id: string
   body: string
   created_at: string
+  kind?: 'text' | 'image' | 'audio' | 'file'
+  file_url?: string | null
+  file_name?: string | null
 }
 type RoomMessage = {
   id: string
@@ -94,15 +97,31 @@ function FriendsChat() {
   const [input, setInput] = useState('')
   const [unread, setUnread] = useState<Record<string, number>>({})
   const [sendError, setSendError] = useState<string | null>(null)
-  const [typing, setTyping] = useState(false)
+  const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({})
   const [people, setPeople] = useState<Person[]>([])
   const [sentTo, setSentTo] = useState<Set<string>>(new Set())
+  const [uploading, setUploading] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [recSeconds, setRecSeconds] = useState(0)
   const [, setTick] = useState(0)
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const activeIdRef = useRef<string | null>(null)
-  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastTypingSent = useRef(0)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const recChunksRef = useRef<Blob[]>([])
+  const recDiscardRef = useRef(false)
+  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  function markTyping(from: string) {
+    setTypingUsers((t) => ({ ...t, [from]: true }))
+    clearTimeout(typingTimers.current[from])
+    typingTimers.current[from] = setTimeout(
+      () => setTypingUsers((t) => ({ ...t, [from]: false })), 2500)
+  }
   useEffect(() => { activeIdRef.current = active?.friend_id ?? null }, [active?.friend_id])
 
   // people you may know — visible right in chat, no searching needed
@@ -160,12 +179,7 @@ function FriendsChat() {
       }
     }
     const onDel = (p: { id: string }) => setMessages((prev) => prev.filter((x) => x.id !== p.id))
-    const onTyping = (p: { from: string }) => {
-      if (activeIdRef.current !== p.from) return
-      setTyping(true)
-      if (typingTimer.current) clearTimeout(typingTimer.current)
-      typingTimer.current = setTimeout(() => setTyping(false), 2500)
-    }
+    const onTyping = (p: { from: string }) => markTyping(p.from)
     s.on('dm', onDm)
     s.on('dm:del', onDel)
     s.on('typing', onTyping)
@@ -198,7 +212,6 @@ function FriendsChat() {
     if (!user || !active) return
     let cancelled = false
     setMessages([])
-    setTyping(false)
 
     supabase
       .from('direct_messages')
@@ -218,11 +231,8 @@ function FriendsChat() {
         setMessages((prev) => prev.filter((x) => x.id !== (payload as { id: string }).id))
       })
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
-        if ((payload as { from: string }).from !== user.id) {
-          setTyping(true)
-          if (typingTimer.current) clearTimeout(typingTimer.current)
-          typingTimer.current = setTimeout(() => setTyping(false), 2500)
-        }
+        const from = (payload as { from: string }).from
+        if (from !== user.id) markTyping(from)
       })
       .subscribe()
     channelRef.current = channel
@@ -270,6 +280,88 @@ function FriendsChat() {
     channelRef.current?.send({ type: 'broadcast', event: 'del', payload: { id } })
   }
 
+  // ---- photos, documents, voice notes ----
+
+  async function sendMedia(file: File, kind: 'image' | 'audio' | 'file') {
+    if (!user || !active) return
+    if (file.size > 10 * 1024 * 1024) {
+      setSendError('File is too big — maximum is 10 MB.')
+      return
+    }
+    setUploading(true)
+    setSendError(null)
+    const safeName = file.name.replace(/[^\w.\-]+/g, '_').slice(-80)
+    const path = `${user.id}/${Date.now()}-${safeName}`
+    const { error: upErr } = await supabase.storage
+      .from('chat-media')
+      .upload(path, file, { contentType: file.type || undefined })
+    if (upErr) {
+      setUploading(false)
+      setSendError(
+        /bucket.*not.*found/i.test(upErr.message)
+          ? 'Media is not set up yet — run upgrade-8.sql in the Supabase SQL Editor first.'
+          : `Upload failed: ${upErr.message}`,
+      )
+      return
+    }
+    const { data: pub } = supabase.storage.from('chat-media').getPublicUrl(path)
+    const { data, error } = await supabase
+      .from('direct_messages')
+      .insert({
+        sender_id: user.id, recipient_id: active.friend_id,
+        body: kind === 'file' ? file.name : '',
+        kind, file_url: pub.publicUrl, file_name: file.name,
+      })
+      .select().single()
+    setUploading(false)
+    if (error) {
+      setSendError(
+        /row-level security|policy/i.test(error.message)
+          ? `Not sent — you and ${fname(active)} need to be accepted friends first.`
+          : `Not sent: ${error.message}`,
+      )
+      return
+    }
+    const real = data as DMessage
+    setMessages((m) => [...m, real])
+    getSocket()?.emit('dm', real)
+    channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
+  }
+
+  async function startRecording() {
+    if (recording) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(stream)
+      recChunksRef.current = []
+      recDiscardRef.current = false
+      mr.ondataavailable = (e) => { if (e.data.size > 0) recChunksRef.current.push(e.data) }
+      mr.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop())
+        if (recDiscardRef.current) return
+        const blob = new Blob(recChunksRef.current, { type: mr.mimeType || 'audio/webm' })
+        if (blob.size < 200) return
+        const ext = (mr.mimeType || 'audio/webm').includes('mp4') ? 'm4a' : 'webm'
+        sendMedia(new File([blob], `voice-message.${ext}`, { type: blob.type }), 'audio')
+      }
+      mr.start()
+      mediaRecorderRef.current = mr
+      setRecording(true)
+      setRecSeconds(0)
+      recTimerRef.current = setInterval(() => setRecSeconds((s) => s + 1), 1000)
+    } catch {
+      setSendError('Microphone permission is needed for voice messages.')
+    }
+  }
+
+  function stopRecording(sendIt: boolean) {
+    recDiscardRef.current = !sendIt
+    mediaRecorderRef.current?.stop()
+    mediaRecorderRef.current = null
+    if (recTimerRef.current) clearInterval(recTimerRef.current)
+    setRecording(false)
+  }
+
   // mobile: show list OR thread
   return (
     <div className="grid gap-5 lg:grid-cols-3">
@@ -302,9 +394,13 @@ function FriendsChat() {
                       <Avatar id={f.friend_id} name={fname(f)} online={online} size={9} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{fname(f)}</div>
-                        <div className={cn('text-xs', online ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
-                          {online ? '● Online' : 'Offline'}
-                        </div>
+                        {typingUsers[f.friend_id] ? (
+                          <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
+                        ) : (
+                          <div className={cn('text-xs', online ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
+                            {online ? '● Online' : 'Offline'}
+                          </div>
+                        )}
                       </div>
                       {count > 0 && (
                         <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">
@@ -366,7 +462,7 @@ function FriendsChat() {
               <Avatar id={active.friend_id} name={fname(active)} online={isOnline(active.friend_id, active.last_seen)} size={9} />
               <div>
                 <div className="font-bold text-slate-900 dark:text-white">{fname(active)}</div>
-                {typing ? (
+                {typingUsers[active.friend_id] ? (
                   <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
                 ) : (
                   <div className={cn('text-xs', isOnline(active.friend_id, active.last_seen) ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
@@ -391,10 +487,26 @@ function FriendsChat() {
                           <Trash2 size={13} />
                         </button>
                       )}
-                      <div className={cn('max-w-[78vw] sm:max-w-md rounded-2xl px-3.5 py-2 text-sm',
+                      <div className={cn('max-w-[78vw] sm:max-w-md rounded-2xl text-sm',
+                        m.kind === 'image' && m.file_url ? 'overflow-hidden p-1' : 'px-3.5 py-2',
                         mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
                              : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
-                        {m.body}
+                        {m.kind === 'image' && m.file_url ? (
+                          <a href={m.file_url} target="_blank" rel="noreferrer">
+                            <img src={m.file_url} alt={m.file_name ?? 'photo'} loading="lazy"
+                              className="max-h-64 rounded-xl object-contain" />
+                          </a>
+                        ) : m.kind === 'audio' && m.file_url ? (
+                          <audio controls preload="metadata" src={m.file_url} className="h-10 w-56 max-w-full" />
+                        ) : m.kind === 'file' && m.file_url ? (
+                          <a href={m.file_url} target="_blank" rel="noreferrer" download={m.file_name ?? true}
+                            className="flex items-center gap-2 font-semibold underline underline-offset-2">
+                            <FileText size={17} className="shrink-0" />
+                            <span className="truncate">{m.file_name ?? 'Document'}</span>
+                          </a>
+                        ) : (
+                          m.body
+                        )}
                       </div>
                     </div>
                   </div>
@@ -408,20 +520,53 @@ function FriendsChat() {
                 {sendError}
               </div>
             )}
-            <div className="mt-3 flex gap-2">
-              <Input placeholder={`Message ${fname(active).split(' ')[0]}…`} value={input}
-                onChange={(e) => {
-                  setInput(e.target.value)
-                  const now = Date.now()
-                  if (user && active && now - lastTypingSent.current > 1200) {
-                    lastTypingSent.current = now
-                    getSocket()?.emit('typing', { to: active.friend_id })
-                    channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { from: user.id } })
-                  }
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
-              <Button onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
-            </div>
+            {uploading && (
+              <div className="mt-2 animate-pulse text-xs font-semibold text-slate-400">Uploading…</div>
+            )}
+            {recording ? (
+              <div className="mt-3 flex items-center gap-3 rounded-2xl bg-rose-500/10 px-4 py-2.5">
+                <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" />
+                <span className="flex-1 text-sm font-semibold text-rose-500">
+                  Recording… {Math.floor(recSeconds / 60)}:{String(recSeconds % 60).padStart(2, '0')}
+                </span>
+                <button onClick={() => stopRecording(false)} title="Cancel"
+                  className="rounded-full p-2 text-slate-400 hover:bg-slate-500/10 hover:text-rose-500">
+                  <X size={18} />
+                </button>
+                <Button onClick={() => stopRecording(true)}><Send size={16} /></Button>
+              </div>
+            ) : (
+              <div className="mt-3 flex items-center gap-1">
+                <input ref={imageInputRef} type="file" accept="image/*" hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) sendMedia(f, 'image'); e.target.value = '' }} />
+                <input ref={fileInputRef} type="file" hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) sendMedia(f, 'file'); e.target.value = '' }} />
+                <button onClick={() => imageInputRef.current?.click()} title="Send a photo" disabled={uploading}
+                  className="rounded-full p-2.5 text-slate-400 transition hover:bg-slate-500/10 hover:text-brand-500">
+                  <ImageIcon size={19} />
+                </button>
+                <button onClick={() => fileInputRef.current?.click()} title="Send a document" disabled={uploading}
+                  className="rounded-full p-2.5 text-slate-400 transition hover:bg-slate-500/10 hover:text-brand-500">
+                  <Paperclip size={19} />
+                </button>
+                <button onClick={startRecording} title="Record a voice message" disabled={uploading}
+                  className="rounded-full p-2.5 text-slate-400 transition hover:bg-slate-500/10 hover:text-rose-500">
+                  <Mic size={19} />
+                </button>
+                <Input placeholder={`Message ${fname(active).split(' ')[0]}…`} value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value)
+                    const now = Date.now()
+                    if (user && active && now - lastTypingSent.current > 1200) {
+                      lastTypingSent.current = now
+                      getSocket()?.emit('typing', { to: active.friend_id })
+                      channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { from: user.id } })
+                    }
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
+                <Button onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
+              </div>
+            )}
           </>
         )}
       </GlassCard>
