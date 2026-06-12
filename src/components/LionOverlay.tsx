@@ -6,8 +6,44 @@ import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from './ui'
 
-/** Synthesized lion roar using the Web Audio API (no audio file needed). */
+/**
+ * Real lion roar recording: Growcott et al., CC BY 4.0, via Wikimedia Commons
+ * (https://commons.wikimedia.org/wiki/File:Lionroar.wav)
+ */
+const ROAR_URL = '/lion-roar.wav'
+let roarAudio: HTMLAudioElement | null = null
+
+// Browsers only allow sound after the user has interacted with the page —
+// prime the element (muted) on the first tap/click so the roar can play later.
+if (typeof window !== 'undefined') {
+  const prime = () => {
+    roarAudio = new Audio(ROAR_URL)
+    roarAudio.preload = 'auto'
+    roarAudio.muted = true
+    roarAudio.play()
+      .then(() => {
+        roarAudio!.pause()
+        roarAudio!.currentTime = 0
+        roarAudio!.muted = false
+      })
+      .catch(() => { if (roarAudio) roarAudio.muted = false })
+  }
+  window.addEventListener('pointerdown', prime, { once: true })
+}
+
 function playRoar() {
+  try {
+    const a = roarAudio ?? new Audio(ROAR_URL)
+    a.currentTime = 0
+    a.volume = 1
+    a.play().catch(() => synthRoar())
+  } catch {
+    synthRoar()
+  }
+}
+
+/** Synthesized fallback roar using the Web Audio API (if the file can't play). */
+function synthRoar() {
   try {
     const ctx = new AudioContext()
     const dur = 1.6
@@ -71,7 +107,6 @@ export function LionOverlay() {
       played.current = true
       if (profile?.settings?.sound !== false) {
         playRoar()
-        setTimeout(playRoar, 2200)
       }
     }
     if (!lion.open) played.current = false

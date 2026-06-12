@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -12,7 +12,7 @@ import { ScrollWatcher } from './ScrollWatcher'
 import { CommandPalette } from './CommandPalette'
 import { Onboarding } from './Onboarding'
 import { PresenceTracker } from './PresenceTracker'
-import { useNotificationEngine } from '../hooks/useNotifications'
+import { useNotificationEngine, requestNotifPermission } from '../hooks/useNotifications'
 import { cn, levelForXp } from '../lib/utils'
 
 const NAV = [
@@ -38,6 +38,8 @@ export function Layout() {
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   useNotificationEngine()
+  // ask once so reminders (study, deadlines, time-almost-up) can actually fire
+  useEffect(() => { requestNotifPermission() }, [])
 
   const level = levelForXp(profile?.xp ?? 0)
   const initial = (profile?.full_name || profile?.email || '?').slice(0, 1).toUpperCase()

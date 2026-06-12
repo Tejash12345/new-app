@@ -117,6 +117,12 @@ export function SettingsPage() {
           </div>
         </GlassCard>
       </div>
+      <p className="mt-6 text-center text-xs text-slate-400">
+        Lion roar recording by Growcott et&nbsp;al.,{' '}
+        <a className="underline" href="https://commons.wikimedia.org/wiki/File:Lionroar.wav" target="_blank" rel="noreferrer">
+          CC BY 4.0 via Wikimedia Commons
+        </a>
+      </p>
     </Page>
   )
 }
