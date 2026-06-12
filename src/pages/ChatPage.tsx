@@ -37,6 +37,7 @@ export function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [online, setOnline] = useState(0)
+  const [onlineNames, setOnlineNames] = useState<{ id: string; name: string }[]>([])
   const [typingUsers, setTypingUsers] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const channelRef = useRef<RealtimeChannel | null>(null)
@@ -86,7 +87,12 @@ export function ChatPage() {
           setMessages((m) => m.filter((x) => x.id !== (payload.old as { id: string }).id))
         })
       .on('presence', { event: 'sync' }, () => {
-        setOnline(Object.keys(channel.presenceState()).length)
+        const state = channel.presenceState<{ name: string }>()
+        const ids = Object.keys(state)
+        setOnline(ids.length)
+        setOnlineNames(
+          ids.map((id) => ({ id, name: state[id]?.[0]?.name || 'Lion' })),
+        )
       })
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         const name = payload.name as string
@@ -191,12 +197,28 @@ export function ChatPage() {
 
         {/* chat window */}
         <GlassCard className="flex h-[36rem] flex-col lg:col-span-3">
-          <div className="mb-3 flex items-center justify-between border-b border-slate-200/50 dark:border-white/10 pb-3">
-            <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
-              <span className="text-xl">{activeRoom.emoji}</span> {activeRoom.label}
+          <div className="mb-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+                <span className="text-xl">{activeRoom.emoji}</span> {activeRoom.label}
+              </div>
+              <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                <Users size={13} /> {online} online
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-              <Users size={13} /> {online} online
+            {/* online members */}
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {onlineNames.map((m) => (
+                <div key={m.id}
+                  className="flex items-center gap-1.5 rounded-full bg-white/50 dark:bg-white/10 py-0.5 pl-0.5 pr-2.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  <span className="relative flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                    style={{ background: avatarColor(m.id) }}>
+                    {m.name.slice(0, 1).toUpperCase()}
+                    <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-white bg-emerald-500 dark:border-slate-900" />
+                  </span>
+                  {m.id === user?.id ? 'You' : m.name}
+                </div>
+              ))}
             </div>
           </div>
 
