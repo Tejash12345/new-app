@@ -2,7 +2,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   LayoutDashboard, CalendarDays, CheckCircle2, Timer, Shield,
-  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText,
+  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle,
 } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
@@ -23,6 +23,7 @@ const NAV = [
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/arena', label: 'Arena', icon: Trophy },
   { to: '/coach', label: 'Coach', icon: Bot },
+  { to: '/chat', label: 'Community', icon: MessageCircle },
   { to: '/report', label: 'Report', icon: FileText },
 ]
 
