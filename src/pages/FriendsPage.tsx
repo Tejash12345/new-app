@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Search, UserPlus, Check, X, Flame, UserMinus, Clock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { isOnline } from '../components/PresenceTracker'
+import { useOnlineCheck } from '../hooks/useOnline'
 import { Button, Empty, GlassCard, Input, Page, SectionTitle } from '../components/ui'
 
 type SearchRow = { id: string; full_name: string; email: string; xp: number; study_streak: number; last_seen?: string }
@@ -56,6 +56,7 @@ export function FriendsPage() {
   const [results, setResults] = useState<SearchRow[]>([])
   const [searching, setSearching] = useState(false)
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null)
+  const isOnline = useOnlineCheck()
   function notify(text: string, ok = true) {
     setToast({ text, ok })
     setTimeout(() => setToast(null), 3000)
@@ -117,7 +118,7 @@ export function FriendsPage() {
   const accepted = friends.filter((f) => f.status === 'accepted')
   const incoming = friends.filter((f) => f.status === 'pending' && f.direction === 'incoming')
   const outgoing = friends.filter((f) => f.status === 'pending' && f.direction === 'outgoing')
-  const onlineFriends = accepted.filter((f) => isOnline(f.last_seen))
+  const onlineFriends = accepted.filter((f) => isOnline(f.friend_id, f.last_seen))
   const suggestedFiltered = suggested.filter((s) => !friendIds.has(s.id))
   const onlineCount = onlineFriends.length
 
@@ -224,7 +225,7 @@ export function FriendsPage() {
               ) : (
                 <div className="space-y-2">
                   {suggestedFiltered.map((r) => {
-                    const online = isOnline(r.last_seen)
+                    const online = isOnline(r.id, r.last_seen)
                     return (
                       <div key={r.id} className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
                         <Avatar id={r.id} name={displayName(r)} online={online} />
@@ -309,13 +310,13 @@ export function FriendsPage() {
                 {accepted
                   .slice()
                   .sort((a, b) => {
-                    const ao = isOnline(a.last_seen) ? 1 : 0
-                    const bo = isOnline(b.last_seen) ? 1 : 0
+                    const ao = isOnline(a.friend_id, a.last_seen) ? 1 : 0
+                    const bo = isOnline(b.friend_id, b.last_seen) ? 1 : 0
                     if (ao !== bo) return bo - ao
                     return b.xp - a.xp
                   })
                   .map((f) => {
-                    const online = isOnline(f.last_seen)
+                    const online = isOnline(f.friend_id, f.last_seen)
                     return (
                       <div key={f.friendship_id} className="group flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
                         <Avatar id={f.friend_id} name={displayName(f)} online={online} />

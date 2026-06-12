@@ -3,7 +3,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { Send, Trash2, Users, ArrowLeft, MessageCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { isOnline } from '../components/PresenceTracker'
+import { useOnlineCheck } from '../hooks/useOnline'
 import { GlassCard, Page, Input, Button, Empty } from '../components/ui'
 import { cn } from '../lib/utils'
 
@@ -76,19 +76,53 @@ export function ChatPage() {
 }
 
 // ============ FRIEND DIRECT MESSAGES ============
+type Person = { id: string; full_name: string; email: string; last_seen?: string }
+
+function pname(p: Person) {
+  const n = (p.full_name || '').trim()
+  if (n) return n
+  return p.email ? p.email.split('@')[0] : 'Student'
+}
+
 function FriendsChat() {
   const { user } = useAuth()
+  const isOnline = useOnlineCheck()
   const [friends, setFriends] = useState<Friend[]>([])
   const [active, setActive] = useState<Friend | null>(null)
   const [messages, setMessages] = useState<DMessage[]>([])
   const [input, setInput] = useState('')
   const [unread, setUnread] = useState<Record<string, number>>({})
   const [sendError, setSendError] = useState<string | null>(null)
+  const [typing, setTyping] = useState(false)
+  const [people, setPeople] = useState<Person[]>([])
+  const [sentTo, setSentTo] = useState<Set<string>>(new Set())
   const [, setTick] = useState(0)
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const activeIdRef = useRef<string | null>(null)
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastTypingSent = useRef(0)
   useEffect(() => { activeIdRef.current = active?.friend_id ?? null }, [active?.friend_id])
+
+  // people you may know — visible right in chat, no searching needed
+  useEffect(() => {
+    if (!user) return
+    supabase.rpc('suggested_users').then(({ data }) => {
+      setPeople(((data as Person[]) ?? []).slice(0, 8))
+    })
+  }, [user?.id, friends.length])
+
+  async function addPerson(id: string) {
+    if (!user) return
+    const { error } = await supabase.rpc('send_friend_request', { target: id })
+    if (error) {
+      // database without upgrade-7 yet — plain insert still works
+      const { error: e2 } = await supabase
+        .from('friendships').insert({ requester_id: user.id, addressee_id: id })
+      if (e2) return
+    }
+    setSentTo((s) => new Set(s).add(id))
+  }
 
   // inbox: every incoming DM is delivered straight from the database, even if
   // this thread (or no thread) is open — no need for the sender's broadcast
@@ -132,6 +166,7 @@ function FriendsChat() {
     if (!user || !active) return
     let cancelled = false
     setMessages([])
+    setTyping(false)
 
     supabase
       .from('direct_messages')
@@ -149,6 +184,13 @@ function FriendsChat() {
       })
       .on('broadcast', { event: 'del' }, ({ payload }) => {
         setMessages((prev) => prev.filter((x) => x.id !== (payload as { id: string }).id))
+      })
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if ((payload as { from: string }).from !== user.id) {
+          setTyping(true)
+          if (typingTimer.current) clearTimeout(typingTimer.current)
+          typingTimer.current = setTimeout(() => setTyping(false), 2500)
+        }
       })
       .subscribe()
     channelRef.current = channel
@@ -209,10 +251,10 @@ function FriendsChat() {
                 .sort((a, b) => {
                   const ub = (unread[b.friend_id] ?? 0) - (unread[a.friend_id] ?? 0)
                   if (ub !== 0) return ub
-                  return (isOnline(b.last_seen) ? 1 : 0) - (isOnline(a.last_seen) ? 1 : 0)
+                  return (isOnline(b.friend_id, b.last_seen) ? 1 : 0) - (isOnline(a.friend_id, a.last_seen) ? 1 : 0)
                 })
                 .map((f) => {
-                  const online = isOnline(f.last_seen)
+                  const online = isOnline(f.friend_id, f.last_seen)
                   const count = unread[f.friend_id] ?? 0
                   return (
                     <button key={f.friend_id}
@@ -240,6 +282,40 @@ function FriendsChat() {
                 })}
             </div>
           )}
+
+          {/* people you may know — add friends right from chat, no searching */}
+          {people.length > 0 && (
+            <>
+              <div className="mb-2 mt-4 px-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+                People you may know
+              </div>
+              <div className="space-y-1">
+                {people.map((p) => {
+                  const online = isOnline(p.id, p.last_seen)
+                  const sent = sentTo.has(p.id)
+                  return (
+                    <div key={p.id} className="flex w-full items-center gap-3 rounded-2xl px-3 py-2">
+                      <Avatar id={p.id} name={pname(p)} online={online} size={9} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{pname(p)}</div>
+                        <div className={cn('text-xs', online ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
+                          {online ? '● Online' : 'Student'}
+                        </div>
+                      </div>
+                      {sent ? (
+                        <span className="text-xs font-semibold text-emerald-500">Sent ✓</span>
+                      ) : (
+                        <button onClick={() => addPerson(p.id)}
+                          className="rounded-full bg-brand-500/15 px-3 py-1.5 text-xs font-bold text-brand-500 hover:bg-brand-500/25">
+                          + Add
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
         </GlassCard>
       </div>
 
@@ -253,12 +329,16 @@ function FriendsChat() {
           <>
             <div className="mb-3 flex items-center gap-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
               <button onClick={() => setActive(null)} className="lg:hidden text-slate-500"><ArrowLeft size={20} /></button>
-              <Avatar id={active.friend_id} name={fname(active)} online={isOnline(active.last_seen)} size={9} />
+              <Avatar id={active.friend_id} name={fname(active)} online={isOnline(active.friend_id, active.last_seen)} size={9} />
               <div>
                 <div className="font-bold text-slate-900 dark:text-white">{fname(active)}</div>
-                <div className={cn('text-xs', isOnline(active.last_seen) ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
-                  {isOnline(active.last_seen) ? '● Online now' : 'Offline'}
-                </div>
+                {typing ? (
+                  <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
+                ) : (
+                  <div className={cn('text-xs', isOnline(active.friend_id, active.last_seen) ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
+                    {isOnline(active.friend_id, active.last_seen) ? '● Online now' : 'Offline'}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -296,7 +376,15 @@ function FriendsChat() {
             )}
             <div className="mt-3 flex gap-2">
               <Input placeholder={`Message ${fname(active).split(' ')[0]}…`} value={input}
-                onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
+                onChange={(e) => {
+                  setInput(e.target.value)
+                  const now = Date.now()
+                  if (user && now - lastTypingSent.current > 1200) {
+                    lastTypingSent.current = now
+                    channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { from: user.id } })
+                  }
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
               <Button onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
             </div>
           </>
