@@ -3,7 +3,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { Send, Trash2, Users, ArrowLeft, MessageCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { useApp } from '../store/app'
+import { isOnline } from '../components/PresenceTracker'
 import { GlassCard, Page, Input, Button, Empty } from '../components/ui'
 import { cn } from '../lib/utils'
 
@@ -22,7 +22,7 @@ type RoomMessage = {
   author_name: string
   created_at: string
 }
-type Friend = { friend_id: string; full_name: string; email: string; status: string }
+type Friend = { friend_id: string; full_name: string; email: string; status: string; last_seen?: string }
 
 function fname(f: Friend) {
   const n = (f.full_name || '').trim()
@@ -78,20 +78,24 @@ export function ChatPage() {
 // ============ FRIEND DIRECT MESSAGES ============
 function FriendsChat() {
   const { user } = useAuth()
-  const onlineIds = useApp((s) => s.onlineIds)
   const [friends, setFriends] = useState<Friend[]>([])
   const [active, setActive] = useState<Friend | null>(null)
   const [messages, setMessages] = useState<DMessage[]>([])
   const [input, setInput] = useState('')
+  const [, setTick] = useState(0)
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // load friends + refresh periodically so last_seen (online) stays current
   useEffect(() => {
     if (!user) return
-    supabase.rpc('my_friends').then(({ data }) => {
-      const accepted = ((data as Friend[]) ?? []).filter((f) => f.status === 'accepted')
-      setFriends(accepted)
+    const load = () => supabase.rpc('my_friends').then(({ data }) => {
+      setFriends(((data as Friend[]) ?? []).filter((f) => f.status === 'accepted'))
     })
+    load()
+    const t = setInterval(load, 25_000)
+    const tick = setInterval(() => setTick((n) => n + 1), 20_000)
+    return () => { clearInterval(t); clearInterval(tick) }
   }, [user?.id])
 
   const pairKey = useMemo(() => {
@@ -171,9 +175,9 @@ function FriendsChat() {
             <div className="space-y-1">
               {friends
                 .slice()
-                .sort((a, b) => (onlineIds.includes(b.friend_id) ? 1 : 0) - (onlineIds.includes(a.friend_id) ? 1 : 0))
+                .sort((a, b) => (isOnline(b.last_seen) ? 1 : 0) - (isOnline(a.last_seen) ? 1 : 0))
                 .map((f) => {
-                  const online = onlineIds.includes(f.friend_id)
+                  const online = isOnline(f.last_seen)
                   return (
                     <button key={f.friend_id} onClick={() => setActive(f)}
                       className={cn('flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition',
@@ -203,11 +207,11 @@ function FriendsChat() {
           <>
             <div className="mb-3 flex items-center gap-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
               <button onClick={() => setActive(null)} className="lg:hidden text-slate-500"><ArrowLeft size={20} /></button>
-              <Avatar id={active.friend_id} name={fname(active)} online={onlineIds.includes(active.friend_id)} size={9} />
+              <Avatar id={active.friend_id} name={fname(active)} online={isOnline(active.last_seen)} size={9} />
               <div>
                 <div className="font-bold text-slate-900 dark:text-white">{fname(active)}</div>
-                <div className={cn('text-xs', onlineIds.includes(active.friend_id) ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
-                  {onlineIds.includes(active.friend_id) ? '● Online now' : 'Offline'}
+                <div className={cn('text-xs', isOnline(active.last_seen) ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
+                  {isOnline(active.last_seen) ? '● Online now' : 'Offline'}
                 </div>
               </div>
             </div>

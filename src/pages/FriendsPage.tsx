@@ -4,10 +4,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Search, UserPlus, Check, X, Flame, UserMinus, Clock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { useApp } from '../store/app'
+import { isOnline } from '../components/PresenceTracker'
 import { Button, Empty, GlassCard, Input, Page, SectionTitle } from '../components/ui'
 
-type SearchRow = { id: string; full_name: string; email: string; xp: number; study_streak: number }
+type SearchRow = { id: string; full_name: string; email: string; xp: number; study_streak: number; last_seen?: string }
 type FriendRow = {
   friendship_id: string
   friend_id: string
@@ -17,6 +17,7 @@ type FriendRow = {
   study_streak: number
   status: 'pending' | 'accepted'
   direction: 'incoming' | 'outgoing'
+  last_seen?: string
 }
 
 /** Best display name: full name, else the part of the email before @. */
@@ -51,18 +52,34 @@ function Avatar({ id, name, online }: { id: string; name: string; online?: boole
 export function FriendsPage() {
   const { user } = useAuth()
   const qc = useQueryClient()
-  const onlineIds = useApp((s) => s.onlineIds)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchRow[]>([])
   const [searching, setSearching] = useState(false)
+  // tick so online status (from last_seen) re-evaluates as time passes
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 20_000)
+    return () => clearInterval(t)
+  }, [])
 
   const { data: friends = [] } = useQuery<FriendRow[]>({
     queryKey: ['friends', user?.id],
     enabled: !!user,
+    refetchInterval: 25_000,
     queryFn: async () => {
       const { data, error } = await supabase.rpc('my_friends')
       if (error) throw error
       return (data as FriendRow[]) ?? []
+    },
+  })
+
+  const { data: suggested = [] } = useQuery<SearchRow[]>({
+    queryKey: ['suggested', user?.id],
+    enabled: !!user,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const { data } = await supabase.rpc('suggested_users')
+      return (data as SearchRow[]) ?? []
     },
   })
 
@@ -94,7 +111,8 @@ export function FriendsPage() {
   const accepted = friends.filter((f) => f.status === 'accepted')
   const incoming = friends.filter((f) => f.status === 'pending' && f.direction === 'incoming')
   const outgoing = friends.filter((f) => f.status === 'pending' && f.direction === 'outgoing')
-  const onlineFriends = accepted.filter((f) => onlineIds.includes(f.friend_id))
+  const onlineFriends = accepted.filter((f) => isOnline(f.last_seen))
+  const suggestedFiltered = suggested.filter((s) => !friendIds.has(s.id))
   const onlineCount = onlineFriends.length
 
   async function sendRequest(addresseeId: string) {
@@ -151,10 +169,38 @@ export function FriendsPage() {
                 </div>
               )
             })}
-            {query.trim().length < 2 && (
-              <Empty emoji="🔎" text={'Type a name to find other students.\nSend them a friend request to connect!'} />
-            )}
           </div>
+
+          {/* discover — see people without searching */}
+          {query.trim().length < 2 && (
+            <div className="mt-2">
+              <div className="mb-2 mt-1 text-xs font-bold uppercase tracking-widest text-slate-400">
+                Discover students
+              </div>
+              {suggestedFiltered.length === 0 ? (
+                <Empty emoji="🦁" text={'No one else here yet.\nInvite friends with the Share link on the Get App page!'} />
+              ) : (
+                <div className="space-y-2">
+                  {suggestedFiltered.map((r) => {
+                    const online = isOnline(r.last_seen)
+                    return (
+                      <div key={r.id} className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
+                        <Avatar id={r.id} name={displayName(r)} online={online} />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(r)}</div>
+                          <div className="flex items-center gap-2 text-xs text-slate-500">
+                            {online ? <span className="font-semibold text-emerald-500">● Online</span>
+                              : <><span>⭐ {r.xp} XP</span><span className="flex items-center gap-0.5"><Flame size={11} /> {r.study_streak}</span></>}
+                          </div>
+                        </div>
+                        <Button size="sm" onClick={() => sendRequest(r.id)}><UserPlus size={15} /> Add</Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </GlassCard>
 
         <div className="space-y-5">
@@ -221,13 +267,13 @@ export function FriendsPage() {
                 {accepted
                   .slice()
                   .sort((a, b) => {
-                    const ao = onlineIds.includes(a.friend_id) ? 1 : 0
-                    const bo = onlineIds.includes(b.friend_id) ? 1 : 0
+                    const ao = isOnline(a.last_seen) ? 1 : 0
+                    const bo = isOnline(b.last_seen) ? 1 : 0
                     if (ao !== bo) return bo - ao
                     return b.xp - a.xp
                   })
                   .map((f) => {
-                    const online = onlineIds.includes(f.friend_id)
+                    const online = isOnline(f.last_seen)
                     return (
                       <div key={f.friendship_id} className="group flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
                         <Avatar id={f.friend_id} name={displayName(f)} online={online} />

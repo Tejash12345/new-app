@@ -1,42 +1,45 @@
 import { useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { useApp } from '../store/app'
 
 /**
- * Joins one global presence channel while logged in, so every page
- * (Friends, Chat, Dashboard) knows which users are online right now.
+ * Heartbeat: while logged in, stamps profiles.last_seen every 30s.
+ * "Online" is then computed as last_seen within the last ~75s — which
+ * self-heals (a closed app stops beating and goes offline), unlike raw
+ * websocket presence that keeps stale/background connections "online".
  */
 export function PresenceTracker() {
-  const { user, profile } = useAuth()
-  const setOnlineIds = useApp((s) => s.setOnlineIds)
+  const { user } = useAuth()
 
   useEffect(() => {
-    if (!user) {
-      setOnlineIds([])
-      return
+    if (!user) return
+    let alive = true
+    const beat = () => {
+      if (alive) {
+        supabase.from('profiles')
+          .update({ last_seen: new Date().toISOString() })
+          .eq('id', user.id)
+          .then(() => {})
+      }
     }
-    const channel = supabase.channel('global-presence', {
-      config: { presence: { key: user.id } },
-    })
-
-    channel
-      .on('presence', { event: 'sync' }, () => {
-        setOnlineIds(Object.keys(channel.presenceState()))
-      })
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.track({
-            name: profile?.full_name || 'Lion',
-            at: Date.now(),
-          })
-        }
-      })
-
+    beat()
+    const t = setInterval(beat, 30_000)
+    const onVisible = () => { if (document.visibilityState === 'visible') beat() }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
-      supabase.removeChannel(channel)
+      alive = false
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [user?.id, profile?.full_name])
+  }, [user?.id])
 
   return null
+}
+
+/** A user is online if they were active within this many milliseconds. */
+export const ONLINE_WINDOW_MS = 75_000
+
+export function isOnline(lastSeen: string | null | undefined) {
+  if (!lastSeen) return false
+  return Date.now() - new Date(lastSeen).getTime() < ONLINE_WINDOW_MS
 }
