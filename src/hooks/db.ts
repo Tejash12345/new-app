@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { notifyGuard } from '../lib/guard'
 import { useAuth } from './useAuth'
 
 let channelSeq = 0
@@ -13,6 +14,10 @@ export function useTable<T extends { id: string }>(
   const { user } = useAuth()
   const qc = useQueryClient()
   const key = [table, user?.id]
+
+  // after a limits change, ping the native app-blocker so it re-syncs and
+  // enforces the new caps/hours immediately (no-op on the plain web)
+  const syncGuard = () => { if (table === 'social_limits') notifyGuard() }
 
   const query = useQuery<T[]>({
     queryKey: key,
@@ -49,7 +54,7 @@ export function useTable<T extends { id: string }>(
       const { error } = await supabase.from(table).insert({ ...row, user_id: user!.id })
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: key }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: key }); syncGuard() },
   })
 
   const update = useMutation({
@@ -69,7 +74,7 @@ export function useTable<T extends { id: string }>(
     onError: (_e, _v, ctx) => {
       if (ctx?.prev) qc.setQueryData(key, ctx.prev)
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: key }),
+    onSettled: () => { qc.invalidateQueries({ queryKey: key }); syncGuard() },
   })
 
   const remove = useMutation({
@@ -77,7 +82,7 @@ export function useTable<T extends { id: string }>(
       const { error } = await supabase.from(table).delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: key }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: key }); syncGuard() },
   })
 
   return {
