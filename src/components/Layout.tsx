@@ -17,7 +17,7 @@ import { cn, levelForXp } from '../lib/utils'
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/feed', label: 'Tech Feed', icon: Clapperboard },
+  { to: '/feed', label: 'Feed', icon: Clapperboard },
   { to: '/planner', label: 'Planner', icon: CalendarDays },
   { to: '/tasks', label: 'Tasks', icon: CheckCircle2 },
   { to: '/focus', label: 'Focus', icon: Timer },

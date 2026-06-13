@@ -1,44 +1,56 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
   Heart, MessageCircle, Trash2, Plus, Film, FileText, Send,
-  Camera, Briefcase, Sparkles, X, Play, Cpu,
+  Camera, Briefcase, Sparkles, X, Play, Share2, ArrowLeft,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { TECH_CATEGORIES, type FeedPost, type FeedComment, type FeedType, type TechCategory } from '../lib/types'
+import { FEED_CATEGORIES, type FeedPost, type FeedComment, type FeedType, type FeedCategory } from '../lib/types'
 import { GlassCard, Page, Input, TextArea, Button, Empty, Modal } from '../components/ui'
 import { cn, timeAgo } from '../lib/utils'
 
-// ---------- tech-only helpers ----------
+// ---------- on-topic helpers (tech · biology · medical) ----------
 
 // keyword map used to auto-suggest a category and to keep the feed on-topic
-const TECH_HINTS: Record<TechCategory, string[]> = {
-  'AI & ML': ['ai', 'ml', 'machine learning', 'llm', 'gpt', 'neural', 'model', 'deep learning', 'openai', 'claude', 'gemini'],
+const CATEGORY_HINTS: Record<FeedCategory, string[]> = {
+  // technology
+  'AI & ML': ['ai', 'ml', 'machine learning', 'llm', 'gpt', 'neural net', 'deep learning', 'openai', 'claude', 'gemini'],
   'Web Dev': ['react', 'vue', 'angular', 'next', 'css', 'html', 'frontend', 'backend', 'node', 'web', 'tailwind', 'vite'],
   'Mobile': ['android', 'ios', 'flutter', 'swift', 'kotlin', 'react native', 'mobile app'],
   'Cloud & DevOps': ['aws', 'azure', 'gcp', 'docker', 'kubernetes', 'devops', 'ci/cd', 'terraform', 'cloud', 'serverless'],
   'Cybersecurity': ['security', 'hacking', 'pentest', 'vulnerability', 'cve', 'encryption', 'malware', 'infosec', 'cyber'],
   'Data': ['data', 'sql', 'analytics', 'pandas', 'database', 'bigquery', 'etl', 'warehouse', 'spark'],
-  'Programming': ['python', 'javascript', 'typescript', 'java', 'rust', 'go', 'c++', 'code', 'algorithm', 'programming', 'git'],
+  'Programming': ['python', 'javascript', 'typescript', 'java', 'rust', 'golang', 'c++', 'code', 'algorithm', 'programming', 'git'],
   'Gadgets': ['gadget', 'iphone', 'laptop', 'gpu', 'chip', 'hardware', 'device', 'wearable', 'review'],
   'Blockchain': ['blockchain', 'crypto', 'web3', 'ethereum', 'bitcoin', 'solidity', 'smart contract', 'nft'],
+  // biology
+  'Biology': ['biology', 'cell', 'organism', 'ecology', 'evolution', 'species', 'protein', 'enzyme', 'microbio', 'botany', 'zoology'],
+  'Genetics': ['gene', 'genetic', 'genome', 'crispr', 'dna', 'rna', 'mutation', 'heredity', 'chromosome'],
+  'Neuroscience': ['brain', 'neuron', 'neuro', 'cognitive', 'synapse', 'nervous system', 'neural'],
+  'Biotech': ['biotech', 'bioinformatics', 'gene editing', 'vaccine', 'lab', 'sequencing', 'stem cell'],
+  // medical
+  'Medicine': ['medicine', 'clinical', 'disease', 'treatment', 'diagnosis', 'drug', 'patient', 'therapy', 'symptom', 'medical', 'surgery'],
+  'Healthcare': ['healthcare', 'hospital', 'nurse', 'doctor', 'health', 'wellness', 'public health', 'medtech', 'anatomy'],
+  // misc
   'Startups': ['startup', 'founder', 'saas', 'product', 'funding', 'venture', 'launch', 'mvp'],
 }
-const ALL_TECH_WORDS = Object.values(TECH_HINTS).flat()
+const ALL_TOPIC_WORDS = Object.values(CATEGORY_HINTS).flat()
 
-/** Light guard: does this text look like technology content? */
-function looksTechnical(text: string) {
+/** Light guard: does this text look like an allowed (tech/bio/medical) topic? */
+function looksOnTopic(text: string) {
   const t = text.toLowerCase()
-  return ALL_TECH_WORDS.some((w) => t.includes(w))
+  return ALL_TOPIC_WORDS.some((w) => t.includes(w))
 }
 
-/** Suggest the best-fit tech category for some text. */
-function suggestCategory(text: string): TechCategory | null {
+/** Suggest the best-fit category for some text. */
+function suggestCategory(text: string): FeedCategory | null {
   const t = text.toLowerCase()
-  let best: TechCategory | null = null
+  let best: FeedCategory | null = null
   let bestScore = 0
-  for (const cat of TECH_CATEGORIES) {
-    const score = TECH_HINTS[cat].filter((w) => t.includes(w)).length
+  for (const cat of FEED_CATEGORIES) {
+    const score = CATEGORY_HINTS[cat].filter((w) => t.includes(w)).length
     if (score > bestScore) { bestScore = score; best = cat }
   }
   return best
@@ -82,14 +94,22 @@ function Avatar({ id, name, size = 9 }: { id: string; name: string; size?: numbe
 const CAT_TINT: Record<string, string> = {
   'AI & ML': '#A76CFF', 'Web Dev': '#6C8CFF', 'Mobile': '#00BFA6',
   'Cloud & DevOps': '#42C7F5', 'Cybersecurity': '#FF6584', 'Data': '#FFB454',
-  'Programming': '#6C8CFF', 'Gadgets': '#8E8E93', 'Blockchain': '#F7931A', 'Startups': '#FF6584',
+  'Programming': '#6C8CFF', 'Gadgets': '#8E8E93', 'Blockchain': '#F7931A',
+  'Biology': '#34C759', 'Genetics': '#30B0C7', 'Neuroscience': '#AF52DE', 'Biotech': '#00BFA6',
+  'Medicine': '#FF3B30', 'Healthcare': '#FF6584', 'Startups': '#FF9F0A',
+}
+const CAT_EMOJI: Record<string, string> = {
+  'AI & ML': '🤖', 'Web Dev': '🌐', 'Mobile': '📱', 'Cloud & DevOps': '☁️',
+  'Cybersecurity': '🔐', 'Data': '📊', 'Programming': '⌨️', 'Gadgets': '🔌', 'Blockchain': '⛓️',
+  'Biology': '🧬', 'Genetics': '🧬', 'Neuroscience': '🧠', 'Biotech': '🔬',
+  'Medicine': '⚕️', 'Healthcare': '🏥', 'Startups': '🚀',
 }
 function CategoryChip({ cat }: { cat: string }) {
   const tint = CAT_TINT[cat] ?? '#6C8CFF'
   return (
     <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold"
       style={{ background: `${tint}22`, color: tint }}>
-      <Cpu size={11} /> {cat}
+      <span>{CAT_EMOJI[cat] ?? '🏷️'}</span> {cat}
     </span>
   )
 }
@@ -103,17 +123,36 @@ const TABS: { key: TabKey; label: string; icon: typeof Film }[] = [
   { key: 'linkedin', label: 'LinkedIn', icon: Briefcase },
 ]
 
+// shareable link: external embeds share their original URL, user content
+// shares an in-app deep link that opens the exact post
+function shareUrlFor(post: FeedPost) {
+  if ((post.type === 'instagram' || post.type === 'linkedin') && post.embed_url) return post.embed_url
+  return `${window.location.origin}/feed?post=${post.id}`
+}
+
 export function FeedPage() {
   const { user, profile } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const focusId = searchParams.get('post')
+
   const [posts, setPosts] = useState<FeedPost[]>([])
   const [likes, setLikes] = useState<{ post_id: string; user_id: string }[]>([])
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<TabKey>('all')
-  const [cat, setCat] = useState<'All' | TechCategory>('All')
+  const [cat, setCat] = useState<'All' | FeedCategory>('All')
   const [composerOpen, setComposerOpen] = useState(false)
   const [commentsFor, setCommentsFor] = useState<FeedPost | null>(null)
   const [needsUpgrade, setNeedsUpgrade] = useState(false)
+  const [focusPost, setFocusPost] = useState<FeedPost | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function flash(msg: string) {
+    setToast(msg)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 1800)
+  }
 
   async function load() {
     const { data, error } = await supabase
@@ -147,6 +186,15 @@ export function FeedPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id])
 
+  // resolve a shared ?post=<id> deep link (fetch it if it isn't already loaded)
+  useEffect(() => {
+    if (!focusId) { setFocusPost(null); return }
+    const found = posts.find((p) => p.id === focusId)
+    if (found) { setFocusPost(found); return }
+    supabase.from('feed_posts').select('*').eq('id', focusId).maybeSingle()
+      .then(({ data }) => setFocusPost((data as FeedPost) ?? null))
+  }, [focusId, posts])
+
   const likeCount = useMemo(() => {
     const m: Record<string, number> = {}
     for (const l of likes) m[l.post_id] = (m[l.post_id] ?? 0) + 1
@@ -160,7 +208,6 @@ export function FeedPage() {
   async function toggleLike(post: FeedPost) {
     if (!user) return
     const mine = likedByMe.has(post.id)
-    // optimistic
     setLikes((prev) => mine
       ? prev.filter((l) => !(l.post_id === post.id && l.user_id === user.id))
       : [...prev, { post_id: post.id, user_id: user.id }])
@@ -174,16 +221,35 @@ export function FeedPage() {
   async function removePost(post: FeedPost) {
     setPosts((p) => p.filter((x) => x.id !== post.id))
     await supabase.from('feed_posts').delete().eq('id', post.id)
+    if (focusPost?.id === post.id) setSearchParams({})
   }
 
-  const filtered = posts.filter((p) =>
-    (tab === 'all' || p.type === tab) && (cat === 'All' || p.category === cat))
+  async function sharePost(post: FeedPost) {
+    const url = shareUrlFor(post)
+    const title = post.title || `${post.author_name}'s ${post.type}`
+    const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> }
+    if (nav.share) {
+      try { await nav.share({ title, text: post.body || title, url }); return }
+      catch { return } // user dismissed the share sheet
+    }
+    try { await navigator.clipboard.writeText(url); flash('Link copied!') }
+    catch { flash(url) }
+  }
 
-  const isAdmin = profile?.role === 'admin'
+  const cardProps = (p: FeedPost) => ({
+    liked: likedByMe.has(p.id),
+    likeCount: likeCount[p.id] ?? 0,
+    commentCount: commentCounts[p.id] ?? 0,
+    canDelete: p.user_id === user?.id || profile?.role === 'admin',
+    onLike: () => toggleLike(p),
+    onComment: () => setCommentsFor(p),
+    onDelete: () => removePost(p),
+    onShare: () => sharePost(p),
+  })
 
   if (needsUpgrade) {
     return (
-      <Page title="Tech Feed" subtitle="Reels & posts — technology only 🦁">
+      <Page title="Feed" subtitle="Reels & posts — tech · biology · medical 🦁">
         <GlassCard>
           <Empty emoji="🛠️" text={'The feed needs its database tables.\nRun supabase/upgrade-9.sql in the Supabase SQL Editor, then refresh.'} />
         </GlassCard>
@@ -191,15 +257,35 @@ export function FeedPage() {
     )
   }
 
+  // ----- shared single-post view (deep link) -----
+  if (focusId) {
+    return (
+      <Page title="Shared post" subtitle="Someone shared this with you 🦁">
+        <button onClick={() => setSearchParams({})}
+          className="mb-4 flex items-center gap-1.5 text-sm font-semibold text-brand-500">
+          <ArrowLeft size={16} /> Back to feed
+        </button>
+        <div className="mx-auto max-w-xl">
+          {focusPost ? (
+            <FeedCard post={focusPost} {...cardProps(focusPost)} />
+          ) : (
+            <GlassCard><Empty emoji="🔍" text={'This post could not be found.\nIt may have been deleted.'} /></GlassCard>
+          )}
+        </div>
+        {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} />}
+        <Toast msg={toast} />
+      </Page>
+    )
+  }
+
+  const filtered = posts.filter((p) =>
+    (tab === 'all' || p.type === tab) && (cat === 'All' || p.category === cat))
+
   return (
     <Page
-      title="Tech Feed"
-      subtitle="Reels & posts — technology only 🦁"
-      actions={
-        <Button onClick={() => setComposerOpen(true)}>
-          <Plus size={16} /> Create
-        </Button>
-      }
+      title="Feed"
+      subtitle="Reels & posts — tech · biology · medical 🦁"
+      actions={<Button onClick={() => setComposerOpen(true)}><Plus size={16} /> Create</Button>}
     >
       {/* type tabs */}
       <div className="mb-4 flex flex-wrap gap-2">
@@ -213,14 +299,14 @@ export function FeedPage() {
         ))}
       </div>
 
-      {/* tech category filter */}
+      {/* category filter */}
       <div className="mb-5 flex flex-wrap gap-1.5">
-        {(['All', ...TECH_CATEGORIES] as const).map((c) => (
+        {(['All', ...FEED_CATEGORIES] as const).map((c) => (
           <button key={c} onClick={() => setCat(c)}
             className={cn('rounded-full px-3 py-1 text-xs font-semibold transition',
               cat === c ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
                 : 'bg-slate-400/15 text-slate-600 dark:bg-white/10 dark:text-slate-300 hover:bg-slate-400/25')}>
-            {c}
+            {c === 'All' ? 'All' : `${CAT_EMOJI[c] ?? ''} ${c}`}
           </button>
         ))}
       </div>
@@ -229,48 +315,49 @@ export function FeedPage() {
         <div className="py-20 text-center text-4xl animate-pulse">🦁</div>
       ) : filtered.length === 0 ? (
         <GlassCard>
-          <Empty emoji="📡" text={'Nothing here yet.\nTap Create to share a tech reel, post, or embed an Instagram reel / LinkedIn post.'} />
+          <Empty emoji="📡" text={'Nothing here yet.\nTap Create to share a reel, post, or embed an Instagram reel / LinkedIn post.'} />
         </GlassCard>
       ) : tab === 'reel' ? (
-        // reels: focused vertical column
         <div className="mx-auto flex max-w-md flex-col gap-6">
-          {filtered.map((p) => (
-            <FeedCard key={p.id} post={p} reelMode
-              liked={likedByMe.has(p.id)} likeCount={likeCount[p.id] ?? 0}
-              commentCount={commentCounts[p.id] ?? 0}
-              canDelete={p.user_id === user?.id || isAdmin}
-              onLike={() => toggleLike(p)} onComment={() => setCommentsFor(p)} onDelete={() => removePost(p)} />
-          ))}
+          {filtered.map((p) => <FeedCard key={p.id} post={p} reelMode {...cardProps(p)} />)}
         </div>
       ) : (
-        // masonry-ish grid
         <div className="columns-1 gap-5 sm:columns-2 lg:columns-3 [&>*]:mb-5">
           {filtered.map((p) => (
             <div key={p.id} className="break-inside-avoid">
-              <FeedCard post={p}
-                liked={likedByMe.has(p.id)} likeCount={likeCount[p.id] ?? 0}
-                commentCount={commentCounts[p.id] ?? 0}
-                canDelete={p.user_id === user?.id || isAdmin}
-                onLike={() => toggleLike(p)} onComment={() => setCommentsFor(p)} onDelete={() => removePost(p)} />
+              <FeedCard post={p} {...cardProps(p)} />
             </div>
           ))}
         </div>
       )}
 
       <Composer open={composerOpen} onClose={() => setComposerOpen(false)} onPosted={load} />
-      {commentsFor && (
-        <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} />
-      )}
+      {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} />}
+      <Toast msg={toast} />
     </Page>
+  )
+}
+
+function Toast({ msg }: { msg: string | null }) {
+  return (
+    <AnimatePresence>
+      {msg && (
+        <motion.div
+          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
+          className="fixed bottom-24 left-1/2 z-[70] -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-lg dark:bg-white dark:text-slate-900">
+          {msg}
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }
 
 // ================= one feed item =================
 function FeedCard({
-  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete,
+  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete, onShare,
 }: {
   post: FeedPost; reelMode?: boolean; liked: boolean; likeCount: number; commentCount: number
-  canDelete: boolean; onLike: () => void; onComment: () => void; onDelete: () => void
+  canDelete: boolean; onLike: () => void; onComment: () => void; onDelete: () => void; onShare: () => void
 }) {
   const igEmbed = post.type === 'instagram' && post.embed_url ? instagramEmbedUrl(post.embed_url) : null
   const liEmbed = post.type === 'linkedin' && post.embed_url ? linkedinEmbedUrl(post.embed_url) : null
@@ -314,26 +401,20 @@ function FeedCard({
           igEmbed ? (
             <iframe src={igEmbed} title="Instagram" loading="lazy"
               className="w-full" style={{ height: 560, border: 0 }} scrolling="no" allowTransparency />
-          ) : (
-            <BrokenEmbed url={post.embed_url} kind="Instagram" />
-          )
+          ) : <BrokenEmbed url={post.embed_url} kind="Instagram" />
         )}
         {post.type === 'linkedin' && (
           liEmbed ? (
             <iframe src={liEmbed} title="LinkedIn" loading="lazy"
               className="w-full" style={{ height: 560, border: 0 }} allowFullScreen />
-          ) : (
-            <BrokenEmbed url={post.embed_url} kind="LinkedIn" />
-          )
+          ) : <BrokenEmbed url={post.embed_url} kind="LinkedIn" />
         )}
       </div>
 
       {/* tags */}
       {post.tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-4 pt-3">
-          {post.tags.map((t) => (
-            <span key={t} className="text-xs font-semibold text-brand-500">#{t}</span>
-          ))}
+          {post.tags.map((t) => <span key={t} className="text-xs font-semibold text-brand-500">#{t}</span>)}
         </div>
       )}
 
@@ -348,12 +429,10 @@ function FeedCard({
           className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 dark:text-slate-400">
           <MessageCircle size={17} /> {commentCount > 0 ? commentCount : ''}
         </button>
-        {post.embed_url && (
-          <a href={post.embed_url} target="_blank" rel="noreferrer"
-            className="ml-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-slate-400 hover:text-brand-500">
-            Open original ↗
-          </a>
-        )}
+        <button onClick={onShare} title="Share"
+          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
+          <Share2 size={16} /> Share
+        </button>
       </div>
     </GlassCard>
   )
@@ -363,9 +442,7 @@ function BrokenEmbed({ url, kind }: { url: string | null; kind: string }) {
   return (
     <div className="mx-4 mb-2 rounded-2xl bg-amber-400/10 px-4 py-6 text-center">
       <div className="text-3xl">🔗</div>
-      <p className="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-300">
-        Couldn't read this {kind} link.
-      </p>
+      <p className="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-300">Couldn't read this {kind} link.</p>
       {url && (
         <a href={url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-brand-500 underline">
           Open on {kind} ↗
@@ -379,7 +456,7 @@ function BrokenEmbed({ url, kind }: { url: string | null; kind: string }) {
 function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => void; onPosted: () => void }) {
   const { user, profile } = useAuth()
   const [type, setType] = useState<FeedType>('post')
-  const [category, setCategory] = useState<TechCategory>('Programming')
+  const [category, setCategory] = useState<FeedCategory>('Programming')
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [tags, setTags] = useState('')
@@ -396,7 +473,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
     setTags(''); setUrl(''); setFile(null); setError(null); setBusy(false)
   }
 
-  // auto-suggest a tech category as the user types
+  // auto-suggest a category as the user types
   useEffect(() => {
     const guess = suggestCategory(`${title} ${body} ${tags}`)
     if (guess) setCategory(guess)
@@ -407,24 +484,15 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
     if (!user) return
     setError(null)
 
-    // ---- validate per type ----
-    if (type === 'post' && !body.trim() && !file) {
-      setError('Write something or add an image.'); return
-    }
-    if (type === 'reel' && !file) {
-      setError('Pick a video to upload for your reel.'); return
-    }
-    if (type === 'instagram') {
-      if (!instagramEmbedUrl(url)) { setError('Paste a valid Instagram reel/post link.'); return }
-    }
-    if (type === 'linkedin') {
-      if (!linkedinEmbedUrl(url)) { setError('Paste a valid LinkedIn post link (or its embed link).'); return }
-    }
+    if (type === 'post' && !body.trim() && !file) { setError('Write something or add an image.'); return }
+    if (type === 'reel' && !file) { setError('Pick a video to upload for your reel.'); return }
+    if (type === 'instagram' && !instagramEmbedUrl(url)) { setError('Paste a valid Instagram reel/post link.'); return }
+    if (type === 'linkedin' && !linkedinEmbedUrl(url)) { setError('Paste a valid LinkedIn post link (or its embed link).'); return }
 
-    // ---- tech-only guard for written content ----
+    // on-topic guard for written content
     const text = `${title} ${body} ${tags}`.trim()
-    if ((type === 'post' || type === 'reel') && text && !looksTechnical(text)) {
-      setError('This feed is technology-only — mention the tech topic (e.g. React, AI, Python, cloud) so it fits a category.')
+    if ((type === 'post' || type === 'reel') && text && !looksOnTopic(text)) {
+      setError('This feed is for technology, biology & medical topics — mention the subject (e.g. React, DNA, clinical trial) so it fits a category.')
       return
     }
 
@@ -473,8 +541,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
   ]
 
   return (
-    <Modal open={open} onClose={() => { reset(); onClose() }} title="Share to the Tech Feed" wide>
-      {/* type picker */}
+    <Modal open={open} onClose={() => { reset(); onClose() }} title="Share to the Feed" wide>
       <div className="mb-4 grid grid-cols-4 gap-2">
         {TYPES.map(({ key, label, icon: Icon }) => (
           <button key={key} onClick={() => { setType(key); setFile(null); setError(null) }}
@@ -486,11 +553,10 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
         ))}
       </div>
 
-      {/* category */}
-      <label className="mb-1 block text-xs font-bold uppercase tracking-widest text-slate-400">Tech category</label>
-      <select value={category} onChange={(e) => setCategory(e.target.value as TechCategory)}
+      <label className="mb-1 block text-xs font-bold uppercase tracking-widest text-slate-400">Category</label>
+      <select value={category} onChange={(e) => setCategory(e.target.value as FeedCategory)}
         className="mb-3 w-full rounded-2xl border border-slate-200/60 bg-white/70 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand-400/60 dark:border-white/10 dark:bg-white/5">
-        {TECH_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        {FEED_CATEGORIES.map((c) => <option key={c} value={c}>{`${CAT_EMOJI[c] ?? ''} ${c}`}</option>)}
       </select>
 
       {(type === 'instagram' || type === 'linkedin') && (
@@ -504,7 +570,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
               : 'https://www.linkedin.com/posts/...activity-XXXXXXXXXXXXXXXXXX'} />
           <p className="mt-1 text-[11px] text-slate-400">
             {type === 'instagram'
-              ? 'Paste the share link of any tech reel/post — it embeds with Instagram’s official player.'
+              ? 'Paste the share link of any reel/post — it embeds with Instagram’s official player.'
               : 'Use the post’s “Copy link”, or its “Embed this post” link from LinkedIn.'}
           </p>
         </div>
@@ -518,7 +584,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
       <TextArea rows={3} value={body} onChange={(e) => setBody(e.target.value)}
         placeholder={type === 'reel' ? 'Caption your reel…'
           : (type === 'instagram' || type === 'linkedin') ? 'Add a note (optional)…'
-          : 'Share a tech tip, news, or question…'} maxLength={1000} />
+          : 'Share a tip, news, or question about tech, biology or medicine…'} maxLength={1000} />
 
       {(type === 'post' || type === 'reel') && (
         <div className="mt-3">
@@ -539,7 +605,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
       )}
 
       <Input className="mt-3" value={tags} onChange={(e) => setTags(e.target.value)}
-        placeholder="Tags: react, ai, devops" />
+        placeholder="Tags: react, dna, cardiology" />
 
       {error && (
         <div className="mt-3 rounded-2xl bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-500">{error}</div>

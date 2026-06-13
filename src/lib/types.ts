@@ -129,11 +129,12 @@ export type LeaderboardRow = {
   study_streak: number
 }
 
-// ---------- Tech Feed ----------
+// ---------- Feed ----------
 export type FeedType = 'post' | 'reel' | 'instagram' | 'linkedin'
 
-/** The only categories allowed — keeps the feed technology-only. */
-export const TECH_CATEGORIES = [
+/** Allowed feed categories — technology, biology and medical topics. */
+export const FEED_CATEGORIES = [
+  // technology
   'AI & ML',
   'Web Dev',
   'Mobile',
@@ -143,16 +144,25 @@ export const TECH_CATEGORIES = [
   'Programming',
   'Gadgets',
   'Blockchain',
+  // biology
+  'Biology',
+  'Genetics',
+  'Neuroscience',
+  'Biotech',
+  // medical
+  'Medicine',
+  'Healthcare',
+  // misc
   'Startups',
 ] as const
-export type TechCategory = (typeof TECH_CATEGORIES)[number]
+export type FeedCategory = (typeof FEED_CATEGORIES)[number]
 
 export type FeedPost = {
   id: string
   user_id: string
   author_name: string
   type: FeedType
-  category: TechCategory
+  category: FeedCategory
   title: string
   body: string
   media_url: string | null
