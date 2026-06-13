@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Clock, Shield, Square } from 'lucide-react'
+import { Clock, Square } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useTable } from '../hooks/db'
 import type { SocialLimit, SocialSession } from '../lib/types'
@@ -241,10 +241,6 @@ export function WellbeingPage() {
         </GlassCard>
       )}
 
-      <p className="mt-6 flex items-center gap-2 text-xs text-slate-400">
-        <Shield size={14} />
-        Websites can't read other apps' screen time, so FocusLion uses honest self-tracked sessions — the habit of starting the timer is itself a powerful awareness tool.
-      </p>
     </Page>
   )
 }

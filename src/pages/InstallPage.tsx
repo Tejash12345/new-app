@@ -65,7 +65,7 @@ export function InstallPage() {
             <span className="flex items-center gap-2"><Download size={18} className="text-brand-500 shrink-0" /> Download Android app</span>
           </SectionTitle>
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            Prefer a real installable file? Download FocusLion and open it on your phone.
+            One app does it all — the full FocusLion experience <b>plus the built-in app blocker</b>. Download and open it on your phone.
           </p>
           <a href="/focuslion.apk" download className="mt-4 block">
             <Button size="lg" className="w-full">
@@ -76,21 +76,11 @@ export function InstallPage() {
             Android asks to allow "Install unknown apps" the first time — tap Allow, then Install.
           </p>
 
-          <div className="my-5 h-px bg-slate-200/60 dark:bg-white/10" />
-
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-400/15 text-xl">🦁</div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-white">
-                <Shield size={15} className="shrink-0" /> FocusLion Guard
-              </div>
-              <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
-                Companion blocker — truly blocks apps outside your allowed hours.
-              </p>
-              <a href="/focuslion-guard.apk" download className="mt-3 inline-block">
-                <Button variant="soft"><Download size={16} className="shrink-0" /> Download Guard.apk</Button>
-              </a>
-            </div>
+          <div className="mt-4 flex items-start gap-2.5 rounded-2xl bg-amber-400/10 px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+            <Shield size={16} className="mt-0.5 shrink-0 text-amber-500" />
+            <span>
+              <b className="text-slate-900 dark:text-white">App blocker included.</b> Choose your apps and hours in <b>Wellbeing</b>, then tap the shield button inside the app to truly block them outside your allowed time.
+            </span>
           </div>
         </GlassCard>
 
