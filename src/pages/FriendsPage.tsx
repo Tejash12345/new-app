@@ -5,6 +5,7 @@ import { Search, UserPlus, Check, X, Flame, UserMinus, Clock } from 'lucide-reac
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { useOnlineCheck } from '../hooks/useOnline'
+import { StoryRing } from '../components/Stories'
 import { Button, Empty, GlassCard, Input, Page, SectionTitle } from '../components/ui'
 
 type SearchRow = { id: string; full_name: string; email: string; avatar_url?: string; xp: number; study_streak: number; last_seen?: string }
@@ -39,12 +40,14 @@ function avatarColor(id: string) {
 function Avatar({ id, name, url, online }: { id: string; name: string; url?: string | null; online?: boolean }) {
   return (
     <div className="relative shrink-0">
-      <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full text-base font-bold text-white"
-        style={{ background: avatarColor(id) }}>
-        {url
-          ? <img src={url} alt="" className="h-full w-full object-cover" />
-          : (name || '?').slice(0, 1).toUpperCase()}
-      </div>
+      <StoryRing userId={id}>
+        <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full text-base font-bold text-white"
+          style={{ background: avatarColor(id) }}>
+          {url
+            ? <img src={url} alt="" className="h-full w-full object-cover" />
+            : (name || '?').slice(0, 1).toUpperCase()}
+        </div>
+      </StoryRing>
       {online && (
         <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />
       )}

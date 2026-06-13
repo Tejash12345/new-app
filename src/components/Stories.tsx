@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Plus, X, Eye, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -37,7 +37,6 @@ function initialOf(name: string) {
   return (name || '?').slice(0, 1).toUpperCase()
 }
 
-/** Small circular avatar used in the bar and viewer lists. */
 function Pic({ url, name, className }: { url?: string; name: string; className?: string }) {
   return (
     <div className={cn('flex items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 font-bold text-white', className)}>
@@ -74,31 +73,107 @@ function buildGroups(stories: Story[], seen: Set<string>, myId?: string): Group[
   return groups
 }
 
-export function StoriesBar() {
+// ----------------------------------------------------------------------------
+// Global context: avatars anywhere in the app can show a story ring and open
+// the viewer, without each surface re-loading stories.
+// ----------------------------------------------------------------------------
+type StoriesCtx = {
+  available: boolean
+  groups: Group[]
+  hasStory: (id?: string | null) => boolean
+  hasUnseen: (id?: string | null) => boolean
+  openStory: (id?: string | null) => void
+  reload: () => void
+}
+const Ctx = createContext<StoriesCtx>({
+  available: false, groups: [], hasStory: () => false, hasUnseen: () => false, openStory: () => {}, reload: () => {},
+})
+export function useStories() { return useContext(Ctx) }
+
+export function StoriesProvider({ children }: { children: ReactNode }) {
   const { user, profile } = useAuth()
   const [stories, setStories] = useState<Story[]>([])
   const [seen, setSeen] = useState<Set<string>>(new Set())
-  const [openAt, setOpenAt] = useState<number | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const [missing, setMissing] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const [available, setAvailable] = useState(true)
+  const [openUid, setOpenUid] = useState<string | null>(null)
 
   const myName = profile?.full_name?.trim() || profile?.email?.split('@')[0] || 'Student'
   const myAvatar = profile?.avatar_url || ''
 
   async function load() {
-    if (!user) return
+    if (!user) { setStories([]); setSeen(new Set()); return }
     const nowIso = new Date().toISOString()
     const { data, error } = await supabase
       .from('stories').select('*').gt('expires_at', nowIso).order('created_at', { ascending: true })
-    if (error) { setMissing(true); return }
-    setMissing(false)
+    if (error) { setAvailable(false); setStories([]); return }
+    setAvailable(true)
     setStories((data as Story[]) ?? [])
     const { data: views } = await supabase.from('story_views').select('story_id').eq('viewer_id', user.id)
     setSeen(new Set(((views as { story_id: string }[]) ?? []).map((v) => v.story_id)))
   }
-
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [user?.id])
+
+  const groups = useMemo(() => buildGroups(stories, seen, user?.id), [stories, seen, user?.id])
+  const hasStory = (id?: string | null) => !!id && groups.some((g) => g.user_id === id)
+  const hasUnseen = (id?: string | null) => !!id && groups.some((g) => g.user_id === id && !g.allSeen)
+  const openStory = (id?: string | null) => { if (id && groups.some((g) => g.user_id === id)) setOpenUid(id) }
+  const startIdx = openUid ? groups.findIndex((g) => g.user_id === openUid) : -1
+
+  return (
+    <Ctx.Provider value={{ available, groups, hasStory, hasUnseen, openStory, reload: load }}>
+      {children}
+      <AnimatePresence>
+        {startIdx >= 0 && (
+          <StoryViewer
+            groups={groups} start={startIdx} myId={user?.id} myName={myName} myAvatar={myAvatar}
+            onSeen={(id) => setSeen((s) => new Set(s).add(id))}
+            onClose={() => { setOpenUid(null); load() }}
+            onDeleted={() => { setOpenUid(null); load() }}
+          />
+        )}
+      </AnimatePresence>
+    </Ctx.Provider>
+  )
+}
+
+/**
+ * Wraps any avatar so it shows a story ring (gradient = unseen, gray = seen)
+ * and opens the viewer on tap when that user has an active story. When there's
+ * no story it renders the child unchanged, so layout is unaffected.
+ * Pass `display` to show the ring without hijacking the tap (e.g. nav avatar).
+ */
+export function StoryRing({ userId, children, display, className }: {
+  userId?: string | null; children: ReactNode; display?: boolean; className?: string
+}) {
+  const { hasStory, hasUnseen, openStory } = useStories()
+  if (!hasStory(userId)) return <>{children}</>
+  const ring = cn('inline-flex rounded-full p-[2px]', hasUnseen(userId)
+    ? 'bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-500' : 'bg-slate-300 dark:bg-white/25', className)
+  const inner = <span className="inline-flex rounded-full bg-white p-[1.5px] dark:bg-slate-900">{children}</span>
+  if (display) return <span className={ring}>{inner}</span>
+  return (
+    <span
+      role="button" tabIndex={0}
+      onClick={(e) => { e.stopPropagation(); openStory(userId) }}
+      onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openStory(userId) } }}
+      className={cn(ring, 'cursor-pointer')}
+    >
+      {inner}
+    </span>
+  )
+}
+
+// ----------------------------------------------------------------------------
+// The story bar shown at the top of the feed (upload + browse).
+// ----------------------------------------------------------------------------
+export function StoriesBar() {
+  const { user, profile } = useAuth()
+  const { available, groups, openStory, reload } = useStories()
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const myName = profile?.full_name?.trim() || profile?.email?.split('@')[0] || 'Student'
+  const myAvatar = profile?.avatar_url || ''
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -120,22 +195,21 @@ export function StoriesBar() {
         user_id: user.id, author_name: myName, author_avatar_url: myAvatar, media_url: url, caption: '',
       })
       if (insErr) { alert(`Could not post story: ${insErr.message}`); return }
-      await load()
+      reload()
     } finally {
       setUploading(false)
     }
   }
 
-  if (missing) return null
-  const groups = buildGroups(stories, seen, user?.id)
-  const myGroup = groups.find((g) => g.user_id === user?.id)
-  const others = groups.filter((g) => g.user_id !== user?.id)
+  if (!user || !available) return null
+  const myGroup = groups.find((g) => g.user_id === user.id)
+  const others = groups.filter((g) => g.user_id !== user.id)
 
   return (
     <div className="mb-5 -mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
       {/* your story */}
       <button
-        onClick={() => (myGroup ? setOpenAt(groups.indexOf(myGroup)) : fileRef.current?.click())}
+        onClick={() => (myGroup ? openStory(user.id) : fileRef.current?.click())}
         className="flex w-16 shrink-0 flex-col items-center gap-1"
       >
         <div className="relative">
@@ -157,7 +231,7 @@ export function StoriesBar() {
 
       {/* others */}
       {others.map((g) => (
-        <button key={g.user_id} onClick={() => setOpenAt(groups.indexOf(g))} className="flex w-16 shrink-0 flex-col items-center gap-1">
+        <button key={g.user_id} onClick={() => openStory(g.user_id)} className="flex w-16 shrink-0 flex-col items-center gap-1">
           <div className={cn('rounded-full p-[2.5px]', g.allSeen ? 'bg-slate-300 dark:bg-white/20'
             : 'bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-500')}>
             <div className="rounded-full bg-white p-[2px] dark:bg-slate-900">
@@ -169,21 +243,6 @@ export function StoriesBar() {
       ))}
 
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPick} />
-
-      <AnimatePresence>
-        {openAt !== null && groups[openAt] && (
-          <StoryViewer
-            groups={groups}
-            start={openAt}
-            myId={user?.id}
-            myName={myName}
-            myAvatar={myAvatar}
-            onSeen={(id) => setSeen((s) => new Set(s).add(id))}
-            onClose={() => { setOpenAt(null); load() }}
-            onDeleted={() => { setOpenAt(null); load() }}
-          />
-        )}
-      </AnimatePresence>
     </div>
   )
 }
@@ -214,7 +273,6 @@ function StoryViewer({
     else if (gi > 0) go(gi - 1, 0)
   }
 
-  // record a view (not your own) when a story is shown
   useEffect(() => {
     if (!story || mine || !myId) return
     onSeen(story.id)
@@ -225,7 +283,6 @@ function StoryViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story?.id])
 
-  // auto-advance
   useEffect(() => {
     if (!story || paused || viewers !== null) return
     const t = setTimeout(next, STORY_MS)

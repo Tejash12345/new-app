@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { useAuth } from '../hooks/useAuth'
 import { useAvatars } from '../hooks/useAvatars'
+import { StoryRing } from '../components/Stories'
 import { useOnlineCheck } from '../hooks/useOnline'
 import { GlassCard, Page, Input, Button, Empty } from '../components/ui'
 import { cn } from '../lib/utils'
@@ -54,12 +55,14 @@ function Avatar({ id, name, url, online, size = 11 }: { id: string; name: string
   const px = size * 4
   return (
     <div className="relative shrink-0">
-      <div className="flex items-center justify-center overflow-hidden rounded-full font-bold text-white"
-        style={{ background: avatarColor(id), height: px, width: px, fontSize: px * 0.4 }}>
-        {url
-          ? <img src={url} alt="" className="h-full w-full object-cover" />
-          : (name || '?').slice(0, 1).toUpperCase()}
-      </div>
+      <StoryRing userId={id}>
+        <div className="flex items-center justify-center overflow-hidden rounded-full font-bold text-white"
+          style={{ background: avatarColor(id), height: px, width: px, fontSize: px * 0.4 }}>
+          {url
+            ? <img src={url} alt="" className="h-full w-full object-cover" />
+            : (name || '?').slice(0, 1).toUpperCase()}
+        </div>
+      </StoryRing>
       {online && <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />}
     </div>
   )
@@ -507,7 +510,8 @@ function FriendsChat() {
               ) : messages.map((m) => {
                 const mine = m.sender_id === user?.id
                 return (
-                  <div key={m.id} className={cn('group flex', mine ? 'justify-end' : 'justify-start')}>
+                  <div key={m.id} className={cn('group flex items-end gap-1.5', mine ? 'justify-end' : 'justify-start')}>
+                    {!mine && <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} size={7} />}
                     <div className="flex items-center gap-1.5">
                       {mine && (
                         <button onClick={() => remove(m.id)} className="opacity-0 transition group-hover:opacity-100 text-slate-400 hover:text-rose-500">

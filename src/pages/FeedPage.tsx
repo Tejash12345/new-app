@@ -10,7 +10,7 @@ import { getSocket } from '../lib/socket'
 import { pushNotification } from '../lib/notify'
 import { useAuth } from '../hooks/useAuth'
 import { useAvatars } from '../hooks/useAvatars'
-import { StoriesBar } from '../components/Stories'
+import { StoriesBar, StoryRing } from '../components/Stories'
 import { FEED_CATEGORIES, type FeedPost, type FeedComment, type FeedType, type FeedCategory } from '../lib/types'
 import { GlassCard, Page, Input, TextArea, Button, Empty, Modal } from '../components/ui'
 import { cn, timeAgo } from '../lib/utils'
@@ -89,12 +89,14 @@ function avatarColor(id: string) {
 function Avatar({ id, name, url, size = 9 }: { id: string; name: string; url?: string | null; size?: number }) {
   const px = size * 4
   return (
-    <div className="flex items-center justify-center overflow-hidden rounded-full font-bold text-white shrink-0"
-      style={{ background: avatarColor(id), height: px, width: px, fontSize: px * 0.42 }}>
-      {url
-        ? <img src={url} alt="" className="h-full w-full object-cover" />
-        : (name || '?').slice(0, 1).toUpperCase()}
-    </div>
+    <StoryRing userId={id}>
+      <div className="flex items-center justify-center overflow-hidden rounded-full font-bold text-white shrink-0"
+        style={{ background: avatarColor(id), height: px, width: px, fontSize: px * 0.42 }}>
+        {url
+          ? <img src={url} alt="" className="h-full w-full object-cover" />
+          : (name || '?').slice(0, 1).toUpperCase()}
+      </div>
+    </StoryRing>
   )
 }
 

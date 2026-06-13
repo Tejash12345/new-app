@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import { OnlineProvider } from './hooks/useOnline'
+import { StoriesProvider } from './components/Stories'
 import { Layout } from './components/Layout'
 import { AuthPage } from './pages/AuthPage'
 import { Dashboard } from './pages/Dashboard'
@@ -36,6 +37,7 @@ function Gate() {
   }
   if (!user) return <AuthPage />
   return (
+    <StoriesProvider>
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
@@ -57,6 +59,7 @@ function Gate() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+    </StoriesProvider>
   )
 }
 

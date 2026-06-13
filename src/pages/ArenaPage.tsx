@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { Habit, LeaderboardRow, StudySession, Task } from '../lib/types'
 import { GlassCard, Page, ProgressRing, SectionTitle } from '../components/ui'
+import { StoryRing } from '../components/Stories'
 import { cn, levelForXp, levelProgress, levelTitle, todayKey, addDays } from '../lib/utils'
 
 export function ArenaPage() {
@@ -154,11 +155,13 @@ export function ArenaPage() {
                   <span className="w-7 text-center text-sm font-extrabold text-slate-400">
                     {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                   </span>
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-bold text-white">
-                    {r.avatar_url
-                      ? <img src={r.avatar_url} alt="" className="h-full w-full object-cover" />
-                      : (r.full_name || '?').slice(0, 1).toUpperCase()}
-                  </div>
+                  <StoryRing userId={r.id}>
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-bold text-white">
+                      {r.avatar_url
+                        ? <img src={r.avatar_url} alt="" className="h-full w-full object-cover" />
+                        : (r.full_name || '?').slice(0, 1).toUpperCase()}
+                    </div>
+                  </StoryRing>
                   <span className="flex-1 truncate text-sm font-semibold text-slate-900 dark:text-white">
                     {r.full_name || 'Anonymous lion'}
                   </span>
