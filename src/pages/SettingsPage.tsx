@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { requestNotifPermission } from '../hooks/useNotifications'
 import { Button, GlassCard, Input, Page, SectionTitle } from '../components/ui'
+import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
@@ -17,9 +18,41 @@ export function SettingsPage() {
   const { profile, updateProfile, user } = useAuth()
   const [name, setName] = useState(profile?.full_name ?? '')
   const [saved, setSaved] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [avatarErr, setAvatarErr] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const settings = profile?.settings ?? {}
   const notif = settings.notifications ?? {}
+  const initial = (profile?.full_name || user?.email || '?').slice(0, 1).toUpperCase()
+
+  async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // let the user re-pick the same file later
+    if (!file || !user) return
+    if (!file.type.startsWith('image/')) { setAvatarErr('Please choose an image file.'); return }
+    if (file.size > 5 * 1024 * 1024) { setAvatarErr('Image too big — 5 MB max.'); return }
+    setAvatarErr(null)
+    setUploading(true)
+    try {
+      const ext = (file.name.split('.').pop() || 'jpg').replace(/[^\w]+/g, '').slice(0, 5) || 'jpg'
+      const path = `${user.id}/avatar-${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from('avatars').upload(path, file, { contentType: file.type || undefined })
+      if (upErr) {
+        setAvatarErr(/bucket.*not.*found/i.test(upErr.message)
+          ? 'Avatar storage missing — run upgrade-11.sql in Supabase first.'
+          : `Upload failed: ${upErr.message}`)
+        return
+      }
+      const url = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
+      await updateProfile({ avatar_url: url })
+    } catch {
+      setAvatarErr('Upload failed. Check your connection and try again.')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   async function patchSettings(patch: Partial<typeof settings>) {
     await updateProfile({ settings: { ...settings, ...patch } })
@@ -43,14 +76,46 @@ export function SettingsPage() {
         <GlassCard>
           <SectionTitle>Profile</SectionTitle>
           <div className="mb-4 flex items-center gap-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-brand-400 to-brand-600 text-2xl font-bold text-white">
-              {(profile?.full_name || user?.email || '?').slice(0, 1).toUpperCase()}
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className="group relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-3xl bg-gradient-to-br from-brand-400 to-brand-600 text-2xl font-bold text-white"
+              aria-label="Change profile photo"
+            >
+              {profile?.avatar_url
+                ? <img src={profile.avatar_url} alt="" className="h-full w-full object-cover" />
+                : initial}
+              <span className="absolute inset-0 hidden items-center justify-center bg-black/45 text-[11px] font-semibold group-hover:flex">
+                {uploading ? '…' : 'Change'}
+              </span>
+            </button>
+            <div className="min-w-0">
+              <div className="truncate font-bold text-slate-900 dark:text-white">{profile?.full_name || 'Student'}</div>
+              <div className="truncate text-sm text-slate-500">{user?.email}</div>
+              <div className="mt-1 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploading}
+                  className="text-xs font-semibold text-brand-500 disabled:opacity-50"
+                >
+                  {uploading ? 'Uploading…' : profile?.avatar_url ? 'Change photo' : 'Upload photo'}
+                </button>
+                {profile?.avatar_url && !uploading && (
+                  <button
+                    type="button"
+                    onClick={() => updateProfile({ avatar_url: '' })}
+                    className="text-xs font-semibold text-slate-400 transition hover:text-rose-500"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
-            <div>
-              <div className="font-bold text-slate-900 dark:text-white">{profile?.full_name || 'Student'}</div>
-              <div className="text-sm text-slate-500">{user?.email}</div>
-            </div>
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickAvatar} />
           </div>
+          {avatarErr && <p className="mb-3 text-xs font-semibold text-rose-500">{avatarErr}</p>}
           <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Display name</label>
           <div className="flex gap-2">
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />

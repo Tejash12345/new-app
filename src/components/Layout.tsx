@@ -44,6 +44,10 @@ export function Layout() {
 
   const level = levelForXp(profile?.xp ?? 0)
   const initial = (profile?.full_name || profile?.email || '?').slice(0, 1).toUpperCase()
+  // show the uploaded profile photo where we'd otherwise show the initial
+  const avatarNode = profile?.avatar_url
+    ? <img src={profile.avatar_url} alt="" className="h-full w-full rounded-full object-cover" />
+    : initial
 
   return (
     <div className="aurora min-h-screen overflow-x-hidden">
@@ -150,7 +154,7 @@ export function Layout() {
                 className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold text-white ring-2 ring-transparent transition hover:ring-brand-300"
                 aria-label="Profile menu"
               >
-                {initial}
+                {avatarNode}
               </button>
 
               <AnimatePresence>
@@ -167,8 +171,8 @@ export function Layout() {
                     >
                       {/* identity */}
                       <div className="flex items-center gap-3 rounded-2xl px-3 py-3">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-base font-bold text-white">
-                          {initial}
+                        <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-base font-bold text-white">
+                          {avatarNode}
                         </div>
                         <div className="min-w-0">
                           <div className="truncate font-bold text-slate-900 dark:text-white">
@@ -238,8 +242,8 @@ export function Layout() {
             </NavLink>
           ))}
           <button onClick={() => setMenuOpen(true)} className="flex flex-col items-center gap-0.5 px-2 py-1">
-            <div className="flex h-[35px] w-[35px] items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-bold text-white">
-              {initial}
+            <div className="flex h-[35px] w-[35px] items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-bold text-white">
+              {avatarNode}
             </div>
             <span className="text-[9px] font-semibold text-slate-400">Profile</span>
           </button>
@@ -262,8 +266,8 @@ export function Layout() {
             >
               <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
               <div className="flex items-center gap-3 px-2 py-2">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-lg font-bold text-white">
-                  {initial}
+                <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-lg font-bold text-white">
+                  {avatarNode}
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-lg font-bold text-slate-900 dark:text-white">{profile?.full_name || 'Student'}</div>
