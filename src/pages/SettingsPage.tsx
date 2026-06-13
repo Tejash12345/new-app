@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react'
+import { AlertTriangle } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { requestNotifPermission } from '../hooks/useNotifications'
-import { Button, GlassCard, Input, Page, SectionTitle } from '../components/ui'
+import { Button, GlassCard, Input, Modal, Page, SectionTitle } from '../components/ui'
 import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
 
@@ -15,12 +16,36 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 }
 
 export function SettingsPage() {
-  const { profile, updateProfile, user } = useAuth()
+  const { profile, updateProfile, user, signOut } = useAuth()
   const [name, setName] = useState(profile?.full_name ?? '')
   const [saved, setSaved] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [avatarErr, setAvatarErr] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const [delOpen, setDelOpen] = useState(false)
+  const [delText, setDelText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [delErr, setDelErr] = useState<string | null>(null)
+
+  async function deleteAccount() {
+    setDeleting(true)
+    setDelErr(null)
+    try {
+      const { error } = await supabase.rpc('delete_my_account')
+      if (error) {
+        setDelErr(/function .*delete_my_account.* does not exist/i.test(error.message)
+          ? 'Account deletion isn’t enabled yet — run upgrade-15.sql in Supabase first.'
+          : `Could not delete account: ${error.message}`)
+        return
+      }
+      // account is gone — sign out and return to the login screen
+      await signOut()
+    } catch {
+      setDelErr('Could not delete account. Check your connection and try again.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const settings = profile?.settings ?? {}
   const notif = settings.notifications ?? {}
@@ -181,7 +206,45 @@ export function SettingsPage() {
             ))}
           </div>
         </GlassCard>
+
+        {/* danger zone */}
+        <GlassCard className="lg:col-span-2 !border-rose-400/40">
+          <SectionTitle>Danger zone</SectionTitle>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2 font-semibold text-rose-500">
+                <AlertTriangle size={16} /> Delete account
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                Permanently removes your account and all your data — posts, messages, friends, stories and stats.
+                Other users will no longer see your account. This can’t be undone.
+              </div>
+            </div>
+            <Button variant="danger" className="shrink-0" onClick={() => { setDelText(''); setDelErr(null); setDelOpen(true) }}>
+              Delete account
+            </Button>
+          </div>
+        </GlassCard>
       </div>
+
+      <Modal open={delOpen} onClose={() => !deleting && setDelOpen(false)} title="Delete your account?">
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          This permanently deletes your account and <b>everything</b> tied to it — your profile, posts, comments,
+          chats, friends, stories and progress. Other people will no longer be able to find or see you. <b>This cannot be undone.</b>
+        </p>
+        <label className="mt-4 mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">
+          Type <span className="text-rose-500">DELETE</span> to confirm
+        </label>
+        <Input value={delText} onChange={(e) => setDelText(e.target.value)} placeholder="DELETE" />
+        {delErr && <p className="mt-2 text-xs font-semibold text-rose-500">{delErr}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="soft" onClick={() => setDelOpen(false)} disabled={deleting}>Cancel</Button>
+          <Button variant="danger" onClick={deleteAccount} disabled={deleting || delText.trim() !== 'DELETE'}>
+            {deleting ? 'Deleting…' : 'Delete forever'}
+          </Button>
+        </div>
+      </Modal>
+
       <p className="mt-6 text-center text-xs text-slate-400">
         Lion roar recording by Growcott et&nbsp;al.,{' '}
         <a className="underline" href="https://commons.wikimedia.org/wiki/File:Lionroar.wav" target="_blank" rel="noreferrer">
