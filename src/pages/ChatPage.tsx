@@ -92,9 +92,23 @@ function pname(p: Person) {
   return p.email ? p.email.split('@')[0] : 'Student'
 }
 
+/** "last seen 5 mins ago" style label from a heartbeat timestamp. */
+function lastSeenLabel(lastSeen?: string | null) {
+  if (!lastSeen) return 'Offline'
+  const mins = Math.floor((Date.now() - new Date(lastSeen).getTime()) / 60000)
+  if (mins < 1) return 'last seen just now'
+  if (mins < 60) return `last seen ${mins} min${mins === 1 ? '' : 's'} ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `last seen ${hrs} hour${hrs === 1 ? '' : 's'} ago`
+  const days = Math.floor(hrs / 24)
+  if (days < 7) return `last seen ${days} day${days === 1 ? '' : 's'} ago`
+  return 'last seen a while ago'
+}
+
 function FriendsChat() {
   const { user } = useAuth()
   const isOnline = useOnlineCheck()
+  const avatarFor = useAvatars()
   const [friends, setFriends] = useState<Friend[]>([])
   const [active, setActive] = useState<Friend | null>(null)
   const [messages, setMessages] = useState<DMessage[]>([])
@@ -395,14 +409,14 @@ function FriendsChat() {
                       }}
                       className={cn('flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition',
                         active?.friend_id === f.friend_id ? 'bg-brand-500/15' : 'hover:bg-slate-500/10')}>
-                      <Avatar id={f.friend_id} name={fname(f)} url={f.avatar_url} online={online} size={9} />
+                      <Avatar id={f.friend_id} name={fname(f)} url={avatarFor(f.friend_id) || f.avatar_url} online={online} size={9} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{fname(f)}</div>
                         {typingUsers[f.friend_id] ? (
                           <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
                         ) : (
                           <div className={cn('text-xs', online ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
-                            {online ? '● Online' : 'Offline'}
+                            {online ? '● Online' : lastSeenLabel(f.last_seen)}
                           </div>
                         )}
                       </div>
@@ -429,7 +443,7 @@ function FriendsChat() {
                   const sent = sentTo.has(p.id)
                   return (
                     <div key={p.id} className="flex w-full items-center gap-3 rounded-2xl px-3 py-2">
-                      <Avatar id={p.id} name={pname(p)} url={p.avatar_url} online={online} size={9} />
+                      <Avatar id={p.id} name={pname(p)} url={avatarFor(p.id) || p.avatar_url} online={online} size={9} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{pname(p)}</div>
                         <div className={cn('text-xs', online ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
@@ -463,17 +477,26 @@ function FriendsChat() {
           <>
             <div className="mb-3 flex items-center gap-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
               <button onClick={() => setActive(null)} className="lg:hidden text-slate-500"><ArrowLeft size={20} /></button>
-              <Avatar id={active.friend_id} name={fname(active)} url={active.avatar_url} online={isOnline(active.friend_id, active.last_seen)} size={9} />
-              <div>
-                <div className="font-bold text-slate-900 dark:text-white">{fname(active)}</div>
-                {typingUsers[active.friend_id] ? (
-                  <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
-                ) : (
-                  <div className={cn('text-xs', isOnline(active.friend_id, active.last_seen) ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
-                    {isOnline(active.friend_id, active.last_seen) ? '● Online now' : 'Offline'}
-                  </div>
-                )}
-              </div>
+              {(() => {
+                // use the freshest record (friends reload every 15s) so last_seen is current
+                const fresh = friends.find((f) => f.friend_id === active.friend_id) ?? active
+                const on = isOnline(active.friend_id, fresh.last_seen)
+                return (
+                  <>
+                    <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} online={on} size={9} />
+                    <div>
+                      <div className="font-bold text-slate-900 dark:text-white">{fname(active)}</div>
+                      {typingUsers[active.friend_id] ? (
+                        <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
+                      ) : (
+                        <div className={cn('text-xs', on ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
+                          {on ? '● Online now' : lastSeenLabel(fresh.last_seen)}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )
+              })()}
             </div>
 
             <div className="flex-1 space-y-2 overflow-y-auto pr-1">
