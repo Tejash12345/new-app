@@ -661,7 +661,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
 
       <label className="mb-1 block text-xs font-bold uppercase tracking-widest text-slate-400">Category</label>
       <select value={category} onChange={(e) => setCategory(e.target.value as FeedCategory)}
-        className="mb-3 w-full rounded-2xl border border-slate-200/60 bg-white/70 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand-400/60 dark:border-white/10 dark:bg-white/5">
+        className="mb-3 w-full rounded-2xl border border-slate-200/60 bg-white/70 px-4 py-2.5 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-brand-400/60 dark:border-white/10 dark:bg-white/5 dark:text-white dark:[&>option]:bg-slate-800">
         {FEED_CATEGORIES.map((c) => <option key={c} value={c}>{`${CAT_EMOJI[c] ?? ''} ${c}`}</option>)}
       </select>
 

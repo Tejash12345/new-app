@@ -21,6 +21,10 @@
 
 html, body, #root { height: 100%; }
 
+/* let native controls (date/time pickers, selects, scrollbars) match the theme */
+:root { color-scheme: light; }
+.dark { color-scheme: dark; }
+
 body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;

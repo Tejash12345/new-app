@@ -188,13 +188,13 @@ export function WellbeingPage() {
                           <input
                             type="time" value={minToInput(fromMin)}
                             onChange={(e) => update({ id: lim!.id, allowed_from_min: inputToMin(e.target.value) } as Partial<SocialLimit> & { id: string })}
-                            className="flex-1 rounded-xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-2.5 py-1.5 text-sm"
+                            className="flex-1 rounded-xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-2.5 py-1.5 text-sm text-slate-900 dark:text-white [color-scheme:light] dark:[color-scheme:dark]"
                           />
                           <span className="text-xs text-slate-400">to</span>
                           <input
                             type="time" value={minToInput(untilMin)}
                             onChange={(e) => update({ id: lim!.id, allowed_until_min: inputToMin(e.target.value) } as Partial<SocialLimit> & { id: string })}
-                            className="flex-1 rounded-xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-2.5 py-1.5 text-sm"
+                            className="flex-1 rounded-xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-2.5 py-1.5 text-sm text-slate-900 dark:text-white [color-scheme:light] dark:[color-scheme:dark]"
                           />
                         </div>
                         <p className={cn('mt-2 text-xs font-semibold', inWindow ? 'text-emerald-500' : 'text-rose-500')}>

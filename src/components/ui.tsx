@@ -57,7 +57,7 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...props}
       className={cn(
-        'w-full rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-sm outline-none transition focus:ring-2 focus:ring-brand-400/60 placeholder:text-slate-400',
+        'w-full rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-sm text-slate-900 dark:text-white outline-none transition focus:ring-2 focus:ring-brand-400/60 placeholder:text-slate-400',
         props.className,
       )}
     />
@@ -69,7 +69,7 @@ export function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement
     <textarea
       {...props}
       className={cn(
-        'w-full rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-sm outline-none transition focus:ring-2 focus:ring-brand-400/60 placeholder:text-slate-400',
+        'w-full rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-sm text-slate-900 dark:text-white outline-none transition focus:ring-2 focus:ring-brand-400/60 placeholder:text-slate-400',
         props.className,
       )}
     />

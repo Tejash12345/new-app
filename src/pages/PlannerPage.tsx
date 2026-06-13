@@ -122,7 +122,7 @@ export function PlannerPage() {
           <Input placeholder="Subject (optional)" value={subject} onChange={(e) => setSubject(e.target.value)} />
           <div className="flex gap-2">
             <select value={day} onChange={(e) => setDay(Number(e.target.value))}
-              className="flex-1 rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-3 py-2.5 text-sm">
+              className="flex-1 rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-3 py-2.5 text-sm text-slate-900 dark:text-white dark:[&>option]:bg-slate-800">
               {DAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
             </select>
             <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="flex-1" />

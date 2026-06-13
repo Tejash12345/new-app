@@ -86,7 +86,7 @@ export function SettingsPage() {
               <select
                 value={settings.sleepReminderHour ?? 22}
                 onChange={(e) => patchSettings({ sleepReminderHour: Number(e.target.value) })}
-                className="rounded-xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-3 py-1.5 text-sm"
+                className="rounded-xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-3 py-1.5 text-sm text-slate-900 dark:text-white dark:[&>option]:bg-slate-800"
               >
                 {[20, 21, 22, 23].map((h) => <option key={h} value={h}>{h}:00</option>)}
               </select>
