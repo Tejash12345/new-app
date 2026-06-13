@@ -168,6 +168,7 @@ export type FeedPost = {
   media_url: string | null
   embed_url: string | null
   tags: string[]
+  views: number
   created_at: string
 }
 

@@ -2,18 +2,12 @@ import { useEffect, useRef } from 'react'
 import { useAuth } from './useAuth'
 import { useTable } from './db'
 import type { Task, TimetableBlock } from '../lib/types'
+import { pushNotification, requestNotifPermission } from '../lib/notify'
 
-function notify(title: string, body: string, tag: string) {
-  if (Notification.permission !== 'granted') return
-  // tag prevents duplicate spam for the same event
-  new Notification(title, { body, tag, icon: undefined })
-}
+// reminders fire on web and (via the native bridge) inside the Android app
+const notify = pushNotification
 
-export function requestNotifPermission() {
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission()
-  }
-}
+export { requestNotifPermission }
 
 /**
  * In-app notification engine (runs while the app is open):
@@ -32,7 +26,11 @@ export function useNotificationEngine() {
     const sleepHour = profile?.settings?.sleepReminderHour ?? 22
 
     const interval = setInterval(() => {
-      if (!('Notification' in window) || Notification.permission !== 'granted') return
+      // run if the browser granted notifications OR we're in the native app
+      const canNotify =
+        ('FLNotify' in window) ||
+        ('Notification' in window && Notification.permission === 'granted')
+      if (!canNotify) return
       const now = new Date()
       const nowMin = now.getHours() * 60 + now.getMinutes()
       const dow = (now.getDay() + 6) % 7 // 0 = Monday

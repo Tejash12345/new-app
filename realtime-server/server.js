@@ -81,6 +81,25 @@ io.on('connection', (socket) => {
     socket.to(`room:${p.room}`).emit('room:msg', p.msg)
   })
 
+  // ---- tech/bio/medical feed ----
+  // a new post/reel was shared — tell everyone else to refresh instantly
+  socket.on('feed:new', (post) => {
+    if (!post || post.user_id !== uid) return
+    socket.broadcast.emit('feed:changed', { kind: 'new' })
+  })
+  // a like/comment happened — refresh everyone, and notify the post's owner
+  socket.on('feed:activity', (p) => {
+    if (!p || (p.type !== 'like' && p.type !== 'comment')) return
+    socket.broadcast.emit('feed:changed', { kind: p.type })
+    if (p.to && p.to !== uid) {
+      io.to(`user:${p.to}`).emit('feed:activity', {
+        type: p.type,
+        actor: typeof p.actor === 'string' ? p.actor.slice(0, 60) : 'Someone',
+        title: typeof p.title === 'string' ? p.title.slice(0, 80) : 'your post',
+      })
+    }
+  })
+
   socket.on('disconnect', () => {
     const s = online.get(uid)
     if (!s) return

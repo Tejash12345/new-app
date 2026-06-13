@@ -5,10 +5,11 @@ import { cn } from '../lib/utils'
 
 // ---------- GlassCard ----------
 export function GlassCard({
-  children, className, float, onClick,
-}: { children: ReactNode; className?: string; float?: boolean; onClick?: () => void }) {
+  children, className, float, onClick, ref,
+}: { children: ReactNode; className?: string; float?: boolean; onClick?: () => void; ref?: React.Ref<HTMLDivElement> }) {
   return (
     <div
+      ref={ref}
       onClick={onClick}
       className={cn(
         'glass rounded-3xl p-5',

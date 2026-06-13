@@ -3,9 +3,11 @@ import { useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Heart, MessageCircle, Trash2, Plus, Film, FileText, Send,
-  Camera, Briefcase, Sparkles, X, Play, Share2, ArrowLeft,
+  Camera, Briefcase, Sparkles, X, Play, Share2, ArrowLeft, Eye,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { getSocket } from '../lib/socket'
+import { pushNotification } from '../lib/notify'
 import { useAuth } from '../hooks/useAuth'
 import { FEED_CATEGORIES, type FeedPost, type FeedComment, type FeedType, type FeedCategory } from '../lib/types'
 import { GlassCard, Page, Input, TextArea, Button, Empty, Modal } from '../components/ui'
@@ -136,8 +138,13 @@ export function FeedPage() {
   const focusId = searchParams.get('post')
 
   const [posts, setPosts] = useState<FeedPost[]>([])
-  const [likes, setLikes] = useState<{ post_id: string; user_id: string }[]>([])
+  const [likes, setLikes] = useState<{ id?: string; post_id: string; user_id: string }[]>([])
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
+  const myName = profile?.full_name?.trim() || profile?.email?.split('@')[0] || 'Student'
+  // notification bookkeeping — don't notify for activity that already existed
+  const seenLikes = useRef<Set<string>>(new Set())
+  const seenComments = useRef<Set<string>>(new Set())
+  const primed = useRef(false)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<TabKey>('all')
   const [cat, setCat] = useState<'All' | FeedCategory>('All')
@@ -162,15 +169,36 @@ export function FeedPage() {
       setLoading(false)
       return
     }
-    setPosts((data as FeedPost[]) ?? [])
+    const postsData = (data as FeedPost[]) ?? []
+    setPosts(postsData)
     const [{ data: l }, { data: c }] = await Promise.all([
-      supabase.from('feed_likes').select('post_id, user_id'),
-      supabase.from('feed_comments').select('post_id'),
+      supabase.from('feed_likes').select('id, post_id, user_id'),
+      supabase.from('feed_comments').select('id, post_id, user_id, author_name'),
     ])
-    setLikes((l as { post_id: string; user_id: string }[]) ?? [])
+    const likesData = (l as { id: string; post_id: string; user_id: string }[]) ?? []
+    const commentsData = (c as { id: string; post_id: string; user_id: string; author_name: string }[]) ?? []
+    setLikes(likesData)
     const counts: Record<string, number> = {}
-    for (const row of (c as { post_id: string }[]) ?? []) counts[row.post_id] = (counts[row.post_id] ?? 0) + 1
+    for (const row of commentsData) counts[row.post_id] = (counts[row.post_id] ?? 0) + 1
     setCommentCounts(counts)
+
+    // notify me about new likes/comments on MY posts (by other people)
+    const myPostIds = new Set(postsData.filter((p) => p.user_id === user?.id).map((p) => p.id))
+    if (primed.current) {
+      for (const lk of likesData) {
+        if (lk.user_id !== user?.id && myPostIds.has(lk.post_id) && !seenLikes.current.has(lk.id)) {
+          pushNotification('❤️ New like', 'Someone liked your post in the Feed.', `like-${lk.id}`)
+        }
+      }
+      for (const cm of commentsData) {
+        if (cm.user_id !== user?.id && myPostIds.has(cm.post_id) && !seenComments.current.has(cm.id)) {
+          pushNotification('💬 New comment', `${cm.author_name} commented on your post.`, `cmt-${cm.id}`)
+        }
+      }
+    }
+    likesData.forEach((x) => seenLikes.current.add(x.id))
+    commentsData.forEach((x) => seenComments.current.add(x.id))
+    primed.current = true
     setLoading(false)
   }
 
@@ -185,6 +213,35 @@ export function FeedPage() {
     return () => { supabase.removeChannel(ch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id])
+
+  // socket.io fast path — instant refresh + owner notifications when the
+  // realtime server is configured (falls back silently to Supabase realtime)
+  useEffect(() => {
+    if (!user) return
+    const s = getSocket()
+    if (!s) return
+    const onChanged = () => load()
+    const onActivity = (p: { type: string; actor: string; title: string }) => {
+      pushNotification(
+        p.type === 'like' ? '❤️ New like' : '💬 New comment',
+        `${p.actor} ${p.type === 'like' ? 'liked' : 'commented on'} ${p.title}.`,
+        `feed-act-${p.type}`,
+      )
+      load()
+    }
+    s.on('feed:changed', onChanged)
+    s.on('feed:activity', onActivity)
+    return () => { s.off('feed:changed', onChanged); s.off('feed:activity', onActivity) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id])
+
+  // count a view once per session when an item scrolls into view
+  async function registerView(post: FeedPost) {
+    const key = `flv-${post.id}`
+    try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, '1') } catch { /* ignore */ }
+    setPosts((ps) => ps.map((p) => (p.id === post.id ? { ...p, views: (p.views ?? 0) + 1 } : p)))
+    await supabase.rpc('bump_feed_view', { pid: post.id })
+  }
 
   // resolve a shared ?post=<id> deep link (fetch it if it isn't already loaded)
   useEffect(() => {
@@ -215,6 +272,11 @@ export function FeedPage() {
       await supabase.from('feed_likes').delete().eq('post_id', post.id).eq('user_id', user.id)
     } else {
       await supabase.from('feed_likes').insert({ post_id: post.id, user_id: user.id })
+      if (post.user_id !== user.id) {
+        getSocket()?.emit('feed:activity', {
+          to: post.user_id, type: 'like', actor: myName, title: post.title || 'your post',
+        })
+      }
     }
   }
 
@@ -245,7 +307,21 @@ export function FeedPage() {
     onComment: () => setCommentsFor(p),
     onDelete: () => removePost(p),
     onShare: () => sharePost(p),
+    onView: () => registerView(p),
   })
+
+  function handlePosted() {
+    getSocket()?.emit('feed:new', { user_id: user?.id })
+    load()
+  }
+
+  function emitCommentActivity(post: FeedPost) {
+    if (post.user_id !== user?.id) {
+      getSocket()?.emit('feed:activity', {
+        to: post.user_id, type: 'comment', actor: myName, title: post.title || 'your post',
+      })
+    }
+  }
 
   if (needsUpgrade) {
     return (
@@ -272,7 +348,7 @@ export function FeedPage() {
             <GlassCard><Empty emoji="🔍" text={'This post could not be found.\nIt may have been deleted.'} /></GlassCard>
           )}
         </div>
-        {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} />}
+        {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} onAdded={() => emitCommentActivity(commentsFor)} />}
         <Toast msg={toast} />
       </Page>
     )
@@ -331,7 +407,7 @@ export function FeedPage() {
         </div>
       )}
 
-      <Composer open={composerOpen} onClose={() => setComposerOpen(false)} onPosted={load} />
+      <Composer open={composerOpen} onClose={() => setComposerOpen(false)} onPosted={handlePosted} />
       {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} />}
       <Toast msg={toast} />
     </Page>
@@ -354,16 +430,37 @@ function Toast({ msg }: { msg: string | null }) {
 
 // ================= one feed item =================
 function FeedCard({
-  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete, onShare,
+  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete, onShare, onView,
 }: {
   post: FeedPost; reelMode?: boolean; liked: boolean; likeCount: number; commentCount: number
   canDelete: boolean; onLike: () => void; onComment: () => void; onDelete: () => void; onShare: () => void
+  onView: () => void
 }) {
   const igEmbed = post.type === 'instagram' && post.embed_url ? instagramEmbedUrl(post.embed_url) : null
   const liEmbed = post.type === 'linkedin' && post.embed_url ? linkedinEmbedUrl(post.embed_url) : null
 
+  // count a view the first time at least half the card is on screen
+  const cardRef = useRef<HTMLDivElement>(null)
+  const viewedRef = useRef(false)
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el) return
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting && !viewedRef.current) {
+          viewedRef.current = true
+          onView()
+          io.disconnect()
+        }
+      }
+    }, { threshold: 0.5 })
+    io.observe(el)
+    return () => io.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [post.id])
+
   return (
-    <GlassCard className="!p-0 overflow-hidden">
+    <GlassCard ref={cardRef} className="!p-0 overflow-hidden">
       {/* header */}
       <div className="flex items-center gap-2.5 px-4 pt-4">
         <Avatar id={post.user_id} name={post.author_name} />
@@ -433,6 +530,9 @@ function FeedCard({
           className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
           <Share2 size={16} /> Share
         </button>
+        <span title="Views" className="ml-auto flex items-center gap-1 px-2 text-xs font-semibold text-slate-400">
+          <Eye size={15} /> {post.views ?? 0}
+        </span>
       </div>
     </GlassCard>
   )
@@ -622,7 +722,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
 }
 
 // ================= comments =================
-function CommentsModal({ post, onClose, onChanged }: { post: FeedPost; onClose: () => void; onChanged: () => void }) {
+function CommentsModal({ post, onClose, onChanged, onAdded }: { post: FeedPost; onClose: () => void; onChanged: () => void; onAdded?: () => void }) {
   const { user, profile } = useAuth()
   const [comments, setComments] = useState<FeedComment[]>([])
   const [body, setBody] = useState('')
@@ -643,7 +743,7 @@ function CommentsModal({ post, onClose, onChanged }: { post: FeedPost; onClose: 
     const { error } = await supabase.from('feed_comments')
       .insert({ post_id: post.id, user_id: user.id, author_name: authorName, body: text })
     setBusy(false)
-    if (!error) { setBody(''); load(); onChanged() }
+    if (!error) { setBody(''); load(); onChanged(); onAdded?.() }
   }
   async function remove(id: string) {
     setComments((c) => c.filter((x) => x.id !== id))
