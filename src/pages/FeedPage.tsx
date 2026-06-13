@@ -209,6 +209,7 @@ export function FeedPage() {
       .channel('feed-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_posts' }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_likes' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_comments' }, () => load())
       .subscribe()
     return () => { supabase.removeChannel(ch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -323,6 +324,11 @@ export function FeedPage() {
     }
   }
 
+  // instant comment-count update (before the refetch / realtime catch up)
+  function bumpCommentCount(postId: string, delta: number) {
+    setCommentCounts((c) => ({ ...c, [postId]: Math.max(0, (c[postId] ?? 0) + delta) }))
+  }
+
   if (needsUpgrade) {
     return (
       <Page title="Feed" subtitle="Reels & posts — tech · biology · medical 🦁">
@@ -348,7 +354,7 @@ export function FeedPage() {
             <GlassCard><Empty emoji="🔍" text={'This post could not be found.\nIt may have been deleted.'} /></GlassCard>
           )}
         </div>
-        {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} onAdded={() => emitCommentActivity(commentsFor)} />}
+        {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} onAdded={() => emitCommentActivity(commentsFor)} onCountChange={(d) => bumpCommentCount(commentsFor.id, d)} />}
         <Toast msg={toast} />
       </Page>
     )
@@ -722,7 +728,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
 }
 
 // ================= comments =================
-function CommentsModal({ post, onClose, onChanged, onAdded }: { post: FeedPost; onClose: () => void; onChanged: () => void; onAdded?: () => void }) {
+function CommentsModal({ post, onClose, onChanged, onAdded, onCountChange }: { post: FeedPost; onClose: () => void; onChanged: () => void; onAdded?: () => void; onCountChange?: (delta: number) => void }) {
   const { user, profile } = useAuth()
   const [comments, setComments] = useState<FeedComment[]>([])
   const [body, setBody] = useState('')
@@ -743,10 +749,11 @@ function CommentsModal({ post, onClose, onChanged, onAdded }: { post: FeedPost; 
     const { error } = await supabase.from('feed_comments')
       .insert({ post_id: post.id, user_id: user.id, author_name: authorName, body: text })
     setBusy(false)
-    if (!error) { setBody(''); load(); onChanged(); onAdded?.() }
+    if (!error) { setBody(''); onCountChange?.(1); load(); onChanged(); onAdded?.() }
   }
   async function remove(id: string) {
     setComments((c) => c.filter((x) => x.id !== id))
+    onCountChange?.(-1)
     await supabase.from('feed_comments').delete().eq('id', id)
     onChanged()
   }
