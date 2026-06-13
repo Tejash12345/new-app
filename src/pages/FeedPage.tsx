@@ -84,12 +84,14 @@ function avatarColor(id: string) {
   for (let i = 0; i < id.length; i++) h = id.charCodeAt(i) + ((h << 5) - h)
   return colors[Math.abs(h) % colors.length]
 }
-function Avatar({ id, name, size = 9 }: { id: string; name: string; size?: number }) {
+function Avatar({ id, name, url, size = 9 }: { id: string; name: string; url?: string | null; size?: number }) {
   const px = size * 4
   return (
-    <div className="flex items-center justify-center rounded-full font-bold text-white shrink-0"
+    <div className="flex items-center justify-center overflow-hidden rounded-full font-bold text-white shrink-0"
       style={{ background: avatarColor(id), height: px, width: px, fontSize: px * 0.42 }}>
-      {(name || '?').slice(0, 1).toUpperCase()}
+      {url
+        ? <img src={url} alt="" className="h-full w-full object-cover" />
+        : (name || '?').slice(0, 1).toUpperCase()}
     </div>
   )
 }
@@ -174,10 +176,10 @@ export function FeedPage() {
     setPosts(postsData)
     const [{ data: l }, { data: c }] = await Promise.all([
       supabase.from('feed_likes').select('id, post_id, user_id'),
-      supabase.from('feed_comments').select('id, post_id, user_id, author_name'),
+      supabase.from('feed_comments').select('id, post_id, user_id, author_name, author_avatar_url'),
     ])
     const likesData = (l as { id: string; post_id: string; user_id: string }[]) ?? []
-    const commentsData = (c as { id: string; post_id: string; user_id: string; author_name: string }[]) ?? []
+    const commentsData = (c as { id: string; post_id: string; user_id: string; author_name: string; author_avatar_url: string }[]) ?? []
     setLikes(likesData)
     const counts: Record<string, number> = {}
     for (const row of commentsData) counts[row.post_id] = (counts[row.post_id] ?? 0) + 1
@@ -502,7 +504,7 @@ function FeedCard({
     <GlassCard ref={cardRef} className="!p-0 overflow-hidden">
       {/* header */}
       <div className="flex items-center gap-2.5 px-4 pt-4">
-        <Avatar id={post.user_id} name={post.author_name} />
+        <Avatar id={post.user_id} name={post.author_name} url={post.author_avatar_url} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-slate-900 dark:text-white">{post.author_name}</div>
           <div className="text-[11px] text-slate-400">{timeAgo(post.created_at)}</div>
@@ -658,6 +660,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
     const { error: insErr } = await supabase.from('feed_posts').insert({
       user_id: user.id,
       author_name: authorName,
+      author_avatar_url: profile?.avatar_url || '',
       type,
       category,
       title: title.trim(),
@@ -781,7 +784,7 @@ function CommentsModal({ post, onClose, onChanged, onAdded, onCountChange }: { p
     if (!text || !user) return
     setBusy(true)
     const { error } = await supabase.from('feed_comments')
-      .insert({ post_id: post.id, user_id: user.id, author_name: authorName, body: text })
+      .insert({ post_id: post.id, user_id: user.id, author_name: authorName, author_avatar_url: profile?.avatar_url || '', body: text })
     setBusy(false)
     if (!error) { setBody(''); onCountChange?.(1); load(); onChanged(); onAdded?.() }
   }
@@ -799,7 +802,7 @@ function CommentsModal({ post, onClose, onChanged, onAdded, onCountChange }: { p
           <p className="py-8 text-center text-sm text-slate-400">No comments yet — start the discussion!</p>
         ) : comments.map((c) => (
           <div key={c.id} className="group flex gap-2.5">
-            <Avatar id={c.user_id} name={c.author_name} size={8} />
+            <Avatar id={c.user_id} name={c.author_name} url={c.author_avatar_url} size={8} />
             <div className="min-w-0 flex-1 rounded-2xl bg-white/60 px-3 py-2 dark:bg-white/10">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-slate-900 dark:text-white">{c.author_name}</span>

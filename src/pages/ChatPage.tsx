@@ -24,9 +24,10 @@ type RoomMessage = {
   room: string
   body: string
   author_name: string
+  author_avatar_url?: string
   created_at: string
 }
-type Friend = { friend_id: string; full_name: string; email: string; status: string; last_seen?: string }
+type Friend = { friend_id: string; full_name: string; email: string; avatar_url?: string; status: string; last_seen?: string }
 
 function fname(f: Friend) {
   const n = (f.full_name || '').trim()
@@ -48,13 +49,15 @@ function avatarColor(id: string) {
   for (let i = 0; i < id.length; i++) h = id.charCodeAt(i) + ((h << 5) - h)
   return colors[Math.abs(h) % colors.length]
 }
-function Avatar({ id, name, online, size = 11 }: { id: string; name: string; online?: boolean; size?: number }) {
+function Avatar({ id, name, url, online, size = 11 }: { id: string; name: string; url?: string | null; online?: boolean; size?: number }) {
   const px = size * 4
   return (
     <div className="relative shrink-0">
-      <div className="flex items-center justify-center rounded-full font-bold text-white"
+      <div className="flex items-center justify-center overflow-hidden rounded-full font-bold text-white"
         style={{ background: avatarColor(id), height: px, width: px, fontSize: px * 0.4 }}>
-        {(name || '?').slice(0, 1).toUpperCase()}
+        {url
+          ? <img src={url} alt="" className="h-full w-full object-cover" />
+          : (name || '?').slice(0, 1).toUpperCase()}
       </div>
       {online && <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />}
     </div>
@@ -80,7 +83,7 @@ export function ChatPage() {
 }
 
 // ============ FRIEND DIRECT MESSAGES ============
-type Person = { id: string; full_name: string; email: string; last_seen?: string }
+type Person = { id: string; full_name: string; email: string; avatar_url?: string; last_seen?: string }
 
 function pname(p: Person) {
   const n = (p.full_name || '').trim()
@@ -391,7 +394,7 @@ function FriendsChat() {
                       }}
                       className={cn('flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition',
                         active?.friend_id === f.friend_id ? 'bg-brand-500/15' : 'hover:bg-slate-500/10')}>
-                      <Avatar id={f.friend_id} name={fname(f)} online={online} size={9} />
+                      <Avatar id={f.friend_id} name={fname(f)} url={f.avatar_url} online={online} size={9} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{fname(f)}</div>
                         {typingUsers[f.friend_id] ? (
@@ -425,7 +428,7 @@ function FriendsChat() {
                   const sent = sentTo.has(p.id)
                   return (
                     <div key={p.id} className="flex w-full items-center gap-3 rounded-2xl px-3 py-2">
-                      <Avatar id={p.id} name={pname(p)} online={online} size={9} />
+                      <Avatar id={p.id} name={pname(p)} url={p.avatar_url} online={online} size={9} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{pname(p)}</div>
                         <div className={cn('text-xs', online ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
@@ -459,7 +462,7 @@ function FriendsChat() {
           <>
             <div className="mb-3 flex items-center gap-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
               <button onClick={() => setActive(null)} className="lg:hidden text-slate-500"><ArrowLeft size={20} /></button>
-              <Avatar id={active.friend_id} name={fname(active)} online={isOnline(active.friend_id, active.last_seen)} size={9} />
+              <Avatar id={active.friend_id} name={fname(active)} url={active.avatar_url} online={isOnline(active.friend_id, active.last_seen)} size={9} />
               <div>
                 <div className="font-bold text-slate-900 dark:text-white">{fname(active)}</div>
                 {typingUsers[active.friend_id] ? (
@@ -584,6 +587,7 @@ function RoomsChat() {
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const myName = profile?.full_name?.trim() || 'Anonymous lion'
+  const myAvatar = profile?.avatar_url || ''
 
   useEffect(() => {
     if (!user) return
@@ -643,11 +647,12 @@ function RoomsChat() {
     setInput('')
     const optimistic: RoomMessage = {
       id: `tmp-${Date.now()}`, user_id: user.id, room, body, author_name: myName,
+      author_avatar_url: myAvatar,
       created_at: new Date().toISOString(),
     }
     setMessages((m) => [...m, optimistic])
     const { data } = await supabase.from('chat_messages')
-      .insert({ user_id: user.id, room, body, author_name: myName }).select().single()
+      .insert({ user_id: user.id, room, body, author_name: myName, author_avatar_url: myAvatar }).select().single()
     if (data) {
       const real = data as RoomMessage
       setMessages((m) => m.map((x) => (x.id === optimistic.id ? real : x)))
@@ -701,7 +706,7 @@ function RoomsChat() {
             return (
               <div key={m.id} className={cn('group flex gap-2.5', mine && 'flex-row-reverse')}>
                 <div className="w-8 shrink-0">
-                  {m.showHeader && <Avatar id={m.user_id} name={m.author_name} size={8} />}
+                  {m.showHeader && <Avatar id={m.user_id} name={m.author_name} url={m.author_avatar_url} size={8} />}
                 </div>
                 <div className={cn('max-w-[72vw] sm:max-w-[75%]', mine && 'flex flex-col items-end')}>
                   {m.showHeader && <div className={cn('mb-0.5 px-1 text-xs font-semibold text-slate-500', mine && 'text-right')}>{mine ? 'You' : m.author_name}</div>}

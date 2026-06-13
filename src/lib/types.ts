@@ -125,6 +125,7 @@ export type SocialSession = {
 export type LeaderboardRow = {
   id: string
   full_name: string
+  avatar_url: string
   xp: number
   study_streak: number
 }
@@ -161,6 +162,7 @@ export type FeedPost = {
   id: string
   user_id: string
   author_name: string
+  author_avatar_url: string
   type: FeedType
   category: FeedCategory
   title: string
@@ -177,6 +179,7 @@ export type FeedComment = {
   post_id: string
   user_id: string
   author_name: string
+  author_avatar_url: string
   body: string
   created_at: string
 }

@@ -154,6 +154,11 @@ export function ArenaPage() {
                   <span className="w-7 text-center text-sm font-extrabold text-slate-400">
                     {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                   </span>
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-bold text-white">
+                    {r.avatar_url
+                      ? <img src={r.avatar_url} alt="" className="h-full w-full object-cover" />
+                      : (r.full_name || '?').slice(0, 1).toUpperCase()}
+                  </div>
                   <span className="flex-1 truncate text-sm font-semibold text-slate-900 dark:text-white">
                     {r.full_name || 'Anonymous lion'}
                   </span>

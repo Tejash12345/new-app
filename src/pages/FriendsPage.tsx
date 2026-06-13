@@ -7,12 +7,13 @@ import { useAuth } from '../hooks/useAuth'
 import { useOnlineCheck } from '../hooks/useOnline'
 import { Button, Empty, GlassCard, Input, Page, SectionTitle } from '../components/ui'
 
-type SearchRow = { id: string; full_name: string; email: string; xp: number; study_streak: number; last_seen?: string }
+type SearchRow = { id: string; full_name: string; email: string; avatar_url?: string; xp: number; study_streak: number; last_seen?: string }
 type FriendRow = {
   friendship_id: string
   friend_id: string
   full_name: string
   email: string
+  avatar_url?: string
   xp: number
   study_streak: number
   status: 'pending' | 'accepted'
@@ -35,12 +36,14 @@ function avatarColor(id: string) {
   return colors[Math.abs(h) % colors.length]
 }
 
-function Avatar({ id, name, online }: { id: string; name: string; online?: boolean }) {
+function Avatar({ id, name, url, online }: { id: string; name: string; url?: string | null; online?: boolean }) {
   return (
     <div className="relative shrink-0">
-      <div className="flex h-11 w-11 items-center justify-center rounded-full text-base font-bold text-white"
+      <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full text-base font-bold text-white"
         style={{ background: avatarColor(id) }}>
-        {(name || '?').slice(0, 1).toUpperCase()}
+        {url
+          ? <img src={url} alt="" className="h-full w-full object-cover" />
+          : (name || '?').slice(0, 1).toUpperCase()}
       </div>
       {online && (
         <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />
@@ -197,7 +200,7 @@ export function FriendsPage() {
               const already = friendIds.has(r.id)
               return (
                 <div key={r.id} className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                  <Avatar id={r.id} name={displayName(r)} />
+                  <Avatar id={r.id} name={displayName(r)} url={r.avatar_url} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(r)}</div>
                     <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -228,7 +231,7 @@ export function FriendsPage() {
                     const online = isOnline(r.id, r.last_seen)
                     return (
                       <div key={r.id} className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                        <Avatar id={r.id} name={displayName(r)} online={online} />
+                        <Avatar id={r.id} name={displayName(r)} url={r.avatar_url} online={online} />
                         <div className="min-w-0 flex-1">
                           <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(r)}</div>
                           <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -256,7 +259,7 @@ export function FriendsPage() {
                   <motion.div key={f.friendship_id}
                     initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}
                     className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                    <Avatar id={f.friend_id} name={displayName(f)} />
+                    <Avatar id={f.friend_id} name={displayName(f)} url={f.avatar_url} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(f)}</div>
                       <div className="text-xs text-slate-500">wants to be your friend</div>
@@ -294,7 +297,7 @@ export function FriendsPage() {
               <div className="mb-3 flex gap-3 overflow-x-auto rounded-2xl bg-emerald-500/5 p-3">
                 {onlineFriends.map((f) => (
                   <div key={f.friendship_id} className="flex w-16 shrink-0 flex-col items-center gap-1">
-                    <Avatar id={f.friend_id} name={displayName(f)} online />
+                    <Avatar id={f.friend_id} name={displayName(f)} url={f.avatar_url} online />
                     <span className="w-full truncate text-center text-xs font-semibold text-slate-700 dark:text-slate-200">
                       {displayName(f).split(' ')[0]}
                     </span>
@@ -319,7 +322,7 @@ export function FriendsPage() {
                     const online = isOnline(f.friend_id, f.last_seen)
                     return (
                       <div key={f.friendship_id} className="group flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                        <Avatar id={f.friend_id} name={displayName(f)} online={online} />
+                        <Avatar id={f.friend_id} name={displayName(f)} url={f.avatar_url} online={online} />
                         <div className="min-w-0 flex-1">
                           <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(f)}</div>
                           <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -346,7 +349,7 @@ export function FriendsPage() {
               <div className="space-y-2">
                 {outgoing.map((f) => (
                   <div key={f.friendship_id} className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-3 py-2.5">
-                    <Avatar id={f.friend_id} name={displayName(f)} />
+                    <Avatar id={f.friend_id} name={displayName(f)} url={f.avatar_url} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-semibold text-slate-900 dark:text-white">{displayName(f)}</div>
                       <div className="flex items-center gap-1 text-xs text-amber-500"><Clock size={11} /> Pending</div>
