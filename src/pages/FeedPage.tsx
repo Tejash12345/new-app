@@ -61,10 +61,11 @@ function suggestCategory(text: string): FeedCategory | null {
 // ---------- embed url parsing ----------
 
 function instagramEmbedUrl(raw: string): string | null {
-  const m = raw.match(/instagram\.com\/(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i)
+  const m = raw.match(/instagram\.com\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i)
   if (!m) return null
-  const kind = m[1].toLowerCase() === 'reels' ? 'reel' : m[1].toLowerCase()
-  return `https://www.instagram.com/${kind}/${m[2]}/embed`
+  // always embed via the canonical /p/<shortcode>/embed form — the
+  // /reel/.../embed path often renders Instagram's "content removed" error
+  return `https://www.instagram.com/p/${m[1]}/embed`
 }
 
 function linkedinEmbedUrl(raw: string): string | null {
@@ -434,6 +435,38 @@ function Toast({ msg }: { msg: string | null }) {
   )
 }
 
+// autoplay (muted) while on screen, pause when scrolled away — like reels apps
+function AutoVideo({ src, reelMode }: { src: string; reelMode?: boolean }) {
+  const ref = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    const v = ref.current
+    if (!v) return
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && e.intersectionRatio >= 0.6) v.play().catch(() => {})
+          else v.pause()
+        }
+      },
+      { threshold: [0, 0.6, 1] },
+    )
+    io.observe(v)
+    return () => io.disconnect()
+  }, [])
+  return (
+    <video
+      ref={ref}
+      src={src}
+      muted
+      loop
+      playsInline
+      controls
+      preload="metadata"
+      className={cn('w-full bg-black object-contain', reelMode ? 'max-h-[70vh]' : 'max-h-96')}
+    />
+  )
+}
+
 // ================= one feed item =================
 function FeedCard({
   post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete, onShare, onView,
@@ -494,8 +527,7 @@ function FeedCard({
       {/* media */}
       <div className="mt-3">
         {post.type === 'reel' && post.media_url && (
-          <video src={post.media_url} controls playsInline
-            className={cn('w-full bg-black object-contain', reelMode ? 'max-h-[70vh]' : 'max-h-96')} />
+          <AutoVideo src={post.media_url} reelMode={reelMode} />
         )}
         {post.type === 'post' && post.media_url && (
           <img src={post.media_url} alt={post.title || 'post image'} loading="lazy" className="w-full object-cover" />
