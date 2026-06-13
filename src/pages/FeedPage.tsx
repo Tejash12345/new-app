@@ -535,12 +535,14 @@ function FeedCard({
         {post.type === 'instagram' && (
           igEmbed ? (
             <iframe src={igEmbed} title="Instagram" loading="lazy"
+              allow="autoplay; encrypted-media; picture-in-picture"
               className="w-full" style={{ height: 560, border: 0 }} scrolling="no" allowTransparency />
           ) : <BrokenEmbed url={post.embed_url} kind="Instagram" />
         )}
         {post.type === 'linkedin' && (
           liEmbed ? (
             <iframe src={liEmbed} title="LinkedIn" loading="lazy"
+              allow="autoplay; encrypted-media; picture-in-picture"
               className="w-full" style={{ height: 560, border: 0 }} allowFullScreen />
           ) : <BrokenEmbed url={post.embed_url} kind="LinkedIn" />
         )}
