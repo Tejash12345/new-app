@@ -1,0 +1,618 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Heart, MessageCircle, Trash2, Plus, Film, FileText, Send,
+  Camera, Briefcase, Sparkles, X, Play, Cpu,
+} from 'lucide-react'
+import { supabase } from '../lib/supabase'
+import { useAuth } from '../hooks/useAuth'
+import { TECH_CATEGORIES, type FeedPost, type FeedComment, type FeedType, type TechCategory } from '../lib/types'
+import { GlassCard, Page, Input, TextArea, Button, Empty, Modal } from '../components/ui'
+import { cn, timeAgo } from '../lib/utils'
+
+// ---------- tech-only helpers ----------
+
+// keyword map used to auto-suggest a category and to keep the feed on-topic
+const TECH_HINTS: Record<TechCategory, string[]> = {
+  'AI & ML': ['ai', 'ml', 'machine learning', 'llm', 'gpt', 'neural', 'model', 'deep learning', 'openai', 'claude', 'gemini'],
+  'Web Dev': ['react', 'vue', 'angular', 'next', 'css', 'html', 'frontend', 'backend', 'node', 'web', 'tailwind', 'vite'],
+  'Mobile': ['android', 'ios', 'flutter', 'swift', 'kotlin', 'react native', 'mobile app'],
+  'Cloud & DevOps': ['aws', 'azure', 'gcp', 'docker', 'kubernetes', 'devops', 'ci/cd', 'terraform', 'cloud', 'serverless'],
+  'Cybersecurity': ['security', 'hacking', 'pentest', 'vulnerability', 'cve', 'encryption', 'malware', 'infosec', 'cyber'],
+  'Data': ['data', 'sql', 'analytics', 'pandas', 'database', 'bigquery', 'etl', 'warehouse', 'spark'],
+  'Programming': ['python', 'javascript', 'typescript', 'java', 'rust', 'go', 'c++', 'code', 'algorithm', 'programming', 'git'],
+  'Gadgets': ['gadget', 'iphone', 'laptop', 'gpu', 'chip', 'hardware', 'device', 'wearable', 'review'],
+  'Blockchain': ['blockchain', 'crypto', 'web3', 'ethereum', 'bitcoin', 'solidity', 'smart contract', 'nft'],
+  'Startups': ['startup', 'founder', 'saas', 'product', 'funding', 'venture', 'launch', 'mvp'],
+}
+const ALL_TECH_WORDS = Object.values(TECH_HINTS).flat()
+
+/** Light guard: does this text look like technology content? */
+function looksTechnical(text: string) {
+  const t = text.toLowerCase()
+  return ALL_TECH_WORDS.some((w) => t.includes(w))
+}
+
+/** Suggest the best-fit tech category for some text. */
+function suggestCategory(text: string): TechCategory | null {
+  const t = text.toLowerCase()
+  let best: TechCategory | null = null
+  let bestScore = 0
+  for (const cat of TECH_CATEGORIES) {
+    const score = TECH_HINTS[cat].filter((w) => t.includes(w)).length
+    if (score > bestScore) { bestScore = score; best = cat }
+  }
+  return best
+}
+
+// ---------- embed url parsing ----------
+
+function instagramEmbedUrl(raw: string): string | null {
+  const m = raw.match(/instagram\.com\/(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i)
+  if (!m) return null
+  const kind = m[1].toLowerCase() === 'reels' ? 'reel' : m[1].toLowerCase()
+  return `https://www.instagram.com/${kind}/${m[2]}/embed`
+}
+
+function linkedinEmbedUrl(raw: string): string | null {
+  if (/linkedin\.com\/embed\/feed\/update\//i.test(raw)) return raw.split('?')[0]
+  const urn = raw.match(/urn:li:(activity|share|ugcPost):(\d+)/i)
+  if (urn) return `https://www.linkedin.com/embed/feed/update/urn:li:${urn[1]}:${urn[2]}`
+  const act = raw.match(/activity[:-](\d{10,})/i)
+  if (act) return `https://www.linkedin.com/embed/feed/update/urn:li:activity:${act[1]}`
+  return null
+}
+
+// ---------- small avatar ----------
+function avatarColor(id: string) {
+  const colors = ['#6C8CFF', '#FF6584', '#00BFA6', '#FFB454', '#A76CFF', '#42C7F5']
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = id.charCodeAt(i) + ((h << 5) - h)
+  return colors[Math.abs(h) % colors.length]
+}
+function Avatar({ id, name, size = 9 }: { id: string; name: string; size?: number }) {
+  const px = size * 4
+  return (
+    <div className="flex items-center justify-center rounded-full font-bold text-white shrink-0"
+      style={{ background: avatarColor(id), height: px, width: px, fontSize: px * 0.42 }}>
+      {(name || '?').slice(0, 1).toUpperCase()}
+    </div>
+  )
+}
+
+const CAT_TINT: Record<string, string> = {
+  'AI & ML': '#A76CFF', 'Web Dev': '#6C8CFF', 'Mobile': '#00BFA6',
+  'Cloud & DevOps': '#42C7F5', 'Cybersecurity': '#FF6584', 'Data': '#FFB454',
+  'Programming': '#6C8CFF', 'Gadgets': '#8E8E93', 'Blockchain': '#F7931A', 'Startups': '#FF6584',
+}
+function CategoryChip({ cat }: { cat: string }) {
+  const tint = CAT_TINT[cat] ?? '#6C8CFF'
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold"
+      style={{ background: `${tint}22`, color: tint }}>
+      <Cpu size={11} /> {cat}
+    </span>
+  )
+}
+
+type TabKey = 'all' | 'reel' | 'post' | 'instagram' | 'linkedin'
+const TABS: { key: TabKey; label: string; icon: typeof Film }[] = [
+  { key: 'all', label: 'For You', icon: Sparkles },
+  { key: 'reel', label: 'Reels', icon: Film },
+  { key: 'post', label: 'Posts', icon: FileText },
+  { key: 'instagram', label: 'Instagram', icon: Camera },
+  { key: 'linkedin', label: 'LinkedIn', icon: Briefcase },
+]
+
+export function FeedPage() {
+  const { user, profile } = useAuth()
+  const [posts, setPosts] = useState<FeedPost[]>([])
+  const [likes, setLikes] = useState<{ post_id: string; user_id: string }[]>([])
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState<TabKey>('all')
+  const [cat, setCat] = useState<'All' | TechCategory>('All')
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [commentsFor, setCommentsFor] = useState<FeedPost | null>(null)
+  const [needsUpgrade, setNeedsUpgrade] = useState(false)
+
+  async function load() {
+    const { data, error } = await supabase
+      .from('feed_posts').select('*').order('created_at', { ascending: false }).limit(300)
+    if (error) {
+      if (/relation .* does not exist|feed_posts/i.test(error.message)) setNeedsUpgrade(true)
+      setLoading(false)
+      return
+    }
+    setPosts((data as FeedPost[]) ?? [])
+    const [{ data: l }, { data: c }] = await Promise.all([
+      supabase.from('feed_likes').select('post_id, user_id'),
+      supabase.from('feed_comments').select('post_id'),
+    ])
+    setLikes((l as { post_id: string; user_id: string }[]) ?? [])
+    const counts: Record<string, number> = {}
+    for (const row of (c as { post_id: string }[]) ?? []) counts[row.post_id] = (counts[row.post_id] ?? 0) + 1
+    setCommentCounts(counts)
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    if (!user) return
+    load()
+    const ch = supabase
+      .channel('feed-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_posts' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_likes' }, () => load())
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id])
+
+  const likeCount = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const l of likes) m[l.post_id] = (m[l.post_id] ?? 0) + 1
+    return m
+  }, [likes])
+  const likedByMe = useMemo(
+    () => new Set(likes.filter((l) => l.user_id === user?.id).map((l) => l.post_id)),
+    [likes, user?.id],
+  )
+
+  async function toggleLike(post: FeedPost) {
+    if (!user) return
+    const mine = likedByMe.has(post.id)
+    // optimistic
+    setLikes((prev) => mine
+      ? prev.filter((l) => !(l.post_id === post.id && l.user_id === user.id))
+      : [...prev, { post_id: post.id, user_id: user.id }])
+    if (mine) {
+      await supabase.from('feed_likes').delete().eq('post_id', post.id).eq('user_id', user.id)
+    } else {
+      await supabase.from('feed_likes').insert({ post_id: post.id, user_id: user.id })
+    }
+  }
+
+  async function removePost(post: FeedPost) {
+    setPosts((p) => p.filter((x) => x.id !== post.id))
+    await supabase.from('feed_posts').delete().eq('id', post.id)
+  }
+
+  const filtered = posts.filter((p) =>
+    (tab === 'all' || p.type === tab) && (cat === 'All' || p.category === cat))
+
+  const isAdmin = profile?.role === 'admin'
+
+  if (needsUpgrade) {
+    return (
+      <Page title="Tech Feed" subtitle="Reels & posts — technology only 🦁">
+        <GlassCard>
+          <Empty emoji="🛠️" text={'The feed needs its database tables.\nRun supabase/upgrade-9.sql in the Supabase SQL Editor, then refresh.'} />
+        </GlassCard>
+      </Page>
+    )
+  }
+
+  return (
+    <Page
+      title="Tech Feed"
+      subtitle="Reels & posts — technology only 🦁"
+      actions={
+        <Button onClick={() => setComposerOpen(true)}>
+          <Plus size={16} /> Create
+        </Button>
+      }
+    >
+      {/* type tabs */}
+      <div className="mb-4 flex flex-wrap gap-2">
+        {TABS.map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={cn('flex items-center gap-1.5 rounded-2xl px-3.5 py-2 text-sm font-bold transition',
+              tab === key ? 'bg-gradient-to-r from-brand-500 to-purple-500 text-white shadow-lg shadow-brand-500/30'
+                : 'glass text-slate-600 dark:text-slate-300')}>
+            <Icon size={15} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {/* tech category filter */}
+      <div className="mb-5 flex flex-wrap gap-1.5">
+        {(['All', ...TECH_CATEGORIES] as const).map((c) => (
+          <button key={c} onClick={() => setCat(c)}
+            className={cn('rounded-full px-3 py-1 text-xs font-semibold transition',
+              cat === c ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                : 'bg-slate-400/15 text-slate-600 dark:bg-white/10 dark:text-slate-300 hover:bg-slate-400/25')}>
+            {c}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="py-20 text-center text-4xl animate-pulse">🦁</div>
+      ) : filtered.length === 0 ? (
+        <GlassCard>
+          <Empty emoji="📡" text={'Nothing here yet.\nTap Create to share a tech reel, post, or embed an Instagram reel / LinkedIn post.'} />
+        </GlassCard>
+      ) : tab === 'reel' ? (
+        // reels: focused vertical column
+        <div className="mx-auto flex max-w-md flex-col gap-6">
+          {filtered.map((p) => (
+            <FeedCard key={p.id} post={p} reelMode
+              liked={likedByMe.has(p.id)} likeCount={likeCount[p.id] ?? 0}
+              commentCount={commentCounts[p.id] ?? 0}
+              canDelete={p.user_id === user?.id || isAdmin}
+              onLike={() => toggleLike(p)} onComment={() => setCommentsFor(p)} onDelete={() => removePost(p)} />
+          ))}
+        </div>
+      ) : (
+        // masonry-ish grid
+        <div className="columns-1 gap-5 sm:columns-2 lg:columns-3 [&>*]:mb-5">
+          {filtered.map((p) => (
+            <div key={p.id} className="break-inside-avoid">
+              <FeedCard post={p}
+                liked={likedByMe.has(p.id)} likeCount={likeCount[p.id] ?? 0}
+                commentCount={commentCounts[p.id] ?? 0}
+                canDelete={p.user_id === user?.id || isAdmin}
+                onLike={() => toggleLike(p)} onComment={() => setCommentsFor(p)} onDelete={() => removePost(p)} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Composer open={composerOpen} onClose={() => setComposerOpen(false)} onPosted={load} />
+      {commentsFor && (
+        <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} />
+      )}
+    </Page>
+  )
+}
+
+// ================= one feed item =================
+function FeedCard({
+  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete,
+}: {
+  post: FeedPost; reelMode?: boolean; liked: boolean; likeCount: number; commentCount: number
+  canDelete: boolean; onLike: () => void; onComment: () => void; onDelete: () => void
+}) {
+  const igEmbed = post.type === 'instagram' && post.embed_url ? instagramEmbedUrl(post.embed_url) : null
+  const liEmbed = post.type === 'linkedin' && post.embed_url ? linkedinEmbedUrl(post.embed_url) : null
+
+  return (
+    <GlassCard className="!p-0 overflow-hidden">
+      {/* header */}
+      <div className="flex items-center gap-2.5 px-4 pt-4">
+        <Avatar id={post.user_id} name={post.author_name} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-bold text-slate-900 dark:text-white">{post.author_name}</div>
+          <div className="text-[11px] text-slate-400">{timeAgo(post.created_at)}</div>
+        </div>
+        <CategoryChip cat={post.category} />
+        {canDelete && (
+          <button onClick={onDelete} title="Delete"
+            className="rounded-full p-1.5 text-slate-400 hover:bg-rose-500/10 hover:text-rose-500">
+            <Trash2 size={15} />
+          </button>
+        )}
+      </div>
+
+      {/* title / body */}
+      {(post.title || post.body) && (
+        <div className="px-4 pt-2.5">
+          {post.title && <div className="font-bold text-slate-900 dark:text-white">{post.title}</div>}
+          {post.body && <p className="mt-0.5 whitespace-pre-line text-sm text-slate-600 dark:text-slate-300">{post.body}</p>}
+        </div>
+      )}
+
+      {/* media */}
+      <div className="mt-3">
+        {post.type === 'reel' && post.media_url && (
+          <video src={post.media_url} controls playsInline
+            className={cn('w-full bg-black object-contain', reelMode ? 'max-h-[70vh]' : 'max-h-96')} />
+        )}
+        {post.type === 'post' && post.media_url && (
+          <img src={post.media_url} alt={post.title || 'post image'} loading="lazy" className="w-full object-cover" />
+        )}
+        {post.type === 'instagram' && (
+          igEmbed ? (
+            <iframe src={igEmbed} title="Instagram" loading="lazy"
+              className="w-full" style={{ height: 560, border: 0 }} scrolling="no" allowTransparency />
+          ) : (
+            <BrokenEmbed url={post.embed_url} kind="Instagram" />
+          )
+        )}
+        {post.type === 'linkedin' && (
+          liEmbed ? (
+            <iframe src={liEmbed} title="LinkedIn" loading="lazy"
+              className="w-full" style={{ height: 560, border: 0 }} allowFullScreen />
+          ) : (
+            <BrokenEmbed url={post.embed_url} kind="LinkedIn" />
+          )
+        )}
+      </div>
+
+      {/* tags */}
+      {post.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-4 pt-3">
+          {post.tags.map((t) => (
+            <span key={t} className="text-xs font-semibold text-brand-500">#{t}</span>
+          ))}
+        </div>
+      )}
+
+      {/* actions */}
+      <div className="flex items-center gap-1 px-3 py-3">
+        <button onClick={onLike}
+          className={cn('flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition',
+            liked ? 'text-rose-500' : 'text-slate-500 hover:bg-slate-500/10 dark:text-slate-400')}>
+          <Heart size={17} className={liked ? 'fill-rose-500' : ''} /> {likeCount > 0 ? likeCount : ''}
+        </button>
+        <button onClick={onComment}
+          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 dark:text-slate-400">
+          <MessageCircle size={17} /> {commentCount > 0 ? commentCount : ''}
+        </button>
+        {post.embed_url && (
+          <a href={post.embed_url} target="_blank" rel="noreferrer"
+            className="ml-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-slate-400 hover:text-brand-500">
+            Open original ↗
+          </a>
+        )}
+      </div>
+    </GlassCard>
+  )
+}
+
+function BrokenEmbed({ url, kind }: { url: string | null; kind: string }) {
+  return (
+    <div className="mx-4 mb-2 rounded-2xl bg-amber-400/10 px-4 py-6 text-center">
+      <div className="text-3xl">🔗</div>
+      <p className="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-300">
+        Couldn't read this {kind} link.
+      </p>
+      {url && (
+        <a href={url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-brand-500 underline">
+          Open on {kind} ↗
+        </a>
+      )}
+    </div>
+  )
+}
+
+// ================= composer =================
+function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => void; onPosted: () => void }) {
+  const { user, profile } = useAuth()
+  const [type, setType] = useState<FeedType>('post')
+  const [category, setCategory] = useState<TechCategory>('Programming')
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [tags, setTags] = useState('')
+  const [url, setUrl] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const authorName = profile?.full_name?.trim() || profile?.email?.split('@')[0] || 'Student'
+
+  function reset() {
+    setType('post'); setCategory('Programming'); setTitle(''); setBody('')
+    setTags(''); setUrl(''); setFile(null); setError(null); setBusy(false)
+  }
+
+  // auto-suggest a tech category as the user types
+  useEffect(() => {
+    const guess = suggestCategory(`${title} ${body} ${tags}`)
+    if (guess) setCategory(guess)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, body, tags])
+
+  async function submit() {
+    if (!user) return
+    setError(null)
+
+    // ---- validate per type ----
+    if (type === 'post' && !body.trim() && !file) {
+      setError('Write something or add an image.'); return
+    }
+    if (type === 'reel' && !file) {
+      setError('Pick a video to upload for your reel.'); return
+    }
+    if (type === 'instagram') {
+      if (!instagramEmbedUrl(url)) { setError('Paste a valid Instagram reel/post link.'); return }
+    }
+    if (type === 'linkedin') {
+      if (!linkedinEmbedUrl(url)) { setError('Paste a valid LinkedIn post link (or its embed link).'); return }
+    }
+
+    // ---- tech-only guard for written content ----
+    const text = `${title} ${body} ${tags}`.trim()
+    if ((type === 'post' || type === 'reel') && text && !looksTechnical(text)) {
+      setError('This feed is technology-only — mention the tech topic (e.g. React, AI, Python, cloud) so it fits a category.')
+      return
+    }
+
+    setBusy(true)
+    let media_url: string | null = null
+    if (file) {
+      if (file.size > 50 * 1024 * 1024) { setError('File too big — 50 MB max.'); setBusy(false); return }
+      const safe = file.name.replace(/[^\w.\-]+/g, '_').slice(-80)
+      const path = `${user.id}/${Date.now()}-${safe}`
+      const { error: upErr } = await supabase.storage
+        .from('feed-media').upload(path, file, { contentType: file.type || undefined })
+      if (upErr) {
+        setBusy(false)
+        setError(/bucket.*not.*found/i.test(upErr.message)
+          ? 'Media storage missing — run upgrade-9.sql in Supabase first.'
+          : `Upload failed: ${upErr.message}`)
+        return
+      }
+      media_url = supabase.storage.from('feed-media').getPublicUrl(path).data.publicUrl
+    }
+
+    const tagArr = tags.split(/[,#\s]+/).map((t) => t.trim()).filter(Boolean).slice(0, 6)
+    const { error: insErr } = await supabase.from('feed_posts').insert({
+      user_id: user.id,
+      author_name: authorName,
+      type,
+      category,
+      title: title.trim(),
+      body: body.trim(),
+      media_url,
+      embed_url: (type === 'instagram' || type === 'linkedin') ? url.trim() : null,
+      tags: tagArr,
+    })
+    setBusy(false)
+    if (insErr) { setError(insErr.message); return }
+    reset()
+    onClose()
+    onPosted()
+  }
+
+  const TYPES: { key: FeedType; label: string; icon: typeof Film }[] = [
+    { key: 'post', label: 'Post', icon: FileText },
+    { key: 'reel', label: 'Reel', icon: Film },
+    { key: 'instagram', label: 'Instagram', icon: Camera },
+    { key: 'linkedin', label: 'LinkedIn', icon: Briefcase },
+  ]
+
+  return (
+    <Modal open={open} onClose={() => { reset(); onClose() }} title="Share to the Tech Feed" wide>
+      {/* type picker */}
+      <div className="mb-4 grid grid-cols-4 gap-2">
+        {TYPES.map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => { setType(key); setFile(null); setError(null) }}
+            className={cn('flex flex-col items-center gap-1 rounded-2xl py-3 text-xs font-bold transition',
+              type === key ? 'bg-gradient-to-br from-brand-500 to-purple-500 text-white'
+                : 'bg-slate-400/10 text-slate-600 dark:bg-white/5 dark:text-slate-300 hover:bg-slate-400/20')}>
+            <Icon size={18} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {/* category */}
+      <label className="mb-1 block text-xs font-bold uppercase tracking-widest text-slate-400">Tech category</label>
+      <select value={category} onChange={(e) => setCategory(e.target.value as TechCategory)}
+        className="mb-3 w-full rounded-2xl border border-slate-200/60 bg-white/70 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand-400/60 dark:border-white/10 dark:bg-white/5">
+        {TECH_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+
+      {(type === 'instagram' || type === 'linkedin') && (
+        <div className="mb-3">
+          <label className="mb-1 block text-xs font-bold uppercase tracking-widest text-slate-400">
+            {type === 'instagram' ? 'Instagram reel / post link' : 'LinkedIn post link'}
+          </label>
+          <Input value={url} onChange={(e) => setUrl(e.target.value)}
+            placeholder={type === 'instagram'
+              ? 'https://www.instagram.com/reel/XXXXXXXXXXX/'
+              : 'https://www.linkedin.com/posts/...activity-XXXXXXXXXXXXXXXXXX'} />
+          <p className="mt-1 text-[11px] text-slate-400">
+            {type === 'instagram'
+              ? 'Paste the share link of any tech reel/post — it embeds with Instagram’s official player.'
+              : 'Use the post’s “Copy link”, or its “Embed this post” link from LinkedIn.'}
+          </p>
+        </div>
+      )}
+
+      {type !== 'instagram' && type !== 'linkedin' && (
+        <Input className="mb-3" value={title} onChange={(e) => setTitle(e.target.value)}
+          placeholder="Title (optional)" maxLength={120} />
+      )}
+
+      <TextArea rows={3} value={body} onChange={(e) => setBody(e.target.value)}
+        placeholder={type === 'reel' ? 'Caption your reel…'
+          : (type === 'instagram' || type === 'linkedin') ? 'Add a note (optional)…'
+          : 'Share a tech tip, news, or question…'} maxLength={1000} />
+
+      {(type === 'post' || type === 'reel') && (
+        <div className="mt-3">
+          <input ref={fileRef} type="file" hidden
+            accept={type === 'reel' ? 'video/*' : 'image/*'}
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          <button onClick={() => fileRef.current?.click()}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-500/5 dark:border-white/15">
+            {type === 'reel' ? <Play size={16} /> : <FileText size={16} />}
+            {file ? file.name : (type === 'reel' ? 'Choose a video (max 50 MB)' : 'Add an image (optional)')}
+          </button>
+          {file && (
+            <button onClick={() => setFile(null)} className="mt-1 flex items-center gap-1 text-xs text-rose-500">
+              <X size={12} /> remove
+            </button>
+          )}
+        </div>
+      )}
+
+      <Input className="mt-3" value={tags} onChange={(e) => setTags(e.target.value)}
+        placeholder="Tags: react, ai, devops" />
+
+      {error && (
+        <div className="mt-3 rounded-2xl bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-500">{error}</div>
+      )}
+
+      <div className="mt-4 flex justify-end gap-2">
+        <Button variant="ghost" onClick={() => { reset(); onClose() }}>Cancel</Button>
+        <Button onClick={submit} disabled={busy}>
+          {busy ? 'Sharing…' : <><Send size={15} /> Share</>}
+        </Button>
+      </div>
+    </Modal>
+  )
+}
+
+// ================= comments =================
+function CommentsModal({ post, onClose, onChanged }: { post: FeedPost; onClose: () => void; onChanged: () => void }) {
+  const { user, profile } = useAuth()
+  const [comments, setComments] = useState<FeedComment[]>([])
+  const [body, setBody] = useState('')
+  const [busy, setBusy] = useState(false)
+  const authorName = profile?.full_name?.trim() || profile?.email?.split('@')[0] || 'Student'
+
+  async function load() {
+    const { data } = await supabase.from('feed_comments').select('*')
+      .eq('post_id', post.id).order('created_at', { ascending: true })
+    setComments((data as FeedComment[]) ?? [])
+  }
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [post.id])
+
+  async function add() {
+    const text = body.trim()
+    if (!text || !user) return
+    setBusy(true)
+    const { error } = await supabase.from('feed_comments')
+      .insert({ post_id: post.id, user_id: user.id, author_name: authorName, body: text })
+    setBusy(false)
+    if (!error) { setBody(''); load(); onChanged() }
+  }
+  async function remove(id: string) {
+    setComments((c) => c.filter((x) => x.id !== id))
+    await supabase.from('feed_comments').delete().eq('id', id)
+    onChanged()
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Comments">
+      <div className="max-h-72 space-y-3 overflow-y-auto pr-1">
+        {comments.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">No comments yet — start the discussion!</p>
+        ) : comments.map((c) => (
+          <div key={c.id} className="group flex gap-2.5">
+            <Avatar id={c.user_id} name={c.author_name} size={8} />
+            <div className="min-w-0 flex-1 rounded-2xl bg-white/60 px-3 py-2 dark:bg-white/10">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-slate-900 dark:text-white">{c.author_name}</span>
+                <span className="text-[10px] text-slate-400">{timeAgo(c.created_at)}</span>
+              </div>
+              <p className="text-sm text-slate-700 dark:text-slate-200">{c.body}</p>
+            </div>
+            {c.user_id === user?.id && (
+              <button onClick={() => remove(c.id)} className="text-slate-300 opacity-0 transition group-hover:opacity-100 hover:text-rose-500">
+                <Trash2 size={14} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex gap-2">
+        <Input value={body} onChange={(e) => setBody(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Add a comment…" maxLength={400} />
+        <Button onClick={add} disabled={busy || !body.trim()}><Send size={15} /></Button>
+      </div>
+    </Modal>
+  )
+}

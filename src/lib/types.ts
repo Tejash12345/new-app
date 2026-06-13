@@ -128,3 +128,44 @@ export type LeaderboardRow = {
   xp: number
   study_streak: number
 }
+
+// ---------- Tech Feed ----------
+export type FeedType = 'post' | 'reel' | 'instagram' | 'linkedin'
+
+/** The only categories allowed — keeps the feed technology-only. */
+export const TECH_CATEGORIES = [
+  'AI & ML',
+  'Web Dev',
+  'Mobile',
+  'Cloud & DevOps',
+  'Cybersecurity',
+  'Data',
+  'Programming',
+  'Gadgets',
+  'Blockchain',
+  'Startups',
+] as const
+export type TechCategory = (typeof TECH_CATEGORIES)[number]
+
+export type FeedPost = {
+  id: string
+  user_id: string
+  author_name: string
+  type: FeedType
+  category: TechCategory
+  title: string
+  body: string
+  media_url: string | null
+  embed_url: string | null
+  tags: string[]
+  created_at: string
+}
+
+export type FeedComment = {
+  id: string
+  post_id: string
+  user_id: string
+  author_name: string
+  body: string
+  created_at: string
+}

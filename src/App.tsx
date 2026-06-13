@@ -15,6 +15,7 @@ import { ArenaPage } from './pages/ArenaPage'
 import { CoachPage } from './pages/CoachPage'
 import { ReportPage } from './pages/ReportPage'
 import { ChatPage } from './pages/ChatPage'
+import { FeedPage } from './pages/FeedPage'
 import { FriendsPage } from './pages/FriendsPage'
 import { InstallPage } from './pages/InstallPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -47,6 +48,7 @@ function Gate() {
         <Route path="arena" element={<ArenaPage />} />
         <Route path="coach" element={<CoachPage />} />
         <Route path="report" element={<ReportPage />} />
+        <Route path="feed" element={<FeedPage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="friends" element={<FriendsPage />} />
         <Route path="install" element={<InstallPage />} />
