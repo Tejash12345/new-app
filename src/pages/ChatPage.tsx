@@ -4,6 +4,7 @@ import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Pape
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { useAuth } from '../hooks/useAuth'
+import { useAvatars } from '../hooks/useAvatars'
 import { useOnlineCheck } from '../hooks/useOnline'
 import { GlassCard, Page, Input, Button, Empty } from '../components/ui'
 import { cn } from '../lib/utils'
@@ -580,6 +581,7 @@ function FriendsChat() {
 // ============ COMMUNITY ROOMS ============
 function RoomsChat() {
   const { user, profile } = useAuth()
+  const avatarFor = useAvatars()
   const [room, setRoom] = useState('general')
   const [messages, setMessages] = useState<RoomMessage[]>([])
   const [input, setInput] = useState('')
@@ -706,7 +708,7 @@ function RoomsChat() {
             return (
               <div key={m.id} className={cn('group flex gap-2.5', mine && 'flex-row-reverse')}>
                 <div className="w-8 shrink-0">
-                  {m.showHeader && <Avatar id={m.user_id} name={m.author_name} url={m.author_avatar_url} size={8} />}
+                  {m.showHeader && <Avatar id={m.user_id} name={m.author_name} url={avatarFor(m.user_id) || m.author_avatar_url} size={8} />}
                 </div>
                 <div className={cn('max-w-[72vw] sm:max-w-[75%]', mine && 'flex flex-col items-end')}>
                   {m.showHeader && <div className={cn('mb-0.5 px-1 text-xs font-semibold text-slate-500', mine && 'text-right')}>{mine ? 'You' : m.author_name}</div>}

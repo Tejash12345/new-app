@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { pushNotification } from '../lib/notify'
 import { useAuth } from '../hooks/useAuth'
+import { useAvatars } from '../hooks/useAvatars'
 import { FEED_CATEGORIES, type FeedPost, type FeedComment, type FeedType, type FeedCategory } from '../lib/types'
 import { GlassCard, Page, Input, TextArea, Button, Empty, Modal } from '../components/ui'
 import { cn, timeAgo } from '../lib/utils'
@@ -477,6 +478,7 @@ function FeedCard({
   canDelete: boolean; onLike: () => void; onComment: () => void; onDelete: () => void; onShare: () => void
   onView: () => void
 }) {
+  const avatarFor = useAvatars()
   const igEmbed = post.type === 'instagram' && post.embed_url ? instagramEmbedUrl(post.embed_url) : null
   const liEmbed = post.type === 'linkedin' && post.embed_url ? linkedinEmbedUrl(post.embed_url) : null
 
@@ -504,7 +506,7 @@ function FeedCard({
     <GlassCard ref={cardRef} className="!p-0 overflow-hidden">
       {/* header */}
       <div className="flex items-center gap-2.5 px-4 pt-4">
-        <Avatar id={post.user_id} name={post.author_name} url={post.author_avatar_url} />
+        <Avatar id={post.user_id} name={post.author_name} url={avatarFor(post.user_id) || post.author_avatar_url} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-slate-900 dark:text-white">{post.author_name}</div>
           <div className="text-[11px] text-slate-400">{timeAgo(post.created_at)}</div>
@@ -767,6 +769,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
 // ================= comments =================
 function CommentsModal({ post, onClose, onChanged, onAdded, onCountChange }: { post: FeedPost; onClose: () => void; onChanged: () => void; onAdded?: () => void; onCountChange?: (delta: number) => void }) {
   const { user, profile } = useAuth()
+  const avatarFor = useAvatars()
   const [comments, setComments] = useState<FeedComment[]>([])
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
@@ -802,7 +805,7 @@ function CommentsModal({ post, onClose, onChanged, onAdded, onCountChange }: { p
           <p className="py-8 text-center text-sm text-slate-400">No comments yet — start the discussion!</p>
         ) : comments.map((c) => (
           <div key={c.id} className="group flex gap-2.5">
-            <Avatar id={c.user_id} name={c.author_name} url={c.author_avatar_url} size={8} />
+            <Avatar id={c.user_id} name={c.author_name} url={avatarFor(c.user_id) || c.author_avatar_url} size={8} />
             <div className="min-w-0 flex-1 rounded-2xl bg-white/60 px-3 py-2 dark:bg-white/10">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-slate-900 dark:text-white">{c.author_name}</span>
