@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, CalendarDays, CheckCircle2, Timer, Shield,
-  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard,
+  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard, Eye,
 } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
@@ -12,7 +12,7 @@ import { ScrollWatcher } from './ScrollWatcher'
 import { CommandPalette } from './CommandPalette'
 import { Onboarding } from './Onboarding'
 import { PresenceTracker } from './PresenceTracker'
-import { StoryRing } from './Stories'
+import { StoryRing, useStories } from './Stories'
 import { useNotificationEngine, requestNotifPermission } from '../hooks/useNotifications'
 import { cn, levelForXp } from '../lib/utils'
 
@@ -51,6 +51,8 @@ export function Layout() {
     : initial
   // wrap a nav avatar so it shows a story ring (visual only — keeps its own tap)
   const withRing = (el: ReactNode) => <StoryRing userId={profile?.id} display>{el}</StoryRing>
+  const { hasStory, openStory } = useStories()
+  const iHaveStory = hasStory(profile?.id)
 
   return (
     <div className="aurora min-h-screen overflow-x-hidden">
@@ -196,6 +198,14 @@ export function Layout() {
 
                       <div className="my-1 h-px bg-slate-200/60 dark:bg-white/10" />
 
+                      {iHaveStory && (
+                        <button
+                          onClick={() => { setMenuOpen(false); openStory(profile?.id) }}
+                          className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold text-brand-500 hover:bg-brand-500/10"
+                        >
+                          <Eye size={17} /> View your story
+                        </button>
+                      )}
                       <button
                         onClick={() => { setMenuOpen(false); navigate('/settings') }}
                         className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-500/10"
@@ -289,6 +299,13 @@ export function Layout() {
                 <span>⭐ {profile?.xp ?? 0} XP</span>
                 <span>Level {level}</span>
               </div>
+
+              {iHaveStory && (
+                <button onClick={() => { setMenuOpen(false); openStory(profile?.id) }}
+                  className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-brand-500 hover:bg-brand-500/10">
+                  <Eye size={18} /> View your story
+                </button>
+              )}
 
               {/* all pages grid */}
               <div className="my-2 grid grid-cols-4 gap-1.5 px-1">
