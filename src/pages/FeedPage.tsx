@@ -10,6 +10,7 @@ import { getSocket } from '../lib/socket'
 import { pushNotification } from '../lib/notify'
 import { useAuth } from '../hooks/useAuth'
 import { useAvatars } from '../hooks/useAvatars'
+import { StoriesBar } from '../components/Stories'
 import { FEED_CATEGORIES, type FeedPost, type FeedComment, type FeedType, type FeedCategory } from '../lib/types'
 import { GlassCard, Page, Input, TextArea, Button, Empty, Modal } from '../components/ui'
 import { cn, timeAgo } from '../lib/utils'
@@ -373,6 +374,9 @@ export function FeedPage() {
       subtitle="Reels & posts — tech · biology · medical 🦁"
       actions={<Button onClick={() => setComposerOpen(true)}><Plus size={16} /> Create</Button>}
     >
+      {/* stories */}
+      <StoriesBar />
+
       {/* type tabs */}
       <div className="mb-4 flex flex-wrap gap-2">
         {TABS.map(({ key, label, icon: Icon }) => (
