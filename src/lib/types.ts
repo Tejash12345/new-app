@@ -172,6 +172,9 @@ export type FeedPost = {
   embed_url: string | null
   tags: string[]
   views: number
+  repost_of?: string | null
+  original_user_id?: string | null
+  reposter_name?: string | null
   created_at: string
 }
 

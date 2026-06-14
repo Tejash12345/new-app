@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   Heart, MessageCircle, Trash2, Plus, Film, FileText, Send,
   Camera, Briefcase, Sparkles, X, Play, Share2, ArrowLeft, Eye,
-  Check, Search, UserPlus, UserCheck, Clock3,
+  Check, Search, UserPlus, UserCheck, Clock3, Copy, Repeat2, Bookmark,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
@@ -124,13 +124,14 @@ function CategoryChip({ cat }: { cat: string }) {
   )
 }
 
-type TabKey = 'all' | 'reel' | 'post' | 'instagram' | 'linkedin'
+type TabKey = 'all' | 'reel' | 'post' | 'instagram' | 'linkedin' | 'saved'
 const TABS: { key: TabKey; label: string; icon: typeof Film }[] = [
   { key: 'all', label: 'For You', icon: Sparkles },
   { key: 'reel', label: 'Reels', icon: Film },
   { key: 'post', label: 'Posts', icon: FileText },
   { key: 'instagram', label: 'Instagram', icon: Camera },
   { key: 'linkedin', label: 'LinkedIn', icon: Briefcase },
+  { key: 'saved', label: 'Saved', icon: Bookmark },
 ]
 
 // shareable link: external embeds share their original URL, user content
@@ -149,6 +150,7 @@ export function FeedPage() {
   const [posts, setPosts] = useState<FeedPost[]>([])
   const [likes, setLikes] = useState<{ id?: string; post_id: string; user_id: string }[]>([])
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
   const myName = profile?.full_name?.trim() || profile?.email?.split('@')[0] || 'Student'
   // notification bookkeeping — don't notify for activity that already existed
   const seenLikes = useRef<Set<string>>(new Set())
@@ -182,12 +184,14 @@ export function FeedPage() {
     }
     const postsData = (data as FeedPost[]) ?? []
     setPosts(postsData)
-    const [{ data: l }, { data: c }] = await Promise.all([
+    const [{ data: l }, { data: c }, { data: sv }] = await Promise.all([
       supabase.from('feed_likes').select('id, post_id, user_id'),
       supabase.from('feed_comments').select('id, post_id, user_id, author_name, author_avatar_url'),
+      supabase.from('feed_saves').select('post_id').eq('user_id', user?.id ?? ''),
     ])
     const likesData = (l as { id: string; post_id: string; user_id: string }[]) ?? []
     const commentsData = (c as { id: string; post_id: string; user_id: string; author_name: string; author_avatar_url: string }[]) ?? []
+    setSavedIds(new Set(((sv as { post_id: string }[]) ?? []).map((r) => r.post_id)))
     setLikes(likesData)
     const counts: Record<string, number> = {}
     for (const row of commentsData) counts[row.post_id] = (counts[row.post_id] ?? 0) + 1
@@ -221,6 +225,7 @@ export function FeedPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_posts' }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_likes' }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_comments' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_saves' }, () => load())
       .subscribe()
     return () => { supabase.removeChannel(ch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -234,11 +239,9 @@ export function FeedPage() {
     if (!s) return
     const onChanged = () => load()
     const onActivity = (p: { type: string; actor: string; title: string }) => {
-      pushNotification(
-        p.type === 'like' ? '❤️ New like' : '💬 New comment',
-        `${p.actor} ${p.type === 'like' ? 'liked' : 'commented on'} ${p.title}.`,
-        `feed-act-${p.type}`,
-      )
+      const title = p.type === 'like' ? '❤️ New like' : p.type === 'repost' ? '🔁 New repost' : '💬 New comment'
+      const verb = p.type === 'like' ? 'liked' : p.type === 'repost' ? 'reposted' : 'commented on'
+      pushNotification(title, `${p.actor} ${verb} ${p.title}.`, `feed-act-${p.type}`)
       load()
     }
     s.on('feed:changed', onChanged)
@@ -298,31 +301,114 @@ export function FeedPage() {
     if (focusPost?.id === post.id) setSearchParams({})
   }
 
-  async function sharePost(post: FeedPost) {
-    const url = shareUrlFor(post)
-    const title = post.title || `${post.author_name}'s ${post.type}`
-    const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> }
-    if (nav.share) {
-      try { await nav.share({ title, text: post.body || title, url }); return }
-      catch { return } // user dismissed the share sheet
+  // ----- Save (bookmark) -----
+  async function toggleSave(post: FeedPost) {
+    if (!user) return
+    const saved = savedIds.has(post.id)
+    setSavedIds((s) => {
+      const next = new Set(s)
+      if (saved) next.delete(post.id); else next.add(post.id)
+      return next
+    })
+    if (saved) {
+      await supabase.from('feed_saves').delete().eq('post_id', post.id).eq('user_id', user.id)
+    } else {
+      const { error } = await supabase.from('feed_saves').insert({ post_id: post.id, user_id: user.id })
+      if (error) {
+        setSavedIds((s) => { const n = new Set(s); n.delete(post.id); return n })
+        flash(/relation .* does not exist|feed_saves/i.test(error.message)
+          ? 'Saving needs upgrade-17.sql in Supabase.' : 'Could not save.')
+        return
+      }
+      flash('Saved 🔖')
     }
-    try { await navigator.clipboard.writeText(url); flash('Link copied!') }
-    catch { flash(url) }
   }
 
-  const cardProps = (p: FeedPost) => ({
-    liked: likedByMe.has(p.id),
-    likeCount: likeCount[p.id] ?? 0,
-    commentCount: commentCounts[p.id] ?? 0,
-    canDelete: p.user_id === user?.id || profile?.role === 'admin',
-    onLike: () => toggleLike(p),
-    onComment: () => setCommentsFor(p),
-    onDelete: () => removePost(p),
-    onShare: () => sharePost(p),
-    onSend: () => setSendFor(p),
-    onProfile: () => setProfileFor({ id: p.user_id, name: p.author_name, avatar: p.author_avatar_url }),
-    onView: () => registerView(p),
-  })
+  // ----- Repost -----
+  // resolve the root post being reposted (so reposting a repost still points at
+  // the original, never a chain) and the identity to display on the new card
+  function rootOf(post: FeedPost) {
+    const isRepost = !!post.repost_of
+    return {
+      id: isRepost ? post.repost_of! : post.id,
+      userId: (isRepost ? post.original_user_id : post.user_id) ?? post.user_id,
+      name: post.author_name,
+      avatar: post.author_avatar_url,
+    }
+  }
+  // how many times each ORIGINAL post has been reposted, and which I reposted
+  const repostCount = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const p of posts) if (p.repost_of) m[p.repost_of] = (m[p.repost_of] ?? 0) + 1
+    return m
+  }, [posts])
+  const repostedByMe = useMemo(
+    () => new Set(posts.filter((p) => p.repost_of && p.user_id === user?.id).map((p) => p.repost_of!)),
+    [posts, user?.id],
+  )
+
+  async function toggleRepost(post: FeedPost) {
+    if (!user) return
+    const root = rootOf(post)
+    const already = repostedByMe.has(root.id)
+    if (already) {
+      const mine = posts.find((p) => p.repost_of === root.id && p.user_id === user.id)
+      if (mine) {
+        setPosts((ps) => ps.filter((p) => p.id !== mine.id))
+        await supabase.from('feed_posts').delete().eq('id', mine.id)
+      }
+      flash('Repost removed')
+      return
+    }
+    const { data, error } = await supabase.from('feed_posts').insert({
+      user_id: user.id,
+      author_name: root.name,
+      author_avatar_url: root.avatar,
+      type: post.type,
+      category: post.category,
+      title: post.title,
+      body: post.body,
+      media_url: post.media_url,
+      embed_url: post.embed_url,
+      tags: post.tags,
+      repost_of: root.id,
+      original_user_id: root.userId,
+      reposter_name: myName,
+    }).select().single()
+    if (error) {
+      flash(/repost_of|column .* does not exist/i.test(error.message)
+        ? 'Repost needs upgrade-17.sql in Supabase.' : 'Could not repost.')
+      return
+    }
+    if (data) setPosts((ps) => [data as FeedPost, ...ps])
+    getSocket()?.emit('feed:new', { user_id: user.id })
+    if (root.userId && root.userId !== user.id) {
+      getSocket()?.emit('feed:activity', { to: root.userId, type: 'repost', actor: myName, title: post.title || 'your post' })
+    }
+    flash('Reposted 🔁')
+  }
+
+  const cardProps = (p: FeedPost) => {
+    const root = rootOf(p)
+    return {
+      liked: likedByMe.has(p.id),
+      likeCount: likeCount[p.id] ?? 0,
+      commentCount: commentCounts[p.id] ?? 0,
+      saved: savedIds.has(p.id),
+      reposted: repostedByMe.has(root.id),
+      repostCount: repostCount[root.id] ?? 0,
+      canDelete: p.user_id === user?.id || profile?.role === 'admin',
+      onLike: () => toggleLike(p),
+      onComment: () => setCommentsFor(p),
+      onDelete: () => removePost(p),
+      onSend: () => setSendFor(p),
+      onSave: () => toggleSave(p),
+      onRepost: () => toggleRepost(p),
+      // for a repost, the profile/avatar belong to the original author
+      onProfile: () => setProfileFor({ id: root.userId, name: p.author_name, avatar: p.author_avatar_url }),
+      onView: () => registerView(p),
+    }
+  }
 
   function handlePosted() {
     getSocket()?.emit('feed:new', { user_id: user?.id })
@@ -368,15 +454,17 @@ export function FeedPage() {
           )}
         </div>
         {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} onAdded={() => emitCommentActivity(commentsFor)} onCountChange={(d) => bumpCommentCount(commentsFor.id, d)} />}
-        {sendFor && <SendToFriendsModal post={sendFor} onClose={() => setSendFor(null)} onSent={(n) => flash(n === 1 ? 'Sent ✓' : `Sent to ${n} friends ✓`)} />}
+        {sendFor && <SendToFriendsModal post={sendFor} onClose={() => setSendFor(null)} onSent={(n) => flash(n === 1 ? 'Sent ✓' : `Sent to ${n} friends ✓`)} onFlash={flash} />}
         {profileFor && profileFor.id !== user?.id && <ProfileModal person={profileFor} onClose={() => setProfileFor(null)} onMessage={(id, name) => navigate(`/chat?dm=${id}&n=${encodeURIComponent(name)}`)} onFlash={flash} />}
         <Toast msg={toast} />
       </Page>
     )
   }
 
-  const filtered = posts.filter((p) =>
-    (tab === 'all' || p.type === tab) && (cat === 'All' || p.category === cat))
+  const filtered = posts.filter((p) => {
+    const tabOk = tab === 'all' ? true : tab === 'saved' ? savedIds.has(p.id) : p.type === tab
+    return tabOk && (cat === 'All' || p.category === cat)
+  })
 
   return (
     <Page
@@ -415,7 +503,9 @@ export function FeedPage() {
         <div className="py-20 text-center text-4xl animate-pulse">🦁</div>
       ) : filtered.length === 0 ? (
         <GlassCard>
-          <Empty emoji="📡" text={'Nothing here yet.\nTap Create to share a reel, post, or embed an Instagram reel / LinkedIn post.'} />
+          {tab === 'saved'
+            ? <Empty emoji="🔖" text={'No saved posts yet.\nTap the bookmark on any post to save it here.'} />
+            : <Empty emoji="📡" text={'Nothing here yet.\nTap Create to share a reel, post, or embed an Instagram reel / LinkedIn post.'} />}
         </GlassCard>
       ) : tab === 'reel' ? (
         <div className="mx-auto flex max-w-md flex-col gap-6">
@@ -433,7 +523,7 @@ export function FeedPage() {
 
       <Composer open={composerOpen} onClose={() => setComposerOpen(false)} onPosted={handlePosted} />
       {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} />}
-      {sendFor && <SendToFriendsModal post={sendFor} onClose={() => setSendFor(null)} onSent={(n) => flash(n === 1 ? 'Sent ✓' : `Sent to ${n} friends ✓`)} />}
+      {sendFor && <SendToFriendsModal post={sendFor} onClose={() => setSendFor(null)} onSent={(n) => flash(n === 1 ? 'Sent ✓' : `Sent to ${n} friends ✓`)} onFlash={flash} />}
       {profileFor && profileFor.id !== user?.id && <ProfileModal person={profileFor} onClose={() => setProfileFor(null)} onMessage={(id, name) => navigate(`/chat?dm=${id}&n=${encodeURIComponent(name)}`)} onFlash={flash} />}
       <Toast msg={toast} />
     </Page>
@@ -488,13 +578,17 @@ function AutoVideo({ src, reelMode }: { src: string; reelMode?: boolean }) {
 
 // ================= one feed item =================
 function FeedCard({
-  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete, onShare, onSend, onProfile, onView,
+  post, reelMode, liked, likeCount, commentCount, saved, reposted, repostCount,
+  canDelete, onLike, onComment, onDelete, onSend, onSave, onRepost, onProfile, onView,
 }: {
   post: FeedPost; reelMode?: boolean; liked: boolean; likeCount: number; commentCount: number
-  canDelete: boolean; onLike: () => void; onComment: () => void; onDelete: () => void; onShare: () => void
-  onSend: () => void; onProfile: () => void; onView: () => void
+  saved: boolean; reposted: boolean; repostCount: number
+  canDelete: boolean; onLike: () => void; onComment: () => void; onDelete: () => void
+  onSend: () => void; onSave: () => void; onRepost: () => void; onProfile: () => void; onView: () => void
 }) {
   const avatarFor = useAvatars()
+  // for a repost, the card body belongs to the original author
+  const authorId = (post.repost_of ? post.original_user_id : post.user_id) ?? post.user_id
   const igEmbed = post.type === 'instagram' && post.embed_url ? instagramEmbedUrl(post.embed_url) : null
   const liEmbed = post.type === 'linkedin' && post.embed_url ? linkedinEmbedUrl(post.embed_url) : null
 
@@ -520,9 +614,16 @@ function FeedCard({
 
   return (
     <GlassCard ref={cardRef} className="!p-0 overflow-hidden">
+      {/* repost banner */}
+      {post.repost_of && (
+        <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] font-semibold text-slate-400">
+          <Repeat2 size={13} /> {post.reposter_name || 'Someone'} reposted
+        </div>
+      )}
+
       {/* header */}
-      <div className="flex items-center gap-2.5 px-4 pt-4">
-        <Avatar id={post.user_id} name={post.author_name} url={avatarFor(post.user_id) || post.author_avatar_url} />
+      <div className={cn('flex items-center gap-2.5 px-4', post.repost_of ? 'pt-1.5' : 'pt-4')}>
+        <Avatar id={authorId} name={post.author_name} url={avatarFor(authorId) || post.author_avatar_url} />
         <button onClick={onProfile} className="min-w-0 flex-1 text-left" title={`View ${post.author_name}`}>
           <div className="truncate text-sm font-bold text-slate-900 hover:underline dark:text-white">{post.author_name}</div>
           <div className="text-[11px] text-slate-400">{timeAgo(post.created_at)}</div>
@@ -576,7 +677,7 @@ function FeedCard({
       )}
 
       {/* actions */}
-      <div className="flex items-center gap-0.5 px-3 py-3">
+      <div className="flex flex-wrap items-center gap-0.5 px-3 py-3">
         <button onClick={onLike} title={liked ? 'Unlike' : 'Like'}
           className={cn('flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-semibold transition',
             liked ? 'text-rose-500' : 'text-slate-500 hover:bg-slate-500/10 dark:text-slate-400')}>
@@ -586,17 +687,25 @@ function FeedCard({
           className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 dark:text-slate-400">
           <MessageCircle size={18} /> {commentCount > 0 ? commentCount : ''}
         </button>
-        <button onClick={onSend} title="Send to a friend"
+        <button onClick={onRepost} title={reposted ? 'Undo repost' : 'Repost'}
+          className={cn('flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-semibold transition',
+            reposted ? 'text-emerald-500' : 'text-slate-500 hover:bg-slate-500/10 hover:text-emerald-500 dark:text-slate-400')}>
+          <Repeat2 size={18} /> {repostCount > 0 ? repostCount : ''}
+        </button>
+        <button onClick={onSend} title="Send / share"
           className="rounded-full p-2 text-slate-500 transition hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
           <Send size={17} />
         </button>
-        <button onClick={onShare} title="Share"
-          className="rounded-full p-2 text-slate-500 transition hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
-          <Share2 size={17} />
-        </button>
-        <span title="Views" className="ml-auto flex shrink-0 items-center gap-1 pl-1.5 text-xs font-semibold text-slate-400">
-          <Eye size={15} /> {post.views ?? 0}
-        </span>
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          <button onClick={onSave} title={saved ? 'Saved — tap to remove' : 'Save'}
+            className={cn('rounded-full p-2 transition',
+              saved ? 'text-brand-500' : 'text-slate-500 hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400')}>
+            <Bookmark size={17} className={saved ? 'fill-brand-500' : ''} />
+          </button>
+          <span title="Views" className="flex items-center gap-1 pl-0.5 pr-1 text-xs font-semibold text-slate-400">
+            <Eye size={15} /> {post.views ?? 0}
+          </span>
+        </div>
       </div>
     </GlassCard>
   )
@@ -748,7 +857,7 @@ function postShareMeta(post: FeedPost) {
   })
 }
 
-function SendToFriendsModal({ post, onClose, onSent }: { post: FeedPost; onClose: () => void; onSent: (count: number) => void }) {
+function SendToFriendsModal({ post, onClose, onSent, onFlash }: { post: FeedPost; onClose: () => void; onSent: (count: number) => void; onFlash: (msg: string) => void }) {
   const { user, profile } = useAuth()
   const avatarFor = useAvatars()
   const [friends, setFriends] = useState<SendFriend[]>([])
@@ -774,6 +883,28 @@ function SendToFriendsModal({ post, onClose, onSent }: { post: FeedPost; onClose
       if (next.has(id)) next.delete(id); else next.add(id)
       return next
     })
+  }
+
+  // external sharing — folded into this same sheet (Instagram-style)
+  async function copyLink() {
+    const url = shareUrlFor(post)
+    try { await navigator.clipboard.writeText(url); onFlash('Link copied!') }
+    catch { onFlash(url) }
+    onClose()
+  }
+  async function shareExternal() {
+    const url = shareUrlFor(post)
+    const title = post.title || `${post.author_name}'s ${post.type}`
+    const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> }
+    if (nav.share) {
+      try { await nav.share({ title, text: post.body || title, url }) } catch { /* dismissed */ }
+      onClose()
+      return
+    }
+    // no native share sheet (desktop) — fall back to copying the link
+    try { await navigator.clipboard.writeText(url); onFlash('Link copied!') }
+    catch { onFlash(url) }
+    onClose()
   }
 
   async function send() {
@@ -884,6 +1015,23 @@ function SendToFriendsModal({ post, onClose, onSent }: { post: FeedPost; onClose
           onKeyDown={(e) => { if (e.key === 'Enter' && selected.size > 0) send() }}
           placeholder="Write a message… (optional)" maxLength={400} />
       )}
+
+      {/* share outside the app — same sheet, like Instagram */}
+      <div className="mt-3 flex items-center gap-2">
+        <div className="h-px flex-1 bg-slate-200/70 dark:bg-white/10" />
+        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">or share via</span>
+        <div className="h-px flex-1 bg-slate-200/70 dark:bg-white/10" />
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button onClick={copyLink}
+          className="flex items-center justify-center gap-2 rounded-2xl bg-slate-400/10 px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-400/20 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10">
+          <Copy size={16} /> Copy link
+        </button>
+        <button onClick={shareExternal}
+          className="flex items-center justify-center gap-2 rounded-2xl bg-slate-400/10 px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-400/20 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10">
+          <Share2 size={16} /> Share to…
+        </button>
+      </div>
 
       {error && (
         <div className="mt-3 rounded-2xl bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-500">{error}</div>
