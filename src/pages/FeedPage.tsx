@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Heart, MessageCircle, Trash2, Plus, Film, FileText, Send,
   Camera, Briefcase, Sparkles, X, Play, Share2, ArrowLeft, Eye,
-  Check, Search,
+  Check, Search, UserPlus, UserCheck, Clock3,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
@@ -142,6 +142,7 @@ function shareUrlFor(post: FeedPost) {
 
 export function FeedPage() {
   const { user, profile } = useAuth()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const focusId = searchParams.get('post')
 
@@ -159,6 +160,7 @@ export function FeedPage() {
   const [composerOpen, setComposerOpen] = useState(false)
   const [commentsFor, setCommentsFor] = useState<FeedPost | null>(null)
   const [sendFor, setSendFor] = useState<FeedPost | null>(null)
+  const [profileFor, setProfileFor] = useState<{ id: string; name: string; avatar?: string | null } | null>(null)
   const [needsUpgrade, setNeedsUpgrade] = useState(false)
   const [focusPost, setFocusPost] = useState<FeedPost | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -318,6 +320,7 @@ export function FeedPage() {
     onDelete: () => removePost(p),
     onShare: () => sharePost(p),
     onSend: () => setSendFor(p),
+    onProfile: () => setProfileFor({ id: p.user_id, name: p.author_name, avatar: p.author_avatar_url }),
     onView: () => registerView(p),
   })
 
@@ -366,6 +369,7 @@ export function FeedPage() {
         </div>
         {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} onAdded={() => emitCommentActivity(commentsFor)} onCountChange={(d) => bumpCommentCount(commentsFor.id, d)} />}
         {sendFor && <SendToFriendsModal post={sendFor} onClose={() => setSendFor(null)} onSent={(n) => flash(n === 1 ? 'Sent ✓' : `Sent to ${n} friends ✓`)} />}
+        {profileFor && profileFor.id !== user?.id && <ProfileModal person={profileFor} onClose={() => setProfileFor(null)} onMessage={(id, name) => navigate(`/chat?dm=${id}&n=${encodeURIComponent(name)}`)} onFlash={flash} />}
         <Toast msg={toast} />
       </Page>
     )
@@ -430,6 +434,7 @@ export function FeedPage() {
       <Composer open={composerOpen} onClose={() => setComposerOpen(false)} onPosted={handlePosted} />
       {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} />}
       {sendFor && <SendToFriendsModal post={sendFor} onClose={() => setSendFor(null)} onSent={(n) => flash(n === 1 ? 'Sent ✓' : `Sent to ${n} friends ✓`)} />}
+      {profileFor && profileFor.id !== user?.id && <ProfileModal person={profileFor} onClose={() => setProfileFor(null)} onMessage={(id, name) => navigate(`/chat?dm=${id}&n=${encodeURIComponent(name)}`)} onFlash={flash} />}
       <Toast msg={toast} />
     </Page>
   )
@@ -483,11 +488,11 @@ function AutoVideo({ src, reelMode }: { src: string; reelMode?: boolean }) {
 
 // ================= one feed item =================
 function FeedCard({
-  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete, onShare, onSend, onView,
+  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete, onShare, onSend, onProfile, onView,
 }: {
   post: FeedPost; reelMode?: boolean; liked: boolean; likeCount: number; commentCount: number
   canDelete: boolean; onLike: () => void; onComment: () => void; onDelete: () => void; onShare: () => void
-  onSend: () => void; onView: () => void
+  onSend: () => void; onProfile: () => void; onView: () => void
 }) {
   const avatarFor = useAvatars()
   const igEmbed = post.type === 'instagram' && post.embed_url ? instagramEmbedUrl(post.embed_url) : null
@@ -518,10 +523,10 @@ function FeedCard({
       {/* header */}
       <div className="flex items-center gap-2.5 px-4 pt-4">
         <Avatar id={post.user_id} name={post.author_name} url={avatarFor(post.user_id) || post.author_avatar_url} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-bold text-slate-900 dark:text-white">{post.author_name}</div>
+        <button onClick={onProfile} className="min-w-0 flex-1 text-left" title={`View ${post.author_name}`}>
+          <div className="truncate text-sm font-bold text-slate-900 hover:underline dark:text-white">{post.author_name}</div>
           <div className="text-[11px] text-slate-400">{timeAgo(post.created_at)}</div>
-        </div>
+        </button>
         <CategoryChip cat={post.category} />
         {canDelete && (
           <button onClick={onDelete} title="Delete"
@@ -571,25 +576,25 @@ function FeedCard({
       )}
 
       {/* actions */}
-      <div className="flex items-center gap-1 px-3 py-3">
-        <button onClick={onLike}
-          className={cn('flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition',
+      <div className="flex items-center gap-0.5 px-3 py-3">
+        <button onClick={onLike} title={liked ? 'Unlike' : 'Like'}
+          className={cn('flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-semibold transition',
             liked ? 'text-rose-500' : 'text-slate-500 hover:bg-slate-500/10 dark:text-slate-400')}>
-          <Heart size={17} className={liked ? 'fill-rose-500' : ''} /> {likeCount > 0 ? likeCount : ''}
+          <Heart size={18} className={liked ? 'fill-rose-500' : ''} /> {likeCount > 0 ? likeCount : ''}
         </button>
-        <button onClick={onComment}
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 dark:text-slate-400">
-          <MessageCircle size={17} /> {commentCount > 0 ? commentCount : ''}
+        <button onClick={onComment} title="Comments"
+          className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 dark:text-slate-400">
+          <MessageCircle size={18} /> {commentCount > 0 ? commentCount : ''}
         </button>
         <button onClick={onSend} title="Send to a friend"
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
-          <Send size={16} /> Send
+          className="rounded-full p-2 text-slate-500 transition hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
+          <Send size={17} />
         </button>
         <button onClick={onShare} title="Share"
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
-          <Share2 size={16} /> Share
+          className="rounded-full p-2 text-slate-500 transition hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
+          <Share2 size={17} />
         </button>
-        <span title="Views" className="ml-auto flex items-center gap-1 px-2 text-xs font-semibold text-slate-400">
+        <span title="Views" className="ml-auto flex shrink-0 items-center gap-1 pl-1.5 text-xs font-semibold text-slate-400">
           <Eye size={15} /> {post.views ?? 0}
         </span>
       </div>
@@ -608,6 +613,117 @@ function BrokenEmbed({ url, kind }: { url: string | null; kind: string }) {
         </a>
       )}
     </div>
+  )
+}
+
+// ================= profile sheet (Instagram-style follow / message) =================
+type Relation = 'none' | 'pending-out' | 'pending-in' | 'friends'
+
+function ProfileModal({
+  person, onClose, onMessage, onFlash,
+}: {
+  person: { id: string; name: string; avatar?: string | null }
+  onClose: () => void
+  onMessage: (id: string, name: string) => void
+  onFlash: (msg: string) => void
+}) {
+  const { user } = useAuth()
+  const avatarFor = useAvatars()
+  const [relation, setRelation] = useState<Relation>('none')
+  const [friendshipId, setFriendshipId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+
+  async function refresh() {
+    const { data } = await supabase.rpc('my_friends')
+    const rows = (data as { friendship_id: string; friend_id: string; status: string; direction: string }[]) ?? []
+    const row = rows.find((r) => r.friend_id === person.id)
+    if (!row) { setRelation('none'); setFriendshipId(null) }
+    else if (row.status === 'accepted') { setRelation('friends'); setFriendshipId(row.friendship_id) }
+    else { setRelation(row.direction === 'incoming' ? 'pending-in' : 'pending-out'); setFriendshipId(row.friendship_id) }
+    setLoading(false)
+  }
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [person.id])
+
+  async function follow() {
+    if (!user) return
+    setBusy(true)
+    const { data, error } = await supabase.rpc('send_friend_request', { target: person.id })
+    if (error) {
+      // fallback for a database without upgrade-7
+      const { error: e2 } = await supabase.from('friendships').insert({ requester_id: user.id, addressee_id: person.id })
+      setBusy(false)
+      if (e2) { onFlash('Could not follow — try again.'); return }
+      setRelation('pending-out'); onFlash('Requested ✓'); return
+    }
+    setBusy(false)
+    if (data === 'accepted') { setRelation('friends'); onFlash(`You're now friends with ${person.name.split(' ')[0]} 🎉`) }
+    else { setRelation('pending-out'); onFlash('Requested ✓') }
+  }
+
+  async function accept() {
+    if (!friendshipId) return
+    setBusy(true)
+    const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', friendshipId)
+    setBusy(false)
+    if (error) { onFlash('Could not accept — try again.'); return }
+    setRelation('friends'); onFlash(`You're now friends 🎉`)
+  }
+
+  async function unfollow() {
+    if (!friendshipId) return
+    setBusy(true)
+    const { error } = await supabase.from('friendships').delete().eq('id', friendshipId)
+    setBusy(false)
+    if (error) { onFlash('Could not update — try again.'); return }
+    setRelation('none'); setFriendshipId(null)
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Profile">
+      <div className="flex flex-col items-center text-center">
+        <Avatar id={person.id} name={person.name} url={avatarFor(person.id) || person.avatar} size={20} />
+        <div className="mt-3 text-lg font-bold text-slate-900 dark:text-white">{person.name}</div>
+        <div className="mt-0.5 text-xs font-semibold text-slate-400">
+          {loading ? '…'
+            : relation === 'friends' ? 'You are friends'
+            : relation === 'pending-out' ? 'Request sent'
+            : relation === 'pending-in' ? 'Wants to be your friend'
+            : 'Not connected yet'}
+        </div>
+
+        <div className="mt-5 flex w-full gap-2">
+          {relation === 'friends' ? (
+            <>
+              <Button className="flex-1" onClick={() => { onMessage(person.id, person.name); onClose() }}>
+                <MessageCircle size={16} /> Message
+              </Button>
+              <Button variant="ghost" onClick={unfollow} disabled={busy}>
+                <UserCheck size={16} /> Following
+              </Button>
+            </>
+          ) : relation === 'pending-in' ? (
+            <Button className="flex-1" onClick={accept} disabled={busy}>
+              <Check size={16} /> Accept request
+            </Button>
+          ) : relation === 'pending-out' ? (
+            <Button variant="ghost" className="flex-1" onClick={unfollow} disabled={busy}>
+              <Clock3 size={16} /> Requested · tap to cancel
+            </Button>
+          ) : (
+            <Button className="flex-1" onClick={follow} disabled={busy || loading}>
+              <UserPlus size={16} /> {busy ? 'Following…' : 'Follow'}
+            </Button>
+          )}
+        </div>
+
+        {relation !== 'friends' && (
+          <p className="mt-3 text-[11px] text-slate-400">
+            Become friends to message each other privately.
+          </p>
+        )}
+      </div>
+    </Modal>
   )
 }
 

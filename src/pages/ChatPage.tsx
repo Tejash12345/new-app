@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -162,6 +162,7 @@ function lastSeenLabel(lastSeen?: string | null) {
 function FriendsChat() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const isOnline = useOnlineCheck()
   const avatarFor = useAvatars()
   const [friends, setFriends] = useState<Friend[]>([])
@@ -196,6 +197,21 @@ function FriendsChat() {
       () => setTypingUsers((t) => ({ ...t, [from]: false })), 2500)
   }
   useEffect(() => { activeIdRef.current = active?.friend_id ?? null }, [active?.friend_id])
+
+  // deep link from the Feed profile sheet: /chat?dm=<id>&n=<name> opens that
+  // conversation directly. Prefer the loaded friend record (avatar/last_seen),
+  // else open a minimal thread so messaging works the moment you're friends.
+  const dmParam = searchParams.get('dm')
+  useEffect(() => {
+    if (!dmParam || !user) return
+    const existing = friends.find((x) => x.friend_id === dmParam)
+    setActive(existing ?? {
+      friend_id: dmParam, full_name: searchParams.get('n') ?? '', email: '', status: 'accepted',
+    })
+    setUnread((u) => ({ ...u, [dmParam]: 0 }))
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dmParam, friends])
 
   // people you may know — visible right in chat, no searching needed
   useEffect(() => {
