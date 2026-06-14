@@ -16,9 +16,10 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 }
 
 export function SettingsPage() {
-  const { profile, updateProfile, user, signOut } = useAuth()
+  const { profile, updateProfile, refreshProfile, user, signOut } = useAuth()
   const [name, setName] = useState(profile?.full_name ?? '')
   const [saved, setSaved] = useState(false)
+  const [privacyErr, setPrivacyErr] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [avatarErr, setAvatarErr] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -81,6 +82,18 @@ export function SettingsPage() {
 
   async function patchSettings(patch: Partial<typeof settings>) {
     await updateProfile({ settings: { ...settings, ...patch } })
+  }
+  async function setPrivate(v: boolean) {
+    if (!user) return
+    setPrivacyErr(null)
+    const { error } = await supabase.from('profiles').update({ is_private: v }).eq('id', user.id)
+    if (error) {
+      setPrivacyErr(/is_private|column .* does not exist/i.test(error.message)
+        ? 'Private accounts aren’t enabled yet — run upgrade-16.sql in Supabase first.'
+        : `Could not update: ${error.message}`)
+      return
+    }
+    await refreshProfile()
   }
   async function patchNotif(key: string, val: boolean) {
     requestNotifPermission()
@@ -182,6 +195,26 @@ export function SettingsPage() {
               </select>
             </div>
           </div>
+        </GlassCard>
+
+        <GlassCard>
+          <SectionTitle>Privacy</SectionTitle>
+          <div className="flex items-center justify-between">
+            <div className="pr-3">
+              <div className="font-semibold text-slate-900 dark:text-white">🔒 Private account</div>
+              <div className="text-xs text-slate-500">
+                When on, only your accepted friends can see your feed posts. New people must send a
+                friend request and be accepted before they can see your posts or message you.
+              </div>
+            </div>
+            <Toggle on={profile?.is_private === true} onChange={setPrivate} />
+          </div>
+          {privacyErr && <p className="mt-3 text-xs font-semibold text-rose-500">{privacyErr}</p>}
+          <p className="mt-3 text-[11px] text-slate-400">
+            {profile?.is_private
+              ? 'Your account is private — your posts are hidden from everyone except your friends.'
+              : 'Your account is public — anyone on FocusLion can see your posts in the feed.'}
+          </p>
         </GlassCard>
 
         <GlassCard className="lg:col-span-2">

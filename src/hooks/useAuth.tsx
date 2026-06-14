@@ -11,7 +11,7 @@ type AuthCtx = {
   loading: boolean
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
-  updateProfile: (patch: Partial<Pick<Profile, 'full_name' | 'avatar_url'>> & { settings?: Settings }) => Promise<void>
+  updateProfile: (patch: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_private'>> & { settings?: Settings }) => Promise<void>
   addXp: (amount: number, reason: string) => Promise<void>
   touchStudyStreak: () => Promise<void>
 }

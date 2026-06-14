@@ -7,6 +7,7 @@ export type Profile = {
   xp: number
   study_streak: number
   last_study_date: string | null
+  is_private: boolean
   settings: Settings
   created_at: string
 }
