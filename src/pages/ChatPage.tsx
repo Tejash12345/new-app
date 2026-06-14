@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { useAuth } from '../hooks/useAuth'
@@ -16,7 +17,7 @@ type DMessage = {
   recipient_id: string
   body: string
   created_at: string
-  kind?: 'text' | 'image' | 'audio' | 'file'
+  kind?: 'text' | 'image' | 'audio' | 'file' | 'post'
   file_url?: string | null
   file_name?: string | null
 }
@@ -68,6 +69,56 @@ function Avatar({ id, name, url, online, size = 11 }: { id: string; name: string
   )
 }
 
+// A feed post shared into a DM (sent from the Feed's "Send" button).
+// The rich preview is built from JSON metadata stashed on file_name; tapping
+// it opens the exact post in the Feed.
+type SharedPostMeta = {
+  id: string
+  title?: string
+  type?: string
+  media_url?: string | null
+  author_name?: string
+  category?: string
+}
+function SharedPostBubble({ m, mine, onOpen }: { m: DMessage; mine: boolean; onOpen: (id: string) => void }) {
+  const meta: SharedPostMeta | null = (() => {
+    try { return m.file_name ? (JSON.parse(m.file_name) as SharedPostMeta) : null } catch { return null }
+  })()
+  const id = meta?.id
+  const title = meta?.title || (m.body || '').replace(/^Shared:\s*/, '') || 'a post'
+  const type = meta?.type || 'post'
+  const note = m.body && !/^Shared/.test(m.body) ? m.body : null
+
+  return (
+    <div className={cn('max-w-[78vw] sm:max-w-md', mine && 'flex flex-col items-end')}>
+      {/* optional note typed alongside the share */}
+      {note && (
+        <div className={cn('mb-1 rounded-2xl px-3.5 py-2 text-sm',
+          mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
+               : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
+          {note}
+        </div>
+      )}
+      <button
+        onClick={() => id ? onOpen(id) : m.file_url && window.open(m.file_url, '_blank')}
+        className="flex w-64 max-w-full items-center gap-3 overflow-hidden rounded-2xl border border-slate-200/60 bg-white/70 p-2 text-left transition hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">
+        {meta?.media_url && type === 'post' ? (
+          <img src={meta.media_url} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover" />
+        ) : type === 'reel' ? (
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-black/80 text-white"><Play size={20} /></span>
+        ) : (
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-500/15 text-brand-500"><Newspaper size={20} /></span>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-brand-500">Shared post · {type}</div>
+          <div className="truncate text-sm font-bold text-slate-900 dark:text-white">{title}</div>
+          {meta?.author_name && <div className="truncate text-xs text-slate-400">by {meta.author_name}</div>}
+        </div>
+      </button>
+    </div>
+  )
+}
+
 export function ChatPage() {
   const [mode, setMode] = useState<'friends' | 'rooms'>('friends')
   return (
@@ -110,6 +161,7 @@ function lastSeenLabel(lastSeen?: string | null) {
 
 function FriendsChat() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const isOnline = useOnlineCheck()
   const avatarFor = useAvatars()
   const [friends, setFriends] = useState<Friend[]>([])
@@ -518,6 +570,9 @@ function FriendsChat() {
                           <Trash2 size={13} />
                         </button>
                       )}
+                      {m.kind === 'post' ? (
+                        <SharedPostBubble m={m} mine={mine} onOpen={(id) => navigate(`/feed?post=${id}`)} />
+                      ) : (
                       <div className={cn('max-w-[78vw] sm:max-w-md rounded-2xl text-sm',
                         m.kind === 'image' && m.file_url ? 'overflow-hidden p-1' : 'px-3.5 py-2',
                         mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
@@ -539,6 +594,7 @@ function FriendsChat() {
                           m.body
                         )}
                       </div>
+                      )}
                     </div>
                   </div>
                 )

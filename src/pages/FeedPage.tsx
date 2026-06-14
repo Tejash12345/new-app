@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   Heart, MessageCircle, Trash2, Plus, Film, FileText, Send,
   Camera, Briefcase, Sparkles, X, Play, Share2, ArrowLeft, Eye,
+  Check, Search,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
@@ -157,6 +158,7 @@ export function FeedPage() {
   const [cat, setCat] = useState<'All' | FeedCategory>('All')
   const [composerOpen, setComposerOpen] = useState(false)
   const [commentsFor, setCommentsFor] = useState<FeedPost | null>(null)
+  const [sendFor, setSendFor] = useState<FeedPost | null>(null)
   const [needsUpgrade, setNeedsUpgrade] = useState(false)
   const [focusPost, setFocusPost] = useState<FeedPost | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -315,6 +317,7 @@ export function FeedPage() {
     onComment: () => setCommentsFor(p),
     onDelete: () => removePost(p),
     onShare: () => sharePost(p),
+    onSend: () => setSendFor(p),
     onView: () => registerView(p),
   })
 
@@ -362,6 +365,7 @@ export function FeedPage() {
           )}
         </div>
         {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} onAdded={() => emitCommentActivity(commentsFor)} onCountChange={(d) => bumpCommentCount(commentsFor.id, d)} />}
+        {sendFor && <SendToFriendsModal post={sendFor} onClose={() => setSendFor(null)} onSent={(n) => flash(n === 1 ? 'Sent ✓' : `Sent to ${n} friends ✓`)} />}
         <Toast msg={toast} />
       </Page>
     )
@@ -425,6 +429,7 @@ export function FeedPage() {
 
       <Composer open={composerOpen} onClose={() => setComposerOpen(false)} onPosted={handlePosted} />
       {commentsFor && <CommentsModal post={commentsFor} onClose={() => setCommentsFor(null)} onChanged={load} />}
+      {sendFor && <SendToFriendsModal post={sendFor} onClose={() => setSendFor(null)} onSent={(n) => flash(n === 1 ? 'Sent ✓' : `Sent to ${n} friends ✓`)} />}
       <Toast msg={toast} />
     </Page>
   )
@@ -478,11 +483,11 @@ function AutoVideo({ src, reelMode }: { src: string; reelMode?: boolean }) {
 
 // ================= one feed item =================
 function FeedCard({
-  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete, onShare, onView,
+  post, reelMode, liked, likeCount, commentCount, canDelete, onLike, onComment, onDelete, onShare, onSend, onView,
 }: {
   post: FeedPost; reelMode?: boolean; liked: boolean; likeCount: number; commentCount: number
   canDelete: boolean; onLike: () => void; onComment: () => void; onDelete: () => void; onShare: () => void
-  onView: () => void
+  onSend: () => void; onView: () => void
 }) {
   const avatarFor = useAvatars()
   const igEmbed = post.type === 'instagram' && post.embed_url ? instagramEmbedUrl(post.embed_url) : null
@@ -576,6 +581,10 @@ function FeedCard({
           className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 dark:text-slate-400">
           <MessageCircle size={17} /> {commentCount > 0 ? commentCount : ''}
         </button>
+        <button onClick={onSend} title="Send to a friend"
+          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
+          <Send size={16} /> Send
+        </button>
         <button onClick={onShare} title="Share"
           className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-slate-500 hover:bg-slate-500/10 hover:text-brand-500 dark:text-slate-400">
           <Share2 size={16} /> Share
@@ -599,6 +608,178 @@ function BrokenEmbed({ url, kind }: { url: string | null; kind: string }) {
         </a>
       )}
     </div>
+  )
+}
+
+// ================= send to friends (Instagram-style DM share) =================
+type SendFriend = { friend_id: string; full_name: string; email: string; avatar_url?: string; status: string }
+
+function friendName(f: SendFriend) {
+  const n = (f.full_name || '').trim()
+  if (n) return n
+  return f.email ? f.email.split('@')[0] : 'Student'
+}
+
+/** Compact metadata stored on the DM so chat can render a rich preview card. */
+function postShareMeta(post: FeedPost) {
+  return JSON.stringify({
+    id: post.id,
+    title: post.title || '',
+    type: post.type,
+    media_url: post.type === 'post' || post.type === 'reel' ? post.media_url : null,
+    author_name: post.author_name,
+    category: post.category,
+  })
+}
+
+function SendToFriendsModal({ post, onClose, onSent }: { post: FeedPost; onClose: () => void; onSent: (count: number) => void }) {
+  const { user, profile } = useAuth()
+  const avatarFor = useAvatars()
+  const [friends, setFriends] = useState<SendFriend[]>([])
+  const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const myName = profile?.full_name?.trim() || profile?.email?.split('@')[0] || 'A friend'
+
+  useEffect(() => {
+    if (!user) return
+    supabase.rpc('my_friends').then(({ data }) => {
+      setFriends(((data as SendFriend[]) ?? []).filter((f) => f.status === 'accepted'))
+      setLoading(false)
+    })
+  }, [user?.id])
+
+  function toggle(id: string) {
+    setSelected((s) => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  async function send() {
+    if (!user || selected.size === 0) return
+    setBusy(true)
+    setError(null)
+    const deepLink = `${window.location.origin}/feed?post=${post.id}`
+    const meta = postShareMeta(post)
+    const note = message.trim()
+    // body is NOT NULL — fall back to a human label so any client shows something
+    const body = note || (post.title ? `Shared: ${post.title}` : `Shared ${post.author_name}'s ${post.type}`)
+
+    const rows = [...selected].map((friendId) => ({
+      sender_id: user.id,
+      recipient_id: friendId,
+      body,
+      kind: 'post',
+      file_url: deepLink,
+      file_name: meta,
+    }))
+
+    const { data, error: insErr } = await supabase.from('direct_messages').insert(rows).select()
+    if (insErr) {
+      setBusy(false)
+      setError(
+        /row-level security|policy/i.test(insErr.message)
+          ? 'You can only send to accepted friends. Add them on the Friends page first.'
+          : `Couldn't send: ${insErr.message}`,
+      )
+      return
+    }
+
+    // instant delivery to each recipient (socket.io fast path + recipient's
+    // database inbox subscription is the backup), then notify them
+    const s = getSocket()
+    for (const m of (data as { recipient_id: string }[]) ?? []) {
+      s?.emit('dm', m)
+    }
+    for (const friendId of selected) {
+      s?.emit('feed:activity', { to: friendId, type: 'send', actor: myName, title: post.title || 'a post' })
+    }
+
+    setBusy(false)
+    onSent(selected.size)
+    onClose()
+  }
+
+  const filtered = friends.filter((f) =>
+    friendName(f).toLowerCase().includes(query.trim().toLowerCase()))
+
+  return (
+    <Modal open onClose={onClose} title="Send to…">
+      {/* the post being shared */}
+      <div className="mb-3 flex items-center gap-3 rounded-2xl bg-slate-400/10 px-3 py-2.5 dark:bg-white/5">
+        {(post.type === 'post' || post.type === 'reel') && post.media_url ? (
+          post.type === 'reel'
+            ? <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/80 text-white"><Play size={18} /></div>
+            : <img src={post.media_url} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" />
+        ) : (
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-500/15 text-lg">
+            {CAT_EMOJI[post.category] ?? '📎'}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-bold text-slate-900 dark:text-white">
+            {post.title || `${post.author_name}'s ${post.type}`}
+          </div>
+          <div className="truncate text-xs text-slate-400">by {post.author_name} · {post.type}</div>
+        </div>
+      </div>
+
+      {/* search */}
+      <div className="relative mb-3">
+        <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search friends…" className="pl-10" />
+      </div>
+
+      {/* friend list */}
+      <div className="max-h-60 space-y-1 overflow-y-auto pr-1">
+        {loading ? (
+          <div className="py-8 text-center text-2xl animate-pulse">🦁</div>
+        ) : friends.length === 0 ? (
+          <Empty emoji="🤝" text={'No friends yet.\nAdd friends on the Friends page, then send them posts here.'} />
+        ) : filtered.length === 0 ? (
+          <p className="py-6 text-center text-sm text-slate-400">No friends match “{query}”.</p>
+        ) : filtered.map((f) => {
+          const on = selected.has(f.friend_id)
+          return (
+            <button key={f.friend_id} onClick={() => toggle(f.friend_id)}
+              className={cn('flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition',
+                on ? 'bg-brand-500/15' : 'hover:bg-slate-500/10')}>
+              <Avatar id={f.friend_id} name={friendName(f)} url={avatarFor(f.friend_id) || f.avatar_url} size={9} />
+              <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 dark:text-white">
+                {friendName(f)}
+              </div>
+              <span className={cn('flex h-6 w-6 items-center justify-center rounded-full border-2 transition',
+                on ? 'border-brand-500 bg-brand-500 text-white' : 'border-slate-300 dark:border-white/20')}>
+                {on && <Check size={14} />}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* optional note */}
+      {friends.length > 0 && (
+        <Input className="mt-3" value={message} onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && selected.size > 0) send() }}
+          placeholder="Write a message… (optional)" maxLength={400} />
+      )}
+
+      {error && (
+        <div className="mt-3 rounded-2xl bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-500">{error}</div>
+      )}
+
+      <div className="mt-4 flex justify-end gap-2">
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button onClick={send} disabled={busy || selected.size === 0}>
+          {busy ? 'Sending…' : <><Send size={15} /> Send{selected.size > 0 ? ` (${selected.size})` : ''}</>}
+        </Button>
+      </div>
+    </Modal>
   )
 }
 
