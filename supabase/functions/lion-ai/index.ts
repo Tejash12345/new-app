@@ -60,8 +60,10 @@ function systemFor(task: string): string {
         `Return STRICT JSON only, no markdown, with exactly: ` +
         `{"title": string (max 8 words), "detail": string (one motivating sentence), "xp": integer 10-50}.`
     case 'briefing':
-      return `${BASE_PERSONA} Write a short, energizing morning briefing (2-3 sentences) for the student ` +
-        `using their stats in the context. Be specific and forward-looking. Start with a lion vibe. No lists.`
+      return `${BASE_PERSONA} Write a short, energizing daily briefing (2-3 sentences) for the student ` +
+        `using their stats in the context. Be specific and forward-looking. ` +
+        `Do NOT open with a time-of-day greeting like "Good morning/afternoon/evening" or their name — ` +
+        `the app already greets them separately. Start straight with the insight. No lists.`
     case 'learnpath':
       return `${BASE_PERSONA} Build a practical learning roadmap for the requested topic and level. ` +
         `Return STRICT JSON only, no markdown, with exactly: ` +

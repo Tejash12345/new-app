@@ -24,10 +24,22 @@ export async function askLion(
     body: { task: opts.task, input: opts.input ?? '', messages: opts.messages ?? [] },
   })
   if (error) {
+    // FunctionsHttpError carries the function's Response in `context` — read its
+    // JSON body so we surface the REAL reason (e.g. bad Gemini key) not the
+    // generic "non-2xx status code".
+    let detail = error.message
+    const ctx = (error as { context?: Response }).context
+    if (ctx && typeof ctx.text === 'function') {
+      try {
+        const body = await ctx.text()
+        const j = JSON.parse(body)
+        detail = j.detail ? `${j.error}: ${j.detail}` : (j.error || body || detail)
+      } catch { /* keep detail */ }
+    }
     throw new AiError(
-      /Failed to fetch|FunctionsFetchError/i.test(error.message)
+      /Failed to fetch|FunctionsFetchError/i.test(detail)
         ? 'Could not reach the Lion AI service. Check your connection or deploy the lion-ai function.'
-        : error.message,
+        : detail,
     )
   }
   if (data?.error) throw new AiError(String(data.error))

@@ -29,6 +29,11 @@ export function LionLifeOS() {
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const firstName = (profile?.full_name || 'friend').split(' ')[0]
 
+  // The heading already shows the correct live greeting; strip any (possibly
+  // stale, cached-in-the-morning) greeting the AI briefing may start with.
+  const stripGreeting = (t: string) =>
+    t.replace(/^\s*good\s+(morning|afternoon|evening)\b[\s,!.—-]*[A-Za-z]*[\s,!.—-]*/i, '').trim() || t
+
   const snapshot = useMemo(
     () => captureSnapshot({ profile, tasks, sessions, habits, feedPosts: posts }),
     [profile, tasks, sessions, habits, posts],
@@ -105,7 +110,7 @@ export function LionLifeOS() {
               </button>
             </div>
             <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-              {brief || (briefBusy ? '🦁 Leo is preparing your briefing…' : 'Your daily briefing will appear here.')}
+              {brief ? stripGreeting(brief) : (briefBusy ? '🦁 Leo is preparing your briefing…' : 'Your daily briefing will appear here.')}
             </p>
           </div>
         </div>
