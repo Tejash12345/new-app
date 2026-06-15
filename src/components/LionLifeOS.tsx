@@ -7,7 +7,7 @@ import { useTable } from '../hooks/db'
 import { supabase } from '../lib/supabase'
 import type { Capsule, FeedPost, Habit, StudySession, Task } from '../lib/types'
 import { GlassCard, ProgressRing } from './ui'
-import { captureSnapshot, countdownLabel, guardianStage, isSealed, lionGrowthScore } from '../lib/capsule'
+import { captureSnapshot, countdownLabel, guardianStage, isSealed, isUnlockable, lionGrowthScore } from '../lib/capsule'
 import { dailyBriefing } from '../lib/ai'
 import { cn, levelForXp, levelProgress, levelTitle, minutesToLabel, todayKey } from '../lib/utils'
 
@@ -42,6 +42,7 @@ export function LionLifeOS() {
   const level = levelForXp(xp)
   const progress = levelProgress(xp)
   const nextCapsule = capsules.filter(isSealed).sort((a, b) => a.unlock_at.localeCompare(b.unlock_at))[0]
+  const readyCapsule = capsules.find(isUnlockable)
 
   // ---- AI daily briefing (cached once per day) ----
   const [brief, setBrief] = useState('')
@@ -131,10 +132,17 @@ export function LionLifeOS() {
             <div className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white">{snapshot.streak} days</div>
             <div className="text-[11px] text-slate-500">Study streak</div>
           </div>
-          {/* capsule countdown */}
-          <Link to="/capsule" className="flex flex-col justify-center rounded-2xl bg-white/40 p-3 transition hover:bg-white/60 dark:bg-white/5 dark:hover:bg-white/10">
-            <Hourglass size={18} className="text-brand-500" />
-            {nextCapsule ? (
+          {/* capsule countdown / ready-to-open */}
+          <Link to="/capsule" className={cn('flex flex-col justify-center rounded-2xl p-3 transition',
+            readyCapsule ? 'bg-gradient-to-br from-amber-400/30 to-orange-500/20 ring-1 ring-amber-400/50'
+              : 'bg-white/40 hover:bg-white/60 dark:bg-white/5 dark:hover:bg-white/10')}>
+            <Hourglass size={18} className={readyCapsule ? 'text-amber-500' : 'text-brand-500'} />
+            {readyCapsule ? (
+              <>
+                <div className="mt-1 text-sm font-extrabold text-amber-600 dark:text-amber-300">🎉 Capsule ready</div>
+                <div className="truncate text-[11px] font-semibold text-amber-600/80 dark:text-amber-300/80">Tap to open →</div>
+              </>
+            ) : nextCapsule ? (
               <>
                 <div className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white">{countdownLabel(nextCapsule.unlock_at)}</div>
                 <div className="truncate text-[11px] text-slate-500">until "{nextCapsule.title}"</div>

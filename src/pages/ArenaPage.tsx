@@ -1,9 +1,10 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
-import type { Habit, LeaderboardRow, StudySession, Task } from '../lib/types'
+import type { AiUsage, Capsule, Habit, LeaderboardRow, LearningPath, StudySession, Task } from '../lib/types'
 import { GlassCard, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { StoryRing } from '../components/Stories'
 import { cn, levelForXp, levelProgress, levelTitle, todayKey, addDays } from '../lib/utils'
@@ -13,14 +14,26 @@ export function ArenaPage() {
   const { rows: tasks } = useTable<Task>('tasks')
   const { rows: sessions } = useTable<StudySession>('study_sessions')
   const { rows: habits } = useTable<Habit>('habits')
+  const { rows: capsules } = useTable<Capsule>('capsules')
+  const { rows: paths } = useTable<LearningPath>('learning_paths')
+  const { rows: aiUsage } = useTable<AiUsage>('ai_usage')
 
-  const { data: board = [] } = useQuery<LeaderboardRow[]>({
+  const [scope, setScope] = useState<'all' | 'week'>('week')
+  const { data: allBoard = [] } = useQuery<LeaderboardRow[]>({
     queryKey: ['leaderboard'],
     queryFn: async () => {
       const { data } = await supabase.from('leaderboard').select('*')
       return (data ?? []) as LeaderboardRow[]
     },
   })
+  const { data: weekBoard = [] } = useQuery<LeaderboardRow[]>({
+    queryKey: ['weekly_leaderboard'],
+    queryFn: async () => {
+      const { data } = await supabase.from('weekly_leaderboard').select('*')
+      return (data ?? []) as LeaderboardRow[]
+    },
+  })
+  const board = scope === 'week' ? weekBoard : allBoard
 
   const xp = profile?.xp ?? 0
   const level = levelForXp(xp)
@@ -30,6 +43,9 @@ export function ArenaPage() {
   const doneTasks = tasks.filter((t) => t.done).length
   const totalFocusMin = sessions.reduce((a, s) => a + s.duration_min, 0)
   const streak = profile?.study_streak ?? 0
+
+  const aiCalls = aiUsage.reduce((a, u) => a + (u.calls ?? 0), 0)
+  const completedPaths = paths.filter((p) => Array.isArray(p.steps) && p.steps.length > 0 && p.steps.every((s) => s.done)).length
 
   const BADGES = [
     { emoji: '🐾', name: 'First Steps', desc: 'Complete your first task', got: doneTasks >= 1 },
@@ -41,6 +57,11 @@ export function ArenaPage() {
     { emoji: '🌋', name: 'Unstoppable', desc: '7-day study streak', got: streak >= 7 },
     { emoji: '⭐', name: 'Rising Star', desc: 'Reach level 3', got: level >= 3 },
     { emoji: '👑', name: 'Lion Royalty', desc: 'Reach level 10', got: level >= 10 },
+    { emoji: '🔮', name: 'Time Traveler', desc: 'Seal a Future Me capsule', got: capsules.length >= 1 },
+    { emoji: '🗺️', name: 'Pathfinder', desc: 'Start an AI learning path', got: paths.length >= 1 },
+    { emoji: '🎓', name: 'Graduate', desc: 'Finish a learning path', got: completedPaths >= 1 },
+    { emoji: '🤖', name: 'AI Explorer', desc: 'Ask Lion AI anything', got: aiCalls >= 1 },
+    { emoji: '🦁', name: 'Lion Mind', desc: 'Use Lion AI 25 times', got: aiCalls >= 25 },
   ]
 
   const tasksToday = tasks.filter((t) => t.done && t.created_at.slice(0, 10) === today).length
@@ -142,9 +163,22 @@ export function ArenaPage() {
 
         {/* leaderboard */}
         <GlassCard>
-          <SectionTitle>Leaderboard</SectionTitle>
+          <SectionTitle right={
+            <div className="flex gap-1 rounded-full bg-slate-500/10 p-0.5">
+              <button onClick={() => setScope('week')}
+                className={cn('rounded-full px-2.5 py-1 text-xs font-bold transition', scope === 'week' ? 'bg-amber-400 text-amber-950' : 'text-slate-500')}>
+                Week
+              </button>
+              <button onClick={() => setScope('all')}
+                className={cn('rounded-full px-2.5 py-1 text-xs font-bold transition', scope === 'all' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500')}>
+                All-time
+              </button>
+            </div>
+          }>Leaderboard</SectionTitle>
           {board.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-500">No players yet — invite friends!</p>
+            <p className="py-6 text-center text-sm text-slate-500">
+              {scope === 'week' ? 'No XP earned yet this week — be the first!' : 'No players yet — invite friends!'}
+            </p>
           ) : (
             <div className="space-y-1.5">
               {board.map((r, i) => (

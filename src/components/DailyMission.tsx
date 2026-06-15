@@ -15,7 +15,7 @@ import { cn, todayKey } from '../lib/utils'
  * tracks completion. Falls back gracefully if the AI service isn't reachable.
  */
 export function DailyMissionCard() {
-  const { user, profile } = useAuth()
+  const { user, profile, addXp } = useAuth()
   const { rows: missions, isLoading } = useTable<AiMission>('ai_missions')
   const { rows: tasks } = useTable<Task>('tasks')
   const { rows: sessions } = useTable<StudySession>('study_sessions')
@@ -67,7 +67,10 @@ export function DailyMissionCard() {
 
   async function toggleDone() {
     if (!mission) return
-    await supabase.from('ai_missions').update({ done: !mission.done }).eq('id', mission.id)
+    const nowDone = !mission.done
+    await supabase.from('ai_missions').update({ done: nowDone }).eq('id', mission.id)
+    // award (or revoke, on un-check) the mission's XP — symmetric so toggling nets zero
+    await addXp(nowDone ? mission.xp : -mission.xp, `Daily mission: ${mission.title}`)
   }
 
   return (
