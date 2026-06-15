@@ -147,9 +147,13 @@ export function StoryRing({ userId, children, display, className }: {
 }) {
   const { hasStory, hasUnseen, openStory } = useStories()
   if (!hasStory(userId)) return <>{children}</>
-  const ring = cn('inline-flex rounded-full p-[2px]', hasUnseen(userId)
+  // shrink-0 keeps the ring perfectly circular inside flex rows (comments, feed
+  // headers); without it flexbox squeezes the wrapper while the fixed-size
+  // avatar overflows, clipping the gradient ring — worse on phones with large
+  // text scaling. align-middle keeps it centred in inline contexts.
+  const ring = cn('inline-flex shrink-0 align-middle rounded-full p-[2px]', hasUnseen(userId)
     ? 'bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-500' : 'bg-slate-300 dark:bg-white/25', className)
-  const inner = <span className="inline-flex rounded-full bg-white p-[1.5px] dark:bg-slate-900">{children}</span>
+  const inner = <span className="inline-flex shrink-0 rounded-full bg-white p-[1.5px] dark:bg-slate-900">{children}</span>
   if (display) return <span className={ring}>{inner}</span>
   return (
     <span

@@ -13,28 +13,49 @@ const inputToMin = (t: string) => {
   return h * 60 + m
 }
 
-/** Slider that follows the finger locally and saves once on release. */
-function LimitSlider({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
+/**
+ * Daily-limit control: drag the slider for a quick set, or type an exact number
+ * of minutes in the box (the box isn't capped at the slider's 180, so you can
+ * set e.g. 240). Both follow your input locally and save once you let go / blur.
+ */
+function LimitControl({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
   const [local, setLocal] = useState(value)
-  const [dragging, setDragging] = useState(false)
+  const [text, setText] = useState(String(value))
+  const [editing, setEditing] = useState(false)
   useEffect(() => {
-    if (!dragging) setLocal(value)
-  }, [value, dragging])
-  const commit = () => {
-    setDragging(false)
-    if (local !== value) onCommit(local)
+    if (!editing) { setLocal(value); setText(String(value)) }
+  }, [value, editing])
+
+  const commit = (raw: number) => {
+    const v = Math.max(1, Math.min(1440, Math.round(raw)))
+    setEditing(false)
+    setLocal(v)
+    setText(String(v))
+    if (v !== value) onCommit(v)
   }
+
   return (
     <div className="mt-4 flex items-center gap-3">
       <input
-        type="range" min={5} max={180} step={5} value={local}
-        onChange={(e) => { setDragging(true); setLocal(Number(e.target.value)) }}
-        onPointerUp={commit}
-        onKeyUp={commit}
-        onBlur={commit}
+        type="range" min={5} max={180} step={5} value={Math.min(180, local)}
+        onChange={(e) => { setEditing(true); const v = Number(e.target.value); setLocal(v); setText(String(v)) }}
+        onPointerUp={() => commit(local)}
+        onKeyUp={() => commit(local)}
         className="h-1.5 flex-1 accent-brand-500"
+        aria-label="Daily limit slider"
       />
-      <span className="w-12 text-right text-sm font-bold text-brand-500">{minutesToLabel(local)}</span>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number" min={1} max={1440} inputMode="numeric" value={text}
+          onChange={(e) => { setEditing(true); setText(e.target.value); const n = Number(e.target.value); if (!Number.isNaN(n)) setLocal(n) }}
+          onFocus={() => setEditing(true)}
+          onBlur={() => commit(Number(text) || value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          className="w-16 rounded-xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-2 py-1.5 text-right text-sm font-bold text-brand-500 outline-none focus:border-brand-500/60"
+          aria-label="Daily limit in minutes"
+        />
+        <span className="text-xs font-semibold text-slate-400">min</span>
+      </div>
     </div>
   )
 }
@@ -44,6 +65,24 @@ export function WellbeingPage() {
   const { rows: usage, insert: addUsage } = useTable<SocialSession>('social_sessions')
   const { activeScroll, startScroll, stopScroll, showLion } = useApp()
   const [, forceTick] = useState(0)
+
+  // Real per-app usage (minutes used today) pushed from the native Android
+  // wrapper via the FLGuard bridge. When we're running inside that app we trust
+  // the phone's actual screen-time over the manual "start the timer" sessions.
+  const inNativeApp = typeof window !== 'undefined' && 'FLGuard' in window
+  const [nativeUsage, setNativeUsage] = useState<Record<string, number>>(
+    () => (window as unknown as { __FL_USAGE__?: Record<string, number> }).__FL_USAGE__ ?? {},
+  )
+  useEffect(() => {
+    const onUsage = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail && typeof detail === 'object') setNativeUsage(detail as Record<string, number>)
+    }
+    window.addEventListener('fl-usage', onUsage as EventListener)
+    const cur = (window as unknown as { __FL_USAGE__?: Record<string, number> }).__FL_USAGE__
+    if (cur) setNativeUsage(cur)
+    return () => window.removeEventListener('fl-usage', onUsage as EventListener)
+  }, [])
 
   // live ticking while a scroll session runs
   useEffect(() => {
@@ -59,12 +98,46 @@ export function WellbeingPage() {
   const usedFor = (app: string, since: string) =>
     usage.filter((u) => u.app_name === app && u.used_on >= since).reduce((a, u) => a + u.used_min, 0)
 
+  // minutes used today for an app — the phone's real usage in the native app,
+  // otherwise the sum of manual sessions on the web.
+  const usedTodayFor = (app: string) =>
+    inNativeApp ? Math.max(nativeUsage[app] ?? 0, usedFor(app, today)) : usedFor(app, today)
+
   const limitFor = (app: string) => limits.find((l) => l.app_name === app)
+
+  // Start an app's timer right away — no separate "start" button. Respects the
+  // allowed-hours window: if the app is locked right now, the lion roars instead.
+  function startTimerFor(appName: string) {
+    const lim = limitFor(appName)
+    const dailyLimit = lim?.daily_limit_min ?? 30
+    const scheduleOn = lim?.schedule_enabled ?? false
+    const fromMin = lim?.allowed_from_min ?? 1080
+    const untilMin = lim?.allowed_until_min ?? 1200
+    const nowMin = new Date().getHours() * 60 + new Date().getMinutes()
+    const inWindow = !scheduleOn || (nowMin >= fromMin && nowMin < untilMin)
+    const windowLabel = `${timeLabel(fromMin)} – ${timeLabel(untilMin)}`
+    if (!inWindow) { showLion(appName, 'schedule', windowLabel); return }
+    startScroll({
+      appName,
+      startedAt: Date.now(),
+      limitMin: dailyLimit,
+      usedTodayMin: usedTodayFor(appName),
+      allowedUntilMin: scheduleOn ? untilMin : undefined,
+      windowLabel: scheduleOn ? windowLabel : undefined,
+    })
+  }
 
   async function toggleApp(app: string, enabled: boolean) {
     const existing = limitFor(app)
     if (existing) await update({ id: existing.id, enabled } as Partial<SocialLimit> & { id: string })
     else await insert({ app_name: app, daily_limit_min: 30, enabled } as Partial<SocialLimit>)
+    // Enabling an app is enough — its timer starts automatically.
+    if (enabled) {
+      if (activeScroll && activeScroll.appName !== app) await stopSession() // bank the previous app's time first
+      startTimerFor(app)
+    } else if (activeScroll?.appName === app) {
+      await stopSession() // turning the app off stops its running timer
+    }
   }
 
   async function setLimit(app: string, min: number) {
@@ -80,7 +153,9 @@ export function WellbeingPage() {
     await addUsage({ app_name: activeScroll.appName, used_min: elapsedMin, used_on: today } as Partial<SocialSession>)
   }
 
-  const totalToday = usage.filter((u) => u.used_on === today).reduce((a, u) => a + u.used_min, 0)
+  const sessionTotalToday = usage.filter((u) => u.used_on === today).reduce((a, u) => a + u.used_min, 0)
+  const nativeTotalToday = Object.values(nativeUsage).reduce((a, b) => a + b, 0)
+  const totalToday = inNativeApp ? Math.max(nativeTotalToday, sessionTotalToday) : sessionTotalToday
   const totalWeek = usage.filter((u) => u.used_on >= weekStart).reduce((a, u) => a + u.used_min, 0)
   const totalMonth = usage.filter((u) => u.used_on >= monthStart).reduce((a, u) => a + u.used_min, 0)
 
@@ -125,7 +200,7 @@ export function WellbeingPage() {
           const lim = limitFor(app.name)
           const enabled = lim?.enabled ?? false
           const dailyLimit = lim?.daily_limit_min ?? 30
-          const usedToday = usedFor(app.name, today)
+          const usedToday = usedTodayFor(app.name)
           const remaining = Math.max(0, dailyLimit - usedToday)
           const over = enabled && usedToday >= dailyLimit
 
@@ -161,7 +236,7 @@ export function WellbeingPage() {
 
               {enabled && (
                 <>
-                  <LimitSlider value={dailyLimit} onCommit={(v) => setLimit(app.name, v)} />
+                  <LimitControl value={dailyLimit} onCommit={(v) => setLimit(app.name, v)} />
                   <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200/70 dark:bg-white/10">
                     <div
                       className={cn('h-full rounded-full transition-all', over ? 'bg-rose-500' : 'bg-brand-500')}
@@ -204,30 +279,18 @@ export function WellbeingPage() {
                     )}
                   </div>
 
-                  <Button
-                    variant={over || !inWindow ? 'danger' : 'soft'} size="sm" className="mt-3 w-full"
-                    disabled={!!activeScroll}
-                    onClick={() => {
-                      if (!inWindow) {
-                        showLion(app.name, 'schedule', windowLabel)
-                        return
-                      }
-                      startScroll({
-                        appName: app.name,
-                        startedAt: Date.now(),
-                        limitMin: dailyLimit,
-                        usedTodayMin: usedToday,
-                        allowedUntilMin: scheduleOn ? untilMin : undefined,
-                        windowLabel: scheduleOn ? windowLabel : undefined,
-                      })
-                    }}
-                  >
+                  {/* No "start" button — enabling the app starts the timer.
+                      This line just reflects the current state. */}
+                  <p className={cn('mt-3 text-center text-xs font-semibold',
+                    !inWindow ? 'text-rose-500' : over ? 'text-rose-500' : activeScroll?.appName === app.name ? 'text-amber-500' : 'text-emerald-500')}>
                     {!inWindow
                       ? `🦁 Locked until ${timeLabel(fromMin)}`
                       : over
-                        ? '🦁 Already over — scroll at your own risk'
-                        : `I'm opening ${app.name} — start the timer`}
-                  </Button>
+                        ? '🦁 Daily limit reached for today'
+                        : activeScroll?.appName === app.name
+                          ? `⏳ Timer running — ${minutesToLabel(remaining)} left today`
+                          : '🟢 Tracking on — the lion guards your limit'}
+                  </p>
                 </>
               )}
             </GlassCard>
@@ -237,7 +300,7 @@ export function WellbeingPage() {
 
       {limits.filter((l) => l.enabled).length === 0 && (
         <GlassCard className="mt-5">
-          <Empty emoji="🦁" text={'Enable a limit above, then tap "start the timer" whenever you open that app.\nWhen your daily time runs out, the lion will step in and roar.'} />
+          <Empty emoji="🦁" text={'Turn on an app above and set its daily minutes — the timer starts automatically.\nWhen your daily time runs out, the lion will step in and roar.'} />
         </GlassCard>
       )}
 

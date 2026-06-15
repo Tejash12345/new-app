@@ -36,6 +36,27 @@ const prefersDark =
 
 if (prefersDark) document.documentElement.classList.add('dark')
 
+// A running scroll session is persisted so a page reload (or the WebView
+// reloading on the native app) restores it instead of resetting the timer —
+// elapsed time is derived from startedAt, so it keeps counting correctly.
+const SCROLL_KEY = 'fl-active-scroll'
+const MAX_SESSION_MS = 6 * 60 * 60 * 1000 // drop sessions left running >6h (e.g. across days)
+
+function loadActiveScroll(): ActiveScroll {
+  try {
+    const raw = localStorage.getItem(SCROLL_KEY)
+    if (!raw) return null
+    const s = JSON.parse(raw) as NonNullable<ActiveScroll>
+    if (!s || typeof s.startedAt !== 'number' || Date.now() - s.startedAt > MAX_SESSION_MS) {
+      localStorage.removeItem(SCROLL_KEY)
+      return null
+    }
+    return s
+  } catch {
+    return null
+  }
+}
+
 export const useApp = create<AppState>((set) => ({
   dark: prefersDark,
   toggleDark: () =>
@@ -49,9 +70,15 @@ export const useApp = create<AppState>((set) => ({
   showLion: (appName, reason = 'limit', windowLabel) =>
     set({ lion: { open: true, appName, reason, windowLabel } }),
   hideLion: () => set({ lion: { open: false, appName: '', reason: 'limit' } }),
-  activeScroll: null,
-  startScroll: (s) => set({ activeScroll: s }),
-  stopScroll: () => set({ activeScroll: null }),
+  activeScroll: loadActiveScroll(),
+  startScroll: (s) => {
+    try { localStorage.setItem(SCROLL_KEY, JSON.stringify(s)) } catch { /* ignore */ }
+    set({ activeScroll: s })
+  },
+  stopScroll: () => {
+    try { localStorage.removeItem(SCROLL_KEY) } catch { /* ignore */ }
+    set({ activeScroll: null })
+  },
   onlineIds: [],
   setOnlineIds: (ids) => set({ onlineIds: ids }),
 }))
