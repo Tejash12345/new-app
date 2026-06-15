@@ -10,6 +10,7 @@ import { PlannerPage } from './pages/PlannerPage'
 import { TasksPage } from './pages/TasksPage'
 import { FocusPage } from './pages/FocusPage'
 import { WellbeingPage } from './pages/WellbeingPage'
+import { CapsulePage } from './pages/CapsulePage'
 import { NotesPage } from './pages/NotesPage'
 import { AnalyticsPage } from './pages/AnalyticsPage'
 import { ArenaPage } from './pages/ArenaPage'
@@ -45,6 +46,7 @@ function Gate() {
         <Route path="tasks" element={<TasksPage />} />
         <Route path="focus" element={<FocusPage />} />
         <Route path="wellbeing" element={<WellbeingPage />} />
+        <Route path="capsule" element={<CapsulePage />} />
         <Route path="notes" element={<NotesPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="arena" element={<ArenaPage />} />

@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, CalendarDays, CheckCircle2, Timer, Shield,
-  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard, Eye,
+  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard, Eye, Hourglass,
 } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
@@ -23,6 +23,7 @@ const NAV = [
   { to: '/tasks', label: 'Tasks', icon: CheckCircle2 },
   { to: '/focus', label: 'Focus', icon: Timer },
   { to: '/wellbeing', label: 'Wellbeing', icon: Shield },
+  { to: '/capsule', label: 'Future Me', icon: Hourglass },
   { to: '/notes', label: 'Notes', icon: NotebookPen },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/arena', label: 'Arena', icon: Trophy },

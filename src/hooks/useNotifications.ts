@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useAuth } from './useAuth'
 import { useTable } from './db'
-import type { Task, TimetableBlock } from '../lib/types'
+import type { Capsule, Task, TimetableBlock } from '../lib/types'
 import { pushNotification, requestNotifPermission } from '../lib/notify'
 
 // reminders fire on web and (via the native bridge) inside the Android app
@@ -19,6 +19,7 @@ export function useNotificationEngine() {
   const { profile } = useAuth()
   const { rows: tasks } = useTable<Task>('tasks')
   const { rows: blocks } = useTable<TimetableBlock>('timetable_blocks')
+  const { rows: capsules } = useTable<Capsule>('capsules')
   const fired = useRef<Set<string>>(new Set())
 
   useEffect(() => {
@@ -83,6 +84,26 @@ export function useNotificationEngine() {
         }
       }
 
+      // Future Me Capsule — opening soon (7 days out) and ready to open
+      for (const c of capsules) {
+        if (c.opened_at) continue
+        const ms = new Date(c.unlock_at).getTime() - now.getTime()
+        const days = Math.ceil(ms / 86_400_000)
+        if (ms > 0 && days <= 7) {
+          const tag = `capsule-soon-${c.id}`
+          if (!fired.current.has(tag)) {
+            fired.current.add(tag)
+            notify('⏳ Your Future Capsule is almost here', `"${c.title}" opens in ${days} day${days === 1 ? '' : 's'}.`, tag)
+          }
+        } else if (ms <= 0) {
+          const tag = `capsule-ready-${c.id}`
+          if (!fired.current.has(tag)) {
+            fired.current.add(tag)
+            notify('🦁 Your journey is ready', `"${c.title}" has unlocked — open it to see how you've grown.`, tag)
+          }
+        }
+      }
+
       // sleep reminder
       if (prefs.sleep !== false) {
         const tag = `sleep-${dayTag}`
@@ -94,5 +115,5 @@ export function useNotificationEngine() {
     }, 30_000)
 
     return () => clearInterval(interval)
-  }, [profile, tasks, blocks])
+  }, [profile, tasks, blocks, capsules])
 }

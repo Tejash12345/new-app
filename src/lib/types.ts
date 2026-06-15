@@ -187,3 +187,66 @@ export type FeedComment = {
   body: string
   created_at: string
 }
+
+// ---------- Future Me Capsule ----------
+export type CapsuleGoal = { id: string; text: string; done: boolean }
+
+export type CapsuleVisibility = 'private' | 'friends' | 'feed'
+
+/** A snapshot of the user's stats, captured when a capsule is sealed and again
+ *  when it opens, so the Growth Coach can compare past vs present. */
+export type CapsuleSnapshot = {
+  capturedAt: string
+  xp: number
+  streak: number
+  tasksTotal: number
+  tasksDone: number
+  studyMin: number
+  feedPosts: number
+  habits: number
+}
+
+/** The Growth Coach report, computed once when a capsule unlocks. */
+export type GrowthReport = {
+  generatedAt: string
+  days: number
+  score: number          // current Lion Growth Score 0–100
+  pastScore: number
+  guardianLevel: number  // 1–5, the strength of the Lion Guardian
+  goalsAchieved: number
+  goalsTotal: number
+  deltas: {
+    xp: number
+    streak: number
+    studyMin: number
+    tasksDone: number
+    feedPosts: number
+  }
+  insights: string[]
+}
+
+export type Capsule = {
+  id: string
+  user_id: string
+  author_name: string
+  author_avatar_url: string
+  title: string
+  message: string
+  goals: CapsuleGoal[]
+  unlock_at: string
+  visibility: CapsuleVisibility
+  opened_at: string | null
+  snapshot: CapsuleSnapshot
+  growth: GrowthReport | null
+  shared_post_id: string | null
+  created_at: string
+}
+
+export type CapsuleMedia = {
+  id: string
+  capsule_id: string
+  user_id: string
+  kind: 'image' | 'video' | 'voice'
+  url: string
+  created_at: string
+}
