@@ -1255,7 +1255,7 @@ function CommentsModal({ post, onClose, onChanged, onAdded, onCountChange }: { p
         {comments.length === 0 ? (
           <p className="py-8 text-center text-sm text-slate-400">No comments yet — start the discussion!</p>
         ) : comments.map((c) => (
-          <div key={c.id} className="group flex gap-2.5">
+          <div key={c.id} className="group flex items-start gap-2.5">
             <Avatar id={c.user_id} name={c.author_name} url={avatarFor(c.user_id) || c.author_avatar_url} size={8} />
             <div className="min-w-0 flex-1 rounded-2xl bg-white/60 px-3 py-2 dark:bg-white/10">
               <div className="flex items-center justify-between gap-2">
