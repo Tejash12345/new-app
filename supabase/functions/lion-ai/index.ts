@@ -125,9 +125,14 @@ Deno.serve(async (req) => {
       generationConfig: {
         temperature: task === 'mission' ? 0.9 : 0.7,
         maxOutputTokens:
-          task === 'startup' || task === 'career' || task === 'learnpath' ? 1800
+          task === 'startup' || task === 'career' || task === 'learnpath' ? 2048
+          : task === 'mission' ? 1024
           : task === 'chat' ? 1024
           : 512,
+        // structured tasks must return pure JSON (no markdown fences / truncation)
+        ...(['mission', 'learnpath', 'career', 'startup'].includes(task)
+          ? { responseMimeType: 'application/json' }
+          : {}),
       },
     }
 

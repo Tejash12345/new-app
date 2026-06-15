@@ -66,24 +66,25 @@ export async function generateLearningPath(
   topic: string, level: string,
 ): Promise<{ summary: string; steps: { title: string; detail: string }[] }> {
   const raw = await askLion({ task: 'learnpath', input: `Topic: ${topic}. Level: ${level}.` })
-  try {
-    const obj = JSON.parse(raw.replace(/```json|```/g, '').trim())
-    const steps = Array.isArray(obj.steps) ? obj.steps : []
-    return {
-      summary: String(obj.summary ?? `Your ${topic} roadmap`).slice(0, 240),
-      steps: steps.slice(0, 14).map((s: { title?: unknown; detail?: unknown }) => ({
-        title: String(s.title ?? 'Step').slice(0, 120),
-        detail: String(s.detail ?? '').slice(0, 280),
-      })),
-    }
-  } catch {
-    return { summary: `Your ${topic} roadmap`, steps: [] }
+  const obj = parseJson<{ summary?: unknown; steps?: { title?: unknown; detail?: unknown }[] }>(raw)
+  const steps = Array.isArray(obj?.steps) ? obj!.steps : []
+  return {
+    summary: String(obj?.summary ?? `Your ${topic} roadmap`).slice(0, 240),
+    steps: steps.slice(0, 14).map((s) => ({
+      title: String(s?.title ?? 'Step').slice(0, 120),
+      detail: String(s?.detail ?? '').slice(0, 280),
+    })),
   }
 }
 
+// Robust JSON extraction: handles ```json fences and stray prose around the
+// object, so a slightly messy model response still parses.
 function parseJson<T>(raw: string): T | null {
-  try { return JSON.parse(raw.replace(/```json|```/g, '').trim()) as T }
-  catch { return null }
+  const cleaned = raw.replace(/```json|```/g, '').trim()
+  try { return JSON.parse(cleaned) as T } catch { /* try to extract */ }
+  const m = cleaned.match(/\{[\s\S]*\}/)
+  if (m) { try { return JSON.parse(m[0]) as T } catch { /* give up */ } }
+  return null
 }
 const arr = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
 
@@ -123,16 +124,14 @@ export async function startupPlan(idea: string): Promise<StartupPlan> {
 /** Generate today's personalized mission. Returns parsed {title, detail, xp}. */
 export async function generateMission(context: string): Promise<{ title: string; detail: string; xp: number }> {
   const raw = await askLion({ task: 'mission', input: context })
-  try {
-    const cleaned = raw.replace(/```json|```/g, '').trim()
-    const obj = JSON.parse(cleaned)
+  const o = parseJson<{ title?: unknown; detail?: unknown; xp?: unknown }>(raw)
+  if (o && (o.title || o.detail)) {
     return {
-      title: String(obj.title ?? 'Today’s Lion Mission').slice(0, 80),
-      detail: String(obj.detail ?? '').slice(0, 240),
-      xp: Math.max(10, Math.min(50, Math.round(Number(obj.xp) || 20))),
+      title: String(o.title ?? 'Today’s Lion Mission').slice(0, 80),
+      detail: String(o.detail ?? '').slice(0, 240),
+      xp: Math.max(10, Math.min(50, Math.round(Number(o.xp) || 20))),
     }
-  } catch {
-    // model didn't return clean JSON — degrade gracefully
-    return { title: 'Today’s Lion Mission', detail: raw.slice(0, 240) || 'Do one focused 25-minute session.', xp: 20 }
   }
+  // unparseable / truncated — clean fallback, never echo raw JSON
+  return { title: 'Today’s Lion Mission', detail: 'Tackle one focused 25-minute study session today. 🦁', xp: 20 }
 }
