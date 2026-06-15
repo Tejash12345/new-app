@@ -47,10 +47,9 @@ export async function askLion(
     )
   }
   if (data?.error) throw new AiError(String(data.error))
-  const text = String(data?.text ?? '').trim()
-  // best-effort usage stat — never block the user on this
-  supabase.rpc('record_ai_usage', { p_task: opts.task }).then(() => {}, () => {})
-  return text
+  // usage is now counted server-side in the Edge Function (only real Gemini
+  // calls, not cache hits), so there's nothing to record here.
+  return String(data?.text ?? '').trim()
 }
 
 // ---- feature helpers (the "AI-powered features") ----

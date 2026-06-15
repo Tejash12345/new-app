@@ -4,17 +4,31 @@
 // environment as the GEMINI_API_KEY secret. The browser/app calls this function
 // (with the user's Supabase JWT); we validate the user, then call Gemini.
 //
+// Free-tier hardening:
+//   • Per-user daily rate limit (AI_DAILY_USER_CAP, default 30).
+//   • Response cache for idempotent tasks — identical prompts skip Gemini.
+//   • Graceful 429 / RESOURCE_EXHAUSTED handling + quota logging.
+//   • Usage counted server-side (only real Gemini calls, not cache hits).
+//   • Daily briefings & missions are cached per-day client-side already.
+//
 // Deploy:
 //   supabase functions deploy lion-ai
-//   supabase secrets set GEMINI_API_KEY=your_key   GEMINI_MODEL=gemini-2.5-flash
+//   supabase secrets set GEMINI_API_KEY=AIza... GEMINI_MODEL=gemini-2.5-flash
 //
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const MODEL = Deno.env.get('GEMINI_MODEL') ?? 'gemini-2.5-flash'
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') ?? ''
+const DAILY_USER_CAP = Number(Deno.env.get('AI_DAILY_USER_CAP') ?? '30')
 const GEMINI_URL =
   `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
+
+// idempotent tasks worth caching (same input -> same answer). Chat/mission/
+// briefing are excluded: chat is conversational, mission/briefing are
+// personalized and already cached per-day on the client.
+const CACHEABLE = ['summarize', 'hashtags', 'caption', 'explain', 'startup', 'career', 'learnpath']
+const JSON_TASKS = ['mission', 'learnpath', 'career', 'startup']
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,7 +42,13 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 
-// ---- the lion persona, tuned per task ----
+const QUOTA_MSG = "Lion AI has hit today's Gemini quota — it resets daily. 🦁 Coach Leo will keep helping in the meantime."
+
+async function sha256(s: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 const BASE_PERSONA =
   `You are "Leo", the Lion AI Assistant inside FocusLion, a student productivity app. ` +
   `You are warm, motivating and concise, with a calm lion vibe (occasional 🦁). ` +
@@ -44,9 +64,6 @@ function systemFor(task: string): string {
     case 'caption':
       return `${BASE_PERSONA} Rewrite the user's text into one improved, engaging social caption ` +
         `(max 2 sentences). Keep their meaning. Return ONLY the caption.`
-    case 'startup':
-      return `${BASE_PERSONA} Suggest 3 concrete startup ideas based on the user's interests. ` +
-        `For each: a bold name, one-line pitch, and the first step to validate it.`
     case 'explain':
       return `${BASE_PERSONA} Explain the programming/tech concept clearly for a student: ` +
         `a plain-language definition, a tiny code or real-world example, and one gotcha.`
@@ -97,20 +114,47 @@ Deno.serve(async (req) => {
   try {
     if (!GEMINI_API_KEY) return json({ error: 'Server is missing GEMINI_API_KEY.' }, 500)
 
-    // ---- authenticate the caller via their Supabase JWT ----
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const authHeader = req.headers.get('Authorization') ?? ''
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
-      { global: { headers: { Authorization: authHeader } } },
-    )
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+
+    // ---- authenticate the caller via their Supabase JWT ----
+    const userClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
+      global: { headers: { Authorization: authHeader } },
+    })
+    const { data: { user }, error: authErr } = await userClient.auth.getUser()
     if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
     const { task = 'chat', input = '', messages = [] } =
       (await req.json().catch(() => ({}))) as { task?: string; input?: string; messages?: InMsg[] }
 
-    // ---- build Gemini "contents" ----
+    // service-role client for cache + usage (bypasses RLS)
+    const admin = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
+      auth: { persistSession: false },
+    })
+    const today = new Date().toISOString().slice(0, 10)
+
+    // ---- per-user daily rate limit ----
+    const { data: usageRow } = await admin
+      .from('ai_usage').select('calls').eq('user_id', user.id).eq('used_on', today).maybeSingle()
+    const used = (usageRow?.calls as number) ?? 0
+    if (used >= DAILY_USER_CAP) {
+      console.warn(`[RATELIMIT] user=${user.id} used=${used}/${DAILY_USER_CAP} task=${task}`)
+      return json({ error: `You've reached today's AI limit of ${DAILY_USER_CAP} requests. It resets tomorrow. 🦁`, limited: true }, 429)
+    }
+
+    // ---- response cache (idempotent tasks only) ----
+    const cacheable = CACHEABLE.includes(task) && !!input
+    let cacheKey = ''
+    if (cacheable) {
+      cacheKey = await sha256(`${MODEL}::${task}::${input}`)
+      const { data: hit } = await admin.from('ai_cache').select('response').eq('cache_key', cacheKey).maybeSingle()
+      if (hit?.response) {
+        console.log(`[CACHE_HIT] task=${task} user=${user.id}`)
+        return json({ text: String(hit.response), task, cached: true })
+      }
+    }
+
+    // ---- build Gemini request ----
     const history = Array.isArray(messages) ? messages.slice(-16) : []
     const contents = history.length
       ? history.map((m) => ({
@@ -129,27 +173,49 @@ Deno.serve(async (req) => {
           : task === 'mission' ? 1024
           : task === 'chat' ? 1024
           : 512,
-        // structured tasks must return pure JSON (no markdown fences / truncation)
-        ...(['mission', 'learnpath', 'career', 'startup'].includes(task)
-          ? { responseMimeType: 'application/json' }
-          : {}),
+        ...(JSON_TASKS.includes(task) ? { responseMimeType: 'application/json' } : {}),
       },
     }
 
-    const res = await fetch(GEMINI_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
-      body: JSON.stringify(payload),
-    })
+    let res: Response
+    try {
+      res = await fetch(GEMINI_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+        body: JSON.stringify(payload),
+      })
+    } catch (e) {
+      return json({ error: 'Could not reach Gemini', detail: String(e) }, 502)
+    }
 
+    // ---- graceful quota handling ----
+    if (res.status === 429) {
+      const body = await res.text().catch(() => '')
+      console.error(`[QUOTA] 429 user=${user.id} task=${task} model=${MODEL} :: ${body.slice(0, 240)}`)
+      return json({ error: QUOTA_MSG, quota: true }, 429)
+    }
     if (!res.ok) {
       const detail = await res.text()
+      if (/RESOURCE_EXHAUSTED|quota/i.test(detail)) {
+        console.error(`[QUOTA] ${res.status} user=${user.id} task=${task} :: ${detail.slice(0, 240)}`)
+        return json({ error: QUOTA_MSG, quota: true }, 429)
+      }
+      console.error(`[GEMINI_ERR] ${res.status} task=${task} :: ${detail.slice(0, 240)}`)
       return json({ error: 'Gemini request failed', status: res.status, detail }, 502)
     }
 
     const data = await res.json() as any
     const text: string =
       data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? ''
+
+    // store cache + count the (real) Gemini call
+    if (cacheable && cacheKey && text) {
+      await admin.from('ai_cache').upsert({ cache_key: cacheKey, task, response: text, hits: 0 }).then(() => {}, () => {})
+    }
+    await admin.from('ai_usage').upsert(
+      { user_id: user.id, used_on: today, calls: used + 1, last_task: task, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,used_on' },
+    ).then(() => {}, () => {})
 
     return json({ text: text.trim(), task })
   } catch (e) {
