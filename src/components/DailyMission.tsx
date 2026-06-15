@@ -38,7 +38,7 @@ export function DailyMissionCard() {
       `Make a mission that pushes them gently forward today.`
   }
 
-  async function generate() {
+  async function generate(force = false) {
     if (!user || busy) return
     setBusy(true)
     setError('')
@@ -48,7 +48,7 @@ export function DailyMissionCard() {
         .from('ai_missions')
         .upsert(
           { user_id: user.id, mission_date: today, title: m.title, detail: m.detail, xp: m.xp, done: false },
-          { onConflict: 'user_id,mission_date', ignoreDuplicates: true },
+          { onConflict: 'user_id,mission_date', ignoreDuplicates: !force },
         )
       if (insErr) setError(insErr.message)
     } catch (e) {
@@ -64,6 +64,24 @@ export function DailyMissionCard() {
     if (!mission) { tried.current = true; generate() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, mission, user])
+
+  // self-heal: an older mission may have been saved with raw ```json text
+  // (before the parser fix). Salvage the real title/detail from it with a
+  // regex and repair the row in place — no AI call, so it works even while
+  // Gemini quota is exhausted.
+  const healed = useRef(false)
+  useEffect(() => {
+    if (!mission || healed.current || !user) return
+    const corrupt = /```|"title"\s*:|^\s*\{/.test(mission.title) || /```|"title"\s*:/.test(mission.detail)
+    if (!corrupt) return
+    healed.current = true
+    const blob = `${mission.title}\n${mission.detail}`
+    const title = (blob.match(/"title"\s*:\s*"([^"]+)"/)?.[1] ?? 'Today’s Lion Mission').slice(0, 80)
+    const detail = (blob.match(/"detail"\s*:\s*"([^"]+)"/)?.[1] ?? 'Tackle one focused 25-minute study session today. 🦁').slice(0, 240)
+    const xp = Math.max(10, Math.min(50, Number(blob.match(/"xp"\s*:\s*(\d+)/)?.[1]) || mission.xp || 20))
+    supabase.from('ai_missions').update({ title, detail, xp }).eq('id', mission.id).then(() => {}, () => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mission, user])
 
   async function toggleDone() {
     if (!mission) return
@@ -99,15 +117,21 @@ export function DailyMissionCard() {
           </div>
 
           {mission ? (
-            <button
-              onClick={toggleDone}
-              className={cn('flex shrink-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-bold transition',
-                mission.done ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-600 hover:bg-slate-500/20 dark:text-slate-200')}
-            >
-              {mission.done ? <><Check size={15} /> Done</> : <><Target size={15} /> +{mission.xp} XP</>}
-            </button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button onClick={() => generate(true)} disabled={busy} title="Regenerate today's mission"
+                className="rounded-2xl bg-slate-500/10 p-2 text-slate-500 transition hover:bg-slate-500/20 disabled:opacity-50">
+                <RefreshCw size={15} className={cn(busy && 'animate-spin')} />
+              </button>
+              <button
+                onClick={toggleDone}
+                className={cn('flex items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-bold transition',
+                  mission.done ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-600 hover:bg-slate-500/20 dark:text-slate-200')}
+              >
+                {mission.done ? <><Check size={15} /> Done</> : <><Target size={15} /> +{mission.xp} XP</>}
+              </button>
+            </div>
           ) : (
-            <button onClick={generate} disabled={busy}
+            <button onClick={() => generate()} disabled={busy}
               className="flex shrink-0 items-center gap-1.5 rounded-2xl bg-amber-400/20 px-3 py-2 text-sm font-bold text-amber-600 hover:bg-amber-400/30 disabled:opacity-50 dark:text-amber-300">
               <RefreshCw size={14} className={cn(busy && 'animate-spin')} /> Generate
             </button>
