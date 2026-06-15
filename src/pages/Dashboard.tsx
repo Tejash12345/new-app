@@ -7,6 +7,7 @@ import type { Habit, SocialLimit, SocialSession, StudySession, Task, TimetableBl
 import { GlassCard, Page, ProgressRing, SectionTitle, Stat, Empty } from '../components/ui'
 import { LionCompanion, LevelUpCelebration } from '../components/LionCompanion'
 import { DailyMissionCard } from '../components/DailyMission'
+import { LionLifeOS } from '../components/LionLifeOS'
 import { levelForXp, levelProgress, levelTitle, minutesToLabel, quoteOfTheDay, timeLabel, todayKey } from '../lib/utils'
 
 export function Dashboard() {
@@ -46,6 +47,9 @@ export function Dashboard() {
       subtitle={`"${quote}" — ${author}`}
     >
       <LevelUpCelebration />
+
+      {/* Lion Life OS — AI daily briefing + growth at a glance */}
+      <LionLifeOS />
 
       {/* lion companion */}
       <div className="mb-5">

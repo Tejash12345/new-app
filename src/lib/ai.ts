@@ -9,6 +9,7 @@ import { supabase } from './supabase'
 export type AiTask =
   | 'chat' | 'summarize' | 'hashtags' | 'caption'
   | 'startup' | 'explain' | 'medical' | 'tip' | 'mission'
+  | 'briefing' | 'learnpath'
 
 export type ChatTurn = { role: 'user' | 'assistant'; content: string }
 
@@ -42,6 +43,27 @@ export const improveCaption = (text: string) => askLion({ task: 'caption', input
 export const generateStartupIdeas = (interests: string) => askLion({ task: 'startup', input: interests })
 export const explainConcept = (concept: string) => askLion({ task: 'explain', input: concept })
 export const dailyTip = () => askLion({ task: 'tip', input: 'Give me a productivity tip for today.' })
+export const dailyBriefing = (context: string) => askLion({ task: 'briefing', input: context })
+
+/** Generate an AI learning roadmap. Returns a summary + ordered steps. */
+export async function generateLearningPath(
+  topic: string, level: string,
+): Promise<{ summary: string; steps: { title: string; detail: string }[] }> {
+  const raw = await askLion({ task: 'learnpath', input: `Topic: ${topic}. Level: ${level}.` })
+  try {
+    const obj = JSON.parse(raw.replace(/```json|```/g, '').trim())
+    const steps = Array.isArray(obj.steps) ? obj.steps : []
+    return {
+      summary: String(obj.summary ?? `Your ${topic} roadmap`).slice(0, 240),
+      steps: steps.slice(0, 14).map((s: { title?: unknown; detail?: unknown }) => ({
+        title: String(s.title ?? 'Step').slice(0, 120),
+        detail: String(s.detail ?? '').slice(0, 280),
+      })),
+    }
+  } catch {
+    return { summary: `Your ${topic} roadmap`, steps: [] }
+  }
+}
 
 /** Generate today's personalized mission. Returns parsed {title, detail, xp}. */
 export async function generateMission(context: string): Promise<{ title: string; detail: string; xp: number }> {
