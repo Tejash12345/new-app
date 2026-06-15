@@ -94,8 +94,8 @@ export function DailyMissionCard() {
   return (
     <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mb-5">
       <GlassCard className="overflow-hidden !border-amber-400/30 bg-gradient-to-br from-amber-400/15 via-transparent to-orange-500/10">
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-400 to-orange-500 text-3xl shadow-lg">
+        <div className="flex items-start gap-3 sm:gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-400 to-orange-500 text-2xl shadow-lg sm:h-14 sm:w-14 sm:text-3xl">
             🦁
           </div>
           <div className="min-w-0 flex-1">
@@ -104,38 +104,37 @@ export function DailyMissionCard() {
             </div>
             {mission ? (
               <>
-                <div className={cn('truncate text-base font-extrabold text-slate-900 dark:text-white sm:text-lg', mission.done && 'line-through opacity-60')}>
+                <div className={cn('break-words text-base font-extrabold text-slate-900 dark:text-white sm:text-lg', mission.done && 'line-through opacity-60')}>
                   {mission.title}
                 </div>
-                <p className="break-words text-sm text-slate-500 dark:text-slate-400 line-clamp-2">{mission.detail}</p>
+                <p className="break-words text-sm text-slate-500 dark:text-slate-400">{mission.detail}</p>
+                {/* actions wrap below the text so the card stays responsive on mobile */}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={toggleDone}
+                    className={cn('flex items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-bold transition',
+                      mission.done ? 'bg-emerald-500 text-white' : 'bg-amber-400/90 text-amber-950 hover:bg-amber-400')}
+                  >
+                    {mission.done ? <><Check size={15} /> Done</> : <><Target size={15} /> Mark done · +{mission.xp} XP</>}
+                  </button>
+                  <button onClick={() => generate(true)} disabled={busy} title="Regenerate today's mission"
+                    className="flex items-center gap-1.5 rounded-2xl bg-slate-500/10 px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-500/20 disabled:opacity-50 dark:text-slate-300">
+                    <RefreshCw size={14} className={cn(busy && 'animate-spin')} /> New
+                  </button>
+                </div>
               </>
             ) : busy ? (
-              <div className="text-sm text-slate-500">🦁 Leo is crafting today's mission…</div>
+              <div className="mt-1 text-sm text-slate-500">🦁 Leo is crafting today's mission…</div>
             ) : (
-              <div className="text-sm text-slate-500">{error || 'No mission yet for today.'}</div>
+              <div className="mt-1">
+                <div className="break-words text-sm text-slate-500">{error || 'No mission yet for today.'}</div>
+                <button onClick={() => generate()} disabled={busy}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-2xl bg-amber-400/20 px-3 py-2 text-sm font-bold text-amber-600 transition hover:bg-amber-400/30 disabled:opacity-50 dark:text-amber-300">
+                  <RefreshCw size={14} className={cn(busy && 'animate-spin')} /> Generate
+                </button>
+              </div>
             )}
           </div>
-
-          {mission ? (
-            <div className="flex shrink-0 items-center gap-1.5">
-              <button onClick={() => generate(true)} disabled={busy} title="Regenerate today's mission"
-                className="rounded-2xl bg-slate-500/10 p-2 text-slate-500 transition hover:bg-slate-500/20 disabled:opacity-50">
-                <RefreshCw size={15} className={cn(busy && 'animate-spin')} />
-              </button>
-              <button
-                onClick={toggleDone}
-                className={cn('flex items-center gap-1.5 rounded-2xl px-3 py-2 text-sm font-bold transition',
-                  mission.done ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-600 hover:bg-slate-500/20 dark:text-slate-200')}
-              >
-                {mission.done ? <><Check size={15} /> Done</> : <><Target size={15} /> +{mission.xp} XP</>}
-              </button>
-            </div>
-          ) : (
-            <button onClick={() => generate()} disabled={busy}
-              className="flex shrink-0 items-center gap-1.5 rounded-2xl bg-amber-400/20 px-3 py-2 text-sm font-bold text-amber-600 hover:bg-amber-400/30 disabled:opacity-50 dark:text-amber-300">
-              <RefreshCw size={14} className={cn(busy && 'animate-spin')} /> Generate
-            </button>
-          )}
         </div>
       </GlassCard>
     </motion.div>
