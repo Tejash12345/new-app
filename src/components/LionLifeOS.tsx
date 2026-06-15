@@ -103,13 +103,13 @@ export function LionLifeOS() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">{greeting}, {firstName} 🦁</h2>
+              <h2 className="min-w-0 truncate text-lg font-extrabold text-slate-900 dark:text-white sm:text-xl">{greeting}, {firstName} 🦁</h2>
               <button onClick={() => generate(true)} disabled={briefBusy} title="Refresh briefing"
-                className="rounded-full p-1.5 text-amber-500 hover:bg-amber-400/15 disabled:opacity-50">
+                className="shrink-0 rounded-full p-1.5 text-amber-500 hover:bg-amber-400/15 disabled:opacity-50">
                 <RefreshCw size={14} className={cn(briefBusy && 'animate-spin')} />
               </button>
             </div>
-            <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+            <p className="mt-1 break-words text-sm leading-relaxed text-slate-600 dark:text-slate-300">
               {brief ? stripGreeting(brief) : (briefBusy ? '🦁 Leo is preparing your briefing…' : 'Your daily briefing will appear here.')}
             </p>
           </div>

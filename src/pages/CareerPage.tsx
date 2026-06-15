@@ -80,8 +80,8 @@ function ReportCard({ row, onDelete }: { row: CareerReportRow; onDelete: () => v
       <div className="flex items-start gap-4">
         <ProgressRing progress={score / 100} size={84} stroke={9} color={color} label={`${score}`} sub="readiness" />
         <div className="min-w-0 flex-1">
-          <h3 className="font-extrabold text-slate-900 dark:text-white">{row.role}</h3>
-          <p className="text-sm text-slate-500">{r.verdict}</p>
+          <h3 className="break-words font-extrabold text-slate-900 dark:text-white">{row.role}</h3>
+          <p className="break-words text-sm text-slate-500">{r.verdict}</p>
         </div>
         <button onClick={onDelete} className="rounded-full p-1.5 text-slate-300 hover:bg-rose-500/10 hover:text-rose-500"><Trash2 size={15} /></button>
       </div>
@@ -100,7 +100,7 @@ function ReportCard({ row, onDelete }: { row: CareerReportRow; onDelete: () => v
           </div>
           <ol className="space-y-1.5">
             {r.interviewQuestions.map((q, i) => (
-              <li key={i} className="rounded-xl bg-white/50 px-3 py-2 text-sm text-slate-700 dark:bg-white/5 dark:text-slate-200">
+              <li key={i} className="break-words rounded-xl bg-white/50 px-3 py-2 text-sm text-slate-700 dark:bg-white/5 dark:text-slate-200">
                 <span className="font-bold text-amber-500">{i + 1}.</span> {q}
               </li>
             ))}
@@ -123,7 +123,7 @@ function List({ icon, tint, title, items }: { icon: React.ReactNode; tint: strin
     <div className="rounded-2xl bg-white/40 p-3 dark:bg-white/5">
       <div className={cn('mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide', tint)}>{icon} {title}</div>
       <ul className="space-y-1">
-        {items.map((it, i) => <li key={i} className="text-sm text-slate-700 dark:text-slate-200">• {it}</li>)}
+        {items.map((it, i) => <li key={i} className="break-words text-sm text-slate-700 dark:text-slate-200">• {it}</li>)}
       </ul>
     </div>
   )

@@ -104,10 +104,10 @@ export function DailyMissionCard() {
             </div>
             {mission ? (
               <>
-                <div className={cn('truncate text-lg font-extrabold text-slate-900 dark:text-white', mission.done && 'line-through opacity-60')}>
+                <div className={cn('truncate text-base font-extrabold text-slate-900 dark:text-white sm:text-lg', mission.done && 'line-through opacity-60')}>
                   {mission.title}
                 </div>
-                <p className="text-sm text-slate-500 dark:text-slate-400">{mission.detail}</p>
+                <p className="break-words text-sm text-slate-500 dark:text-slate-400 line-clamp-2">{mission.detail}</p>
               </>
             ) : busy ? (
               <div className="text-sm text-slate-500">🦁 Leo is crafting today's mission…</div>

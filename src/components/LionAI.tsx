@@ -137,8 +137,8 @@ export function LionAI() {
                 <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                   className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
                   <div className={m.role === 'user'
-                    ? 'max-w-[82%] whitespace-pre-line rounded-3xl rounded-br-lg bg-gradient-to-r from-brand-500 to-brand-400 px-3.5 py-2 text-sm text-white'
-                    : 'max-w-[88%] whitespace-pre-line rounded-3xl rounded-bl-lg bg-white/70 px-3.5 py-2 text-sm text-slate-800 dark:bg-white/10 dark:text-slate-100'}>
+                    ? 'max-w-[82%] whitespace-pre-line break-words rounded-3xl rounded-br-lg bg-gradient-to-r from-brand-500 to-brand-400 px-3.5 py-2 text-sm text-white'
+                    : 'max-w-[88%] whitespace-pre-line break-words rounded-3xl rounded-bl-lg bg-white/70 px-3.5 py-2 text-sm text-slate-800 dark:bg-white/10 dark:text-slate-100'}>
                     {m.role === 'assistant' && <span className="mr-1">🦁</span>}{m.content}
                   </div>
                 </motion.div>

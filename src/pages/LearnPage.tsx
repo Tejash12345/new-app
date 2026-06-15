@@ -100,7 +100,7 @@ export function LearnPage() {
                         <h3 className="truncate font-bold text-slate-900 dark:text-white">{p.topic}</h3>
                         <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-300">{p.level}</span>
                       </div>
-                      <p className="text-xs text-slate-500">{p.summary}</p>
+                      <p className="break-words text-xs text-slate-500">{p.summary}</p>
                       <p className="mt-0.5 text-[11px] font-semibold text-slate-400">{done}/{steps.length} steps complete</p>
                     </div>
                     <button onClick={() => removePath(p.id)} className="rounded-full p-1.5 text-slate-300 hover:bg-rose-500/10 hover:text-rose-500">
@@ -116,8 +116,8 @@ export function LearnPage() {
                           {s.done ? <Check size={13} /> : <span className="text-[10px] font-bold text-slate-400">{i + 1}</span>}
                         </span>
                         <span className="min-w-0">
-                          <span className={cn('block text-sm font-semibold', s.done ? 'text-slate-400 line-through' : 'text-slate-800 dark:text-slate-100')}>{s.title}</span>
-                          {s.detail && <span className="block text-xs text-slate-500">{s.detail}</span>}
+                          <span className={cn('block break-words text-sm font-semibold', s.done ? 'text-slate-400 line-through' : 'text-slate-800 dark:text-slate-100')}>{s.title}</span>
+                          {s.detail && <span className="block break-words text-xs text-slate-500">{s.detail}</span>}
                         </span>
                       </button>
                     ))}
