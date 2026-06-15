@@ -23,10 +23,6 @@ const QUICK: { label: string; prompt: string }[] = [
  */
 export function LionAI() {
   const { user } = useAuth()
-  // Inside the Android wrapper the native app-blocker shield sits bottom-right,
-  // so move Leo to the bottom-left there to give both room. On plain web Leo
-  // keeps its usual bottom-right spot.
-  const inApp = typeof window !== 'undefined' && 'FLGuard' in window
   const [open, setOpen] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [msgs, setMsgs] = useState<Msg[]>([])
@@ -96,10 +92,9 @@ export function LionAI() {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="Lion AI Assistant"
-        className={cn(
-          'fixed bottom-24 z-[55] flex h-14 w-14 items-center justify-center rounded-full text-2xl shadow-xl transition active:scale-95 lg:bottom-6',
-          inApp ? 'left-4' : 'right-4',
-        )}
+        // Bottom-LEFT on mobile so it never collides with the app-blocker shield
+        // (which lives bottom-right in the Android wrapper); bottom-right on desktop.
+        className="fixed bottom-28 left-4 z-[55] flex h-14 w-14 items-center justify-center rounded-full text-2xl shadow-xl transition active:scale-95 lg:bottom-6 lg:left-auto lg:right-6"
         style={{ background: 'linear-gradient(135deg,#FFB454,#FF7A1A)', boxShadow: '0 8px 24px rgba(255,140,0,.45)' }}
       >
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-25" />
@@ -114,7 +109,7 @@ export function LionAI() {
             exit={{ opacity: 0, y: 24, scale: 0.98 }}
             transition={{ type: 'spring', damping: 26, stiffness: 320 }}
             className="glass-strong fixed z-[56] flex flex-col overflow-hidden rounded-3xl
-                       inset-x-3 bottom-40 top-20
+                       inset-x-3 bottom-44 top-20
                        sm:inset-x-auto sm:right-4 sm:bottom-24 sm:top-auto sm:h-[32rem] sm:w-96 lg:bottom-24"
           >
             {/* header */}
