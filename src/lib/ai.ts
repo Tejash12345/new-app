@@ -36,6 +36,10 @@ export async function askLion(
         detail = j.detail ? `${j.error}: ${j.detail}` : (j.error || body || detail)
       } catch { /* keep detail */ }
     }
+    // friendly message for the free-tier daily quota / rate-limit case
+    if (/RESOURCE_EXHAUSTED|exceeded your current quota|"code":\s*429|rate.?limit/i.test(detail)) {
+      throw new AiError("Lion AI has hit today's Gemini usage limit 🦁 — it resets daily. Try again later, or raise the limit in Google AI Studio.")
+    }
     throw new AiError(
       /Failed to fetch|FunctionsFetchError/i.test(detail)
         ? 'Could not reach the Lion AI service. Check your connection or deploy the lion-ai function.'
