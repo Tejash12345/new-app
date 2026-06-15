@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import type { CareerReport, StartupPlan } from './types'
 
 // ----------------------------------------------------------------------------
 // Lion AI Assistant client. All calls go through the `lion-ai` Supabase Edge
@@ -9,7 +10,7 @@ import { supabase } from './supabase'
 export type AiTask =
   | 'chat' | 'summarize' | 'hashtags' | 'caption'
   | 'startup' | 'explain' | 'medical' | 'tip' | 'mission'
-  | 'briefing' | 'learnpath'
+  | 'briefing' | 'learnpath' | 'career'
 
 export type ChatTurn = { role: 'user' | 'assistant'; content: string }
 
@@ -40,7 +41,6 @@ export async function askLion(
 export const summarizePost = (text: string) => askLion({ task: 'summarize', input: text })
 export const generateHashtags = (text: string) => askLion({ task: 'hashtags', input: text })
 export const improveCaption = (text: string) => askLion({ task: 'caption', input: text })
-export const generateStartupIdeas = (interests: string) => askLion({ task: 'startup', input: interests })
 export const explainConcept = (concept: string) => askLion({ task: 'explain', input: concept })
 export const dailyTip = () => askLion({ task: 'tip', input: 'Give me a productivity tip for today.' })
 export const dailyBriefing = (context: string) => askLion({ task: 'briefing', input: context })
@@ -62,6 +62,45 @@ export async function generateLearningPath(
     }
   } catch {
     return { summary: `Your ${topic} roadmap`, steps: [] }
+  }
+}
+
+function parseJson<T>(raw: string): T | null {
+  try { return JSON.parse(raw.replace(/```json|```/g, '').trim()) as T }
+  catch { return null }
+}
+const arr = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
+
+/** AI Career Coach: target role + resume/skills -> structured readiness report. */
+export async function careerReport(role: string, resume: string): Promise<CareerReport> {
+  const raw = await askLion({ task: 'career', input: `Target role: ${role}\n\nResume / skills:\n${resume}` })
+  const o = parseJson<Partial<CareerReport>>(raw)
+  return {
+    readiness: Math.max(0, Math.min(100, Math.round(Number(o?.readiness) || 0))),
+    verdict: String(o?.verdict ?? 'Here is your readiness report.'),
+    strengths: arr(o?.strengths),
+    gaps: arr(o?.gaps),
+    improvements: arr(o?.improvements),
+    skillsToLearn: arr(o?.skillsToLearn),
+    interviewQuestions: arr(o?.interviewQuestions),
+  }
+}
+
+/** AI Startup Co-Founder: idea -> structured business plan. */
+export async function startupPlan(idea: string): Promise<StartupPlan> {
+  const raw = await askLion({ task: 'startup', input: idea })
+  const o = parseJson<Partial<StartupPlan>>(raw)
+  const roadmap = Array.isArray(o?.roadmap)
+    ? o!.roadmap.map((r) => ({ phase: String(r?.phase ?? 'Phase'), detail: String(r?.detail ?? '') }))
+    : []
+  return {
+    summary: String(o?.summary ?? idea),
+    market: String(o?.market ?? ''),
+    revenueModel: arr(o?.revenueModel),
+    competitors: arr(o?.competitors),
+    mvpFeatures: arr(o?.mvpFeatures),
+    team: arr(o?.team),
+    roadmap,
   }
 }
 

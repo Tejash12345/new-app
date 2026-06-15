@@ -293,3 +293,39 @@ export type LearningPath = {
   created_at: string
   updated_at: string
 }
+
+// ---------- AI Career Coach ----------
+export type CareerReport = {
+  readiness: number
+  verdict: string
+  strengths: string[]
+  gaps: string[]
+  improvements: string[]
+  skillsToLearn: string[]
+  interviewQuestions: string[]
+}
+export type CareerReportRow = {
+  id: string
+  user_id: string
+  role: string
+  report: CareerReport
+  created_at: string
+}
+
+// ---------- AI Startup Co-Founder ----------
+export type StartupPlan = {
+  summary: string
+  market: string
+  revenueModel: string[]
+  competitors: string[]
+  mvpFeatures: string[]
+  team: string[]
+  roadmap: { phase: string; detail: string }[]
+}
+export type StartupPlanRow = {
+  id: string
+  user_id: string
+  idea: string
+  plan: StartupPlan
+  created_at: string
+}

@@ -12,6 +12,8 @@ import { FocusPage } from './pages/FocusPage'
 import { WellbeingPage } from './pages/WellbeingPage'
 import { CapsulePage } from './pages/CapsulePage'
 import { LearnPage } from './pages/LearnPage'
+import { CareerPage } from './pages/CareerPage'
+import { StartupPage } from './pages/StartupPage'
 import { NotesPage } from './pages/NotesPage'
 import { AnalyticsPage } from './pages/AnalyticsPage'
 import { ArenaPage } from './pages/ArenaPage'
@@ -49,6 +51,8 @@ function Gate() {
         <Route path="wellbeing" element={<WellbeingPage />} />
         <Route path="capsule" element={<CapsulePage />} />
         <Route path="learn" element={<LearnPage />} />
+        <Route path="career" element={<CareerPage />} />
+        <Route path="startup" element={<StartupPage />} />
         <Route path="notes" element={<NotesPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="arena" element={<ArenaPage />} />

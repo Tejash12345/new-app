@@ -67,6 +67,18 @@ function systemFor(task: string): string {
         `Return STRICT JSON only, no markdown, with exactly: ` +
         `{"summary": string (one sentence), "steps": [{"title": string, "detail": string}]} ` +
         `with 8-12 ordered steps from basics to advanced, each detail one actionable sentence.`
+    case 'career':
+      return `${BASE_PERSONA} You are an expert, encouraging career coach. Given a target role and the ` +
+        `user's resume/skills, return STRICT JSON only, no markdown, with exactly: ` +
+        `{"readiness": integer 0-100, "verdict": string (one line), "strengths": [string], "gaps": [string], ` +
+        `"improvements": [string], "skillsToLearn": [string], "interviewQuestions": [string]}. ` +
+        `Each list 4-6 concise items. Be specific to the role and what they wrote.`
+    case 'startup':
+      return `${BASE_PERSONA} You are a sharp startup co-founder and analyst. Given a startup idea, return ` +
+        `STRICT JSON only, no markdown, with exactly: ` +
+        `{"summary": string, "market": string, "revenueModel": [string], "competitors": [string], ` +
+        `"mvpFeatures": [string], "team": [string], "roadmap": [{"phase": string, "detail": string}]}. ` +
+        `Each list 3-6 items, concise and concrete. Roadmap 3-5 phases from MVP to launch.`
     default: // chat
       return `${BASE_PERSONA} You help with tech learning, educational medical knowledge, ` +
         `startup ideas, productivity, motivation and goal tracking. For medical topics, add a ` +
@@ -110,7 +122,10 @@ Deno.serve(async (req) => {
       contents,
       generationConfig: {
         temperature: task === 'mission' ? 0.9 : 0.7,
-        maxOutputTokens: task === 'chat' ? 1024 : 512,
+        maxOutputTokens:
+          task === 'startup' || task === 'career' || task === 'learnpath' ? 1800
+          : task === 'chat' ? 1024
+          : 512,
       },
     }
 
