@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { SocialSession, StudySession, Task } from '../lib/types'
 import { Button, GlassCard, Input, Page, SectionTitle } from '../components/ui'
+import { askLion } from '../lib/ai'
 import { addDays, minutesToLabel, quoteOfTheDay, todayKey } from '../lib/utils'
 
 type Msg = { role: 'user' | 'coach'; text: string }
@@ -19,7 +20,7 @@ export function CoachPage() {
   const chatKey = `fl-chat-${user?.id ?? 'anon'}`
   const welcome: Msg = {
     role: 'coach',
-    text: `Hey ${firstName}! 🦁 I'm Leo, your study coach. Ask me about planning, exams, focus, stress, time management — or tap a suggestion below.`,
+    text: `Hey ${firstName}! 🦁 I'm Leo, your AI study coach — I can see your real progress and tailor advice to it. Ask me about planning, exams, focus, stress, a career or startup move — or tap a suggestion below.`,
   }
 
   const [msgs, setMsgs] = useState<Msg[]>(() => {
@@ -114,26 +115,58 @@ export function CoachPage() {
     return `Good question! My general rule:\n\nBreak it into the smallest possible next step, schedule it in the Planner, and protect the time with a focus session.\n\nFor specifics, try: "plan my week", "exam tips", "I'm stressed", "time management", "what should I study?" 🦁`
   }
 
-  function send(text?: string) {
+  // a compact, real-data snapshot Leo uses to personalize every answer
+  function buildContext(): string {
+    const ex = upcomingExams[0]
+    return [
+      `Name ${firstName}. ${profile?.xp ?? 0} XP, ${profile?.study_streak ?? 0}-day study streak.`,
+      `This week: studied ${minutesToLabel(weekStudy)}, scrolled ${minutesToLabel(weekSocial)}.`,
+      `${overdue.length} overdue task(s).`,
+      ex ? `Next exam "${ex.title}" on ${ex.due_at?.slice(0, 10)}.` : 'No upcoming exams logged.',
+      subjects.length ? `Subjects studied: ${subjects.join(', ')}.` : 'No subjects logged yet.',
+      studiedToday ? 'Already studied today.' : 'Has not studied yet today.',
+    ].filter(Boolean).join(' ')
+  }
+
+  // Gemini-powered, with a graceful fall back to the on-device heuristic coach
+  // if the AI service isn't reachable (so the page never feels broken).
+  async function send(text?: string) {
     const q = (text ?? input).trim()
     if (!q || typing) return
     setInput('')
+    const prior = msgs.filter((m) => m.text !== welcome.text)
     setMsgs((m) => [...m, { role: 'user', text: q }])
     setTyping(true)
-    setTimeout(() => {
-      setTyping(false)
+    try {
+      const convo = prior.map((m) => ({
+        role: (m.role === 'coach' ? 'assistant' : 'user') as 'assistant' | 'user',
+        content: m.text,
+      }))
+      const reply = await askLion({
+        task: 'chat',
+        messages: [
+          { role: 'user', content: `My FocusLion stats — use these to personalize, don't just list them back: ${buildContext()}` },
+          { role: 'assistant', content: 'Got it — I have your latest progress in mind.' },
+          ...convo,
+          { role: 'user', content: q },
+        ],
+      })
+      setMsgs((m) => [...m, { role: 'coach', text: reply || coachReply(q) }])
+    } catch {
       setMsgs((m) => [...m, { role: 'coach', text: coachReply(q) }])
-    }, 700 + Math.min(800, q.length * 12))
+    } finally {
+      setTyping(false)
+    }
   }
 
   function clearChat() {
     setMsgs([welcome])
   }
 
-  const SUGGESTIONS = ['Plan my week', 'Exam tips', "I'm stressed", 'Time management', 'What should I study?', 'I need motivation']
+  const SUGGESTIONS = ['📊 Weekly growth report', 'Plan my week', 'Exam tips', "I'm stressed", 'Career advice', 'What should I study?']
 
   return (
-    <Page title="Coach Leo" subtitle="Your personal study coach — planning, focus, stress and motivation.">
+    <Page title="Coach Leo" subtitle="Your AI mentor — sees your real progress and tailors advice on study, focus, career & more.">
       <div className="grid gap-5 lg:grid-cols-3">
         {/* chat */}
         <GlassCard className="flex h-[34rem] flex-col lg:col-span-2">
@@ -143,7 +176,7 @@ export function CoachPage() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
               </span>
-              Leo is online
+              Leo is online · AI-powered 🦁
             </div>
             <button onClick={clearChat} className="flex items-center gap-1 text-xs text-slate-400 hover:text-rose-500">
               <Trash2 size={13} /> Clear chat
