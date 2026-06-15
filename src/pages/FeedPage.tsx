@@ -7,7 +7,7 @@ import {
   Check, Search, UserPlus, UserCheck, Clock3, Copy, Repeat2, Bookmark, Hash,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { improveCaption, generateHashtags } from '../lib/ai'
+import { improveCaption, generateHashtags, summarizePost } from '../lib/ai'
 import { getSocket } from '../lib/socket'
 import { pushNotification } from '../lib/notify'
 import { useAuth } from '../hooks/useAuth'
@@ -159,6 +159,7 @@ export function FeedPage() {
   const primed = useRef(false)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<TabKey>('all')
+  const [smart, setSmart] = useState(true)
   const [cat, setCat] = useState<'All' | FeedCategory>('All')
   const [composerOpen, setComposerOpen] = useState(false)
   const [commentsFor, setCommentsFor] = useState<FeedPost | null>(null)
@@ -467,6 +468,34 @@ export function FeedPage() {
     return tabOk && (cat === 'All' || p.category === cat)
   })
 
+  // Smart "For You" ranking — personalize by the categories/tags the user posts
+  // in and likes, blended with recency and popularity. Pure heuristic (no AI
+  // call per load), so the feed stays instant.
+  function rankForYou(list: FeedPost[]): FeedPost[] {
+    const myId = user?.id
+    const catAff = new Map<string, number>()
+    const tagAff = new Map<string, number>()
+    const likedSet = new Set(likes.filter((l) => l.user_id === myId).map((l) => l.post_id))
+    for (const p of posts) {
+      const w = p.user_id === myId ? 2 : likedSet.has(p.id) ? 1.5 : 0
+      if (!w) continue
+      catAff.set(p.category, (catAff.get(p.category) ?? 0) + w)
+      for (const t of p.tags ?? []) tagAff.set(t.toLowerCase(), (tagAff.get(t.toLowerCase()) ?? 0) + w)
+    }
+    const likeCountOf = (id: string) => likes.filter((l) => l.post_id === id).length
+    const score = (p: FeedPost) => {
+      const ageH = (Date.now() - Date.parse(p.created_at)) / 3.6e6
+      const recency = (Math.max(0, 48 - ageH) / 48) * 5
+      const catScore = (catAff.get(p.category) ?? 0) * 3
+      const tagScore = (p.tags ?? []).reduce((a, t) => a + (tagAff.get(t.toLowerCase()) ?? 0), 0) * 2
+      const pop = Math.log1p(likeCountOf(p.id)) * 2 + Math.log1p(p.views ?? 0)
+      return recency + catScore + tagScore + pop
+    }
+    return [...list].sort((a, b) => score(b) - score(a))
+  }
+
+  const feedList = smart && tab !== 'reel' && tab !== 'saved' ? rankForYou(filtered) : filtered
+
   return (
     <Page
       title="Feed"
@@ -488,6 +517,22 @@ export function FeedPage() {
         ))}
       </div>
 
+      {/* For You / Latest ranking toggle (hidden on Reels & Saved) */}
+      {tab !== 'reel' && tab !== 'saved' && (
+        <div className="mb-3 flex gap-2">
+          <button onClick={() => setSmart(true)}
+            className={cn('flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition',
+              smart ? 'bg-gradient-to-r from-amber-400 to-orange-500 text-amber-950' : 'bg-slate-400/15 text-slate-500 hover:bg-slate-400/25')}>
+            <Sparkles size={13} /> For You
+          </button>
+          <button onClick={() => setSmart(false)}
+            className={cn('rounded-full px-3 py-1.5 text-xs font-bold transition',
+              !smart ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-400/15 text-slate-500 hover:bg-slate-400/25')}>
+            Latest
+          </button>
+        </div>
+      )}
+
       {/* category filter */}
       <div className="mb-5 flex flex-wrap gap-1.5">
         {(['All', ...FEED_CATEGORIES] as const).map((c) => (
@@ -502,7 +547,7 @@ export function FeedPage() {
 
       {loading ? (
         <div className="py-20 text-center text-4xl animate-pulse">🦁</div>
-      ) : filtered.length === 0 ? (
+      ) : feedList.length === 0 ? (
         <GlassCard>
           {tab === 'saved'
             ? <Empty emoji="🔖" text={'No saved posts yet.\nTap the bookmark on any post to save it here.'} />
@@ -510,11 +555,11 @@ export function FeedPage() {
         </GlassCard>
       ) : tab === 'reel' ? (
         <div className="mx-auto flex max-w-md flex-col gap-6">
-          {filtered.map((p) => <FeedCard key={p.id} post={p} reelMode {...cardProps(p)} />)}
+          {feedList.map((p) => <FeedCard key={p.id} post={p} reelMode {...cardProps(p)} />)}
         </div>
       ) : (
         <div className="columns-1 gap-5 sm:columns-2 lg:columns-3 [&>*]:mb-5">
-          {filtered.map((p) => (
+          {feedList.map((p) => (
             <div key={p.id} className="break-inside-avoid">
               <FeedCard post={p} {...cardProps(p)} />
             </div>
@@ -596,6 +641,18 @@ function FeedCard({
   // count a view the first time at least half the card is on screen
   const cardRef = useRef<HTMLDivElement>(null)
   const viewedRef = useRef(false)
+
+  // AI "summarize this post" (only offered on longer posts)
+  const [summary, setSummary] = useState('')
+  const [sumBusy, setSumBusy] = useState(false)
+  const canSummarize = (post.body?.length ?? 0) > 240
+  async function summarize() {
+    if (sumBusy) return
+    setSumBusy(true)
+    try { setSummary(await summarizePost(`${post.title}\n${post.body}`)) }
+    catch { setSummary('Could not summarize right now.') }
+    finally { setSumBusy(false) }
+  }
   useEffect(() => {
     const el = cardRef.current
     if (!el) return
@@ -643,6 +700,18 @@ function FeedCard({
         <div className="px-4 pt-2.5">
           {post.title && <div className="font-bold text-slate-900 dark:text-white">{post.title}</div>}
           {post.body && <p className="mt-0.5 whitespace-pre-line text-sm text-slate-600 dark:text-slate-300">{post.body}</p>}
+          {canSummarize && !summary && (
+            <button onClick={summarize} disabled={sumBusy}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-400/15 px-2.5 py-1 text-[11px] font-semibold text-amber-600 hover:bg-amber-400/25 disabled:opacity-50 dark:text-amber-300">
+              <Sparkles size={12} /> {sumBusy ? 'Summarizing…' : 'Summarize with AI'}
+            </button>
+          )}
+          {summary && (
+            <div className="mt-2 whitespace-pre-line rounded-2xl border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-xs text-slate-700 dark:text-slate-200">
+              <span className="font-bold text-amber-600 dark:text-amber-300">🦁 TL;DR</span>
+              <p className="mt-1">{summary}</p>
+            </div>
+          )}
         </div>
       )}
 
