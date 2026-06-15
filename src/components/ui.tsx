@@ -146,12 +146,12 @@ export function Stat({
 }: { icon: ReactNode; label: string; value: string; tint: string }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="flex h-10 w-10 items-center justify-center rounded-2xl" style={{ background: `${tint}22`, color: tint }}>
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl" style={{ background: `${tint}22`, color: tint }}>
         {icon}
       </div>
-      <div>
-        <div className="text-base font-bold leading-tight text-slate-900 dark:text-white">{value}</div>
-        <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
+      <div className="min-w-0">
+        <div className="truncate text-base font-bold leading-tight text-slate-900 dark:text-white">{value}</div>
+        <div className="truncate text-xs text-slate-500 dark:text-slate-400">{label}</div>
       </div>
     </div>
   )

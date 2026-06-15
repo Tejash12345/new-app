@@ -132,12 +132,12 @@ export function Dashboard() {
                 const live = nowMin >= b.start_min && nowMin < b.end_min
                 return (
                   <div key={b.id} className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-4 py-3">
-                    <div className="h-10 w-1.5 rounded-full" style={{ background: b.color }} />
-                    <div className="flex-1">
-                      <div className="font-semibold text-slate-900 dark:text-white">{b.title}</div>
-                      <div className="text-xs text-slate-500">{timeLabel(b.start_min)} – {timeLabel(b.end_min)}{b.subject && ` · ${b.subject}`}</div>
+                    <div className="h-10 w-1.5 shrink-0 rounded-full" style={{ background: b.color }} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-semibold text-slate-900 dark:text-white">{b.title}</div>
+                      <div className="truncate text-xs text-slate-500">{timeLabel(b.start_min)} – {timeLabel(b.end_min)}{b.subject && ` · ${b.subject}`}</div>
                     </div>
-                    {live && <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-bold uppercase text-emerald-500">Now</span>}
+                    {live && <span className="shrink-0 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-bold uppercase text-emerald-500">Now</span>}
                   </div>
                 )
               })}
@@ -182,13 +182,13 @@ export function Dashboard() {
                   <input
                     type="checkbox" checked={t.done}
                     onChange={() => updateTask({ id: t.id, done: true } as Partial<Task> & { id: string })}
-                    className="h-5 w-5 accent-brand-500"
+                    className="h-5 w-5 shrink-0 accent-brand-500"
                   />
-                  <div className="flex-1">
-                    <div className="font-semibold text-slate-900 dark:text-white">{t.title}</div>
-                    <div className="text-xs capitalize text-slate-500">{t.kind}{t.subject && ` · ${t.subject}`}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-semibold text-slate-900 dark:text-white">{t.title}</div>
+                    <div className="truncate text-xs capitalize text-slate-500">{t.kind}{t.subject && ` · ${t.subject}`}</div>
                   </div>
-                  <span className="rounded-full bg-rose-500/10 px-2.5 py-1 text-[10px] font-bold text-rose-500">DUE</span>
+                  <span className="shrink-0 rounded-full bg-rose-500/10 px-2.5 py-1 text-[10px] font-bold text-rose-500">DUE</span>
                 </label>
               ))}
             </div>
@@ -228,8 +228,8 @@ export function Dashboard() {
           <GlassCard>
             <div className="flex items-center gap-4">
               <ProgressRing size={72} stroke={7} progress={levelProgress(profile?.xp ?? 0)} color="#FFB454" label={`${level}`} sub="level" />
-              <div>
-                <div className="font-bold text-slate-900 dark:text-white">{levelTitle(level)}</div>
+              <div className="min-w-0">
+                <div className="truncate font-bold text-slate-900 dark:text-white">{levelTitle(level)}</div>
                 <div className="text-xs text-slate-500">{profile?.xp ?? 0} XP — keep going!</div>
                 <Link to="/arena" className="mt-1 inline-block text-xs font-bold text-brand-500 hover:underline">View achievements →</Link>
               </div>
