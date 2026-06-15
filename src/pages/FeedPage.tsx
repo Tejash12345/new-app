@@ -4,9 +4,10 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   Heart, MessageCircle, Trash2, Plus, Film, FileText, Send,
   Camera, Briefcase, Sparkles, X, Play, Share2, ArrowLeft, Eye,
-  Check, Search, UserPlus, UserCheck, Clock3, Copy, Repeat2, Bookmark,
+  Check, Search, UserPlus, UserCheck, Clock3, Copy, Repeat2, Bookmark, Hash,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { improveCaption, generateHashtags } from '../lib/ai'
 import { getSocket } from '../lib/socket'
 import { pushNotification } from '../lib/notify'
 import { useAuth } from '../hooks/useAuth'
@@ -1059,7 +1060,27 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [aiBusy, setAiBusy] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+
+  async function aiImprove() {
+    if (!body.trim() || aiBusy) return
+    setAiBusy('caption'); setError(null)
+    try { const r = await improveCaption(body.trim()); if (r) setBody(r) }
+    catch (e) { setError(e instanceof Error ? e.message : 'Lion AI failed') }
+    finally { setAiBusy('') }
+  }
+  async function aiHashtags() {
+    const src = `${title}\n${body}`.trim()
+    if (!src || aiBusy) return
+    setAiBusy('tags'); setError(null)
+    try {
+      const r = await generateHashtags(src)
+      const cleaned = r.replace(/#/g, '').split(/\s+/).filter(Boolean).join(', ')
+      if (cleaned) setTags((t) => (t ? `${t}, ${cleaned}` : cleaned))
+    } catch (e) { setError(e instanceof Error ? e.message : 'Lion AI failed') }
+    finally { setAiBusy('') }
+  }
 
   const authorName = profile?.full_name?.trim() || profile?.email?.split('@')[0] || 'Student'
 
@@ -1181,6 +1202,18 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
         placeholder={type === 'reel' ? 'Caption your reel…'
           : (type === 'instagram' || type === 'linkedin') ? 'Add a note (optional)…'
           : 'Share a tip, news, or question about tech, biology or medicine…'} maxLength={1000} />
+
+      {/* Lion AI writing helpers */}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button type="button" onClick={aiImprove} disabled={!body.trim() || !!aiBusy}
+          className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/15 px-3 py-1.5 text-xs font-semibold text-amber-600 hover:bg-amber-400/25 disabled:opacity-40 dark:text-amber-300">
+          <Sparkles size={13} /> {aiBusy === 'caption' ? 'Improving…' : 'Improve caption'}
+        </button>
+        <button type="button" onClick={aiHashtags} disabled={(!title.trim() && !body.trim()) || !!aiBusy}
+          className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/15 px-3 py-1.5 text-xs font-semibold text-amber-600 hover:bg-amber-400/25 disabled:opacity-40 dark:text-amber-300">
+          <Hash size={13} /> {aiBusy === 'tags' ? 'Generating…' : 'Suggest hashtags'}
+        </button>
+      </div>
 
       {(type === 'post' || type === 'reel') && (
         <div className="mt-3">

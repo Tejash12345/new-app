@@ -1,0 +1,61 @@
+import { supabase } from './supabase'
+
+// ----------------------------------------------------------------------------
+// Lion AI Assistant client. All calls go through the `lion-ai` Supabase Edge
+// Function, which holds the Gemini key as a server secret — the key is never in
+// this app. Every successful call is recorded for per-user usage statistics.
+// ----------------------------------------------------------------------------
+
+export type AiTask =
+  | 'chat' | 'summarize' | 'hashtags' | 'caption'
+  | 'startup' | 'explain' | 'medical' | 'tip' | 'mission'
+
+export type ChatTurn = { role: 'user' | 'assistant'; content: string }
+
+export class AiError extends Error {}
+
+/** Low-level call to the Gemini proxy. Returns the model's text. */
+export async function askLion(
+  opts: { task: AiTask; input?: string; messages?: ChatTurn[] },
+): Promise<string> {
+  const { data, error } = await supabase.functions.invoke('lion-ai', {
+    body: { task: opts.task, input: opts.input ?? '', messages: opts.messages ?? [] },
+  })
+  if (error) {
+    throw new AiError(
+      /Failed to fetch|FunctionsFetchError/i.test(error.message)
+        ? 'Could not reach the Lion AI service. Check your connection or deploy the lion-ai function.'
+        : error.message,
+    )
+  }
+  if (data?.error) throw new AiError(String(data.error))
+  const text = String(data?.text ?? '').trim()
+  // best-effort usage stat — never block the user on this
+  supabase.rpc('record_ai_usage', { p_task: opts.task }).then(() => {}, () => {})
+  return text
+}
+
+// ---- feature helpers (the "AI-powered features") ----
+export const summarizePost = (text: string) => askLion({ task: 'summarize', input: text })
+export const generateHashtags = (text: string) => askLion({ task: 'hashtags', input: text })
+export const improveCaption = (text: string) => askLion({ task: 'caption', input: text })
+export const generateStartupIdeas = (interests: string) => askLion({ task: 'startup', input: interests })
+export const explainConcept = (concept: string) => askLion({ task: 'explain', input: concept })
+export const dailyTip = () => askLion({ task: 'tip', input: 'Give me a productivity tip for today.' })
+
+/** Generate today's personalized mission. Returns parsed {title, detail, xp}. */
+export async function generateMission(context: string): Promise<{ title: string; detail: string; xp: number }> {
+  const raw = await askLion({ task: 'mission', input: context })
+  try {
+    const cleaned = raw.replace(/```json|```/g, '').trim()
+    const obj = JSON.parse(cleaned)
+    return {
+      title: String(obj.title ?? 'Today’s Lion Mission').slice(0, 80),
+      detail: String(obj.detail ?? '').slice(0, 240),
+      xp: Math.max(10, Math.min(50, Math.round(Number(obj.xp) || 20))),
+    }
+  } catch {
+    // model didn't return clean JSON — degrade gracefully
+    return { title: 'Today’s Lion Mission', detail: raw.slice(0, 240) || 'Do one focused 25-minute session.', xp: 20 }
+  }
+}

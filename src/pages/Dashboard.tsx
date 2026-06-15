@@ -6,6 +6,7 @@ import { useTable } from '../hooks/db'
 import type { Habit, SocialLimit, SocialSession, StudySession, Task, TimetableBlock } from '../lib/types'
 import { GlassCard, Page, ProgressRing, SectionTitle, Stat, Empty } from '../components/ui'
 import { LionCompanion, LevelUpCelebration } from '../components/LionCompanion'
+import { DailyMissionCard } from '../components/DailyMission'
 import { levelForXp, levelProgress, levelTitle, minutesToLabel, quoteOfTheDay, timeLabel, todayKey } from '../lib/utils'
 
 export function Dashboard() {
@@ -50,6 +51,9 @@ export function Dashboard() {
       <div className="mb-5">
         <LionCompanion />
       </div>
+
+      {/* daily AI mission */}
+      <DailyMissionCard />
 
       {/* exam countdown */}
       {(() => {

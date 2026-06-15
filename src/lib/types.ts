@@ -250,3 +250,33 @@ export type CapsuleMedia = {
   url: string
   created_at: string
 }
+
+// ---------- Lion AI Assistant (Gemini) ----------
+export type AiMessage = {
+  id: string
+  user_id: string
+  role: 'user' | 'assistant'
+  content: string
+  task: string
+  created_at: string
+}
+
+export type AiMission = {
+  id: string
+  user_id: string
+  mission_date: string
+  title: string
+  detail: string
+  xp: number
+  done: boolean
+  created_at: string
+}
+
+export type AiUsage = {
+  id: string
+  user_id: string
+  used_on: string
+  calls: number
+  last_task: string | null
+  updated_at: string
+}

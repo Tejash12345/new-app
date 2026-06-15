@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { useAuth } from './useAuth'
 import { useTable } from './db'
-import type { Capsule, Task, TimetableBlock } from '../lib/types'
+import type { AiMission, Capsule, Task, TimetableBlock } from '../lib/types'
+import { todayKey } from '../lib/utils'
 import { pushNotification, requestNotifPermission } from '../lib/notify'
 
 // reminders fire on web and (via the native bridge) inside the Android app
@@ -20,6 +21,7 @@ export function useNotificationEngine() {
   const { rows: tasks } = useTable<Task>('tasks')
   const { rows: blocks } = useTable<TimetableBlock>('timetable_blocks')
   const { rows: capsules } = useTable<Capsule>('capsules')
+  const { rows: missions } = useTable<AiMission>('ai_missions')
   const fired = useRef<Set<string>>(new Set())
 
   useEffect(() => {
@@ -104,6 +106,18 @@ export function useNotificationEngine() {
         }
       }
 
+      // Daily Lion Mission reminder — nudge in the evening if still not done
+      {
+        const todays = missions.find((m) => m.mission_date === todayKey())
+        if (todays && !todays.done && now.getHours() >= 18) {
+          const tag = `mission-${todays.id}`
+          if (!fired.current.has(tag)) {
+            fired.current.add(tag)
+            notify('🦁 Daily mission still open', `"${todays.title}" — finish it for +${todays.xp} XP before the day ends.`, tag)
+          }
+        }
+      }
+
       // sleep reminder
       if (prefs.sleep !== false) {
         const tag = `sleep-${dayTag}`
@@ -115,5 +129,5 @@ export function useNotificationEngine() {
     }, 30_000)
 
     return () => clearInterval(interval)
-  }, [profile, tasks, blocks, capsules])
+  }, [profile, tasks, blocks, capsules, missions])
 }
