@@ -17,7 +17,7 @@ const QUICK: { label: string; prompt: string }[] = [
 ]
 
 /**
- * Lion AI Assistant — a floating, app-wide button that opens a Gemini-powered
+ * Lion AI Assistant — a floating, app-wide button that opens a Lion AI-powered
  * chat (via the secure lion-ai Edge Function). Chat bubbles, typing animation,
  * loading state, persisted history, dark mode, lion-themed.
  */
@@ -119,7 +119,7 @@ export function LionAI() {
                 <div>
                   <div className="text-sm font-bold text-slate-900 dark:text-white">Lion AI Assistant</div>
                   <div className="flex items-center gap-1 text-[11px] text-emerald-500">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Powered by Gemini
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Powered by Lion AI
                   </div>
                 </div>
               </div>

@@ -1,28 +1,31 @@
-// FocusLion — "Lion AI Assistant" secure Gemini proxy (Supabase Edge Function)
+// FocusLion — "Lion AI Assistant" secure AI proxy (Supabase Edge Function)
 //
-// The Gemini API key NEVER ships in the app. It lives only in this function's
-// environment as the GEMINI_API_KEY secret. The browser/app calls this function
-// (with the user's Supabase JWT); we validate the user, then call Gemini.
+// The AI API key NEVER ships in the app. It lives only in this function's
+// environment as the NVIDIA_API_KEY secret. The browser/app calls this function
+// (with the user's Supabase JWT); we validate the user, then call NVIDIA NIM
+// (DeepSeek), which uses the OpenAI-compatible chat-completions API.
 //
 // Free-tier hardening:
 //   • Per-user daily rate limit (AI_DAILY_USER_CAP, default 30).
-//   • Response cache for idempotent tasks — identical prompts skip Gemini.
-//   • Graceful 429 / RESOURCE_EXHAUSTED handling + quota logging.
-//   • Usage counted server-side (only real Gemini calls, not cache hits).
+//   • Response cache for idempotent tasks — identical prompts skip the model.
+//   • Graceful 429 / rate-limit handling + quota logging.
+//   • Usage counted server-side (only real model calls, not cache hits).
 //   • Daily briefings & missions are cached per-day client-side already.
 //
 // Deploy:
 //   supabase functions deploy lion-ai
-//   supabase secrets set GEMINI_API_KEY=AIza... GEMINI_MODEL=gemini-2.5-flash
+//   supabase secrets set NVIDIA_API_KEY=nvapi-... NVIDIA_MODEL=deepseek-ai/deepseek-v4-flash
 //
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const MODEL = Deno.env.get('GEMINI_MODEL') ?? 'gemini-2.5-flash'
-const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') ?? ''
+const MODEL = Deno.env.get('NVIDIA_MODEL') ?? 'deepseek-ai/deepseek-v4-flash'
+// Prefer NVIDIA_API_KEY; fall back to GEMINI_API_KEY so an already-set secret
+// keeps working if you only swapped its value to the nvapi-… key.
+const AI_API_KEY = Deno.env.get('NVIDIA_API_KEY') ?? Deno.env.get('GEMINI_API_KEY') ?? ''
 const DAILY_USER_CAP = Number(Deno.env.get('AI_DAILY_USER_CAP') ?? '30')
-const GEMINI_URL =
-  `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
+const BASE_URL = Deno.env.get('NVIDIA_BASE_URL') ?? 'https://integrate.api.nvidia.com/v1'
+const AI_URL = `${BASE_URL}/chat/completions`
 
 // idempotent tasks worth caching (same input -> same answer). Chat/mission/
 // briefing are excluded: chat is conversational, mission/briefing are
@@ -42,7 +45,7 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 
-const QUOTA_MSG = "Lion AI has hit today's Gemini quota — it resets daily. 🦁 Coach Leo will keep helping in the meantime."
+const QUOTA_MSG = "Lion AI is rate-limited right now — please try again shortly. 🦁 Coach Leo will keep helping in the meantime."
 
 async function sha256(s: string): Promise<string> {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
@@ -112,7 +115,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
   try {
-    if (!GEMINI_API_KEY) return json({ error: 'Server is missing GEMINI_API_KEY.' }, 500)
+    if (!AI_API_KEY) return json({ error: 'Server is missing NVIDIA_API_KEY.' }, 500)
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const authHeader = req.headers.get('Authorization') ?? ''
@@ -154,38 +157,40 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ---- build Gemini request ----
+    // ---- build NVIDIA (OpenAI-compatible) request ----
     const history = Array.isArray(messages) ? messages.slice(-16) : []
-    const contents = history.length
-      ? history.map((m) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: String(m.content ?? '') }],
-        }))
-      : [{ role: 'user', parts: [{ text: String(input ?? '') }] }]
+    const chatMessages = [
+      { role: 'system', content: systemFor(task) },
+      ...(history.length
+        ? history.map((m) => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: String(m.content ?? ''),
+          }))
+        : [{ role: 'user', content: String(input ?? '') }]),
+    ]
 
     const payload = {
-      systemInstruction: { parts: [{ text: systemFor(task) }] },
-      contents,
-      generationConfig: {
-        temperature: task === 'mission' ? 0.9 : 0.7,
-        maxOutputTokens:
-          task === 'startup' || task === 'career' || task === 'learnpath' ? 2048
-          : task === 'mission' ? 1024
-          : task === 'chat' ? 1024
-          : 512,
-        ...(JSON_TASKS.includes(task) ? { responseMimeType: 'application/json' } : {}),
-      },
+      model: MODEL,
+      messages: chatMessages,
+      temperature: task === 'mission' ? 0.9 : 0.7,
+      max_tokens:
+        task === 'startup' || task === 'career' || task === 'learnpath' ? 2048
+        : task === 'mission' ? 1024
+        : task === 'chat' ? 1024
+        : 512,
+      stream: false,
+      ...(JSON_TASKS.includes(task) ? { response_format: { type: 'json_object' } } : {}),
     }
 
     let res: Response
     try {
-      res = await fetch(GEMINI_URL, {
+      res = await fetch(AI_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_API_KEY}` },
         body: JSON.stringify(payload),
       })
     } catch (e) {
-      return json({ error: 'Could not reach Gemini', detail: String(e) }, 502)
+      return json({ error: 'Could not reach the AI provider', detail: String(e) }, 502)
     }
 
     // ---- graceful quota handling ----
@@ -196,17 +201,20 @@ Deno.serve(async (req) => {
     }
     if (!res.ok) {
       const detail = await res.text()
-      if (/RESOURCE_EXHAUSTED|quota/i.test(detail)) {
+      if (/RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(detail)) {
         console.error(`[QUOTA] ${res.status} user=${user.id} task=${task} :: ${detail.slice(0, 240)}`)
         return json({ error: QUOTA_MSG, quota: true }, 429)
       }
-      console.error(`[GEMINI_ERR] ${res.status} task=${task} :: ${detail.slice(0, 240)}`)
-      return json({ error: 'Gemini request failed', status: res.status, detail }, 502)
+      console.error(`[AI_ERR] ${res.status} task=${task} :: ${detail.slice(0, 240)}`)
+      return json({ error: 'AI request failed', status: res.status, detail }, 502)
     }
 
     const data = await res.json() as any
-    const text: string =
-      data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? ''
+    // OpenAI-compatible shape: choices[0].message.content. MiniMax is a reasoning
+    // model, so strip any <think>…</think> chain-of-thought it may prepend.
+    const text: string = String(data?.choices?.[0]?.message?.content ?? '')
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .trim()
 
     // store cache + count the (real) Gemini call
     if (cacheable && cacheKey && text) {

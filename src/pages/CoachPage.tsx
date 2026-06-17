@@ -128,7 +128,7 @@ export function CoachPage() {
     ].filter(Boolean).join(' ')
   }
 
-  // Gemini-powered, with a graceful fall back to the on-device heuristic coach
+  // Lion AI-powered, with a graceful fall back to the on-device heuristic coach
   // if the AI service isn't reachable (so the page never feels broken).
   async function send(text?: string) {
     const q = (text ?? input).trim()

@@ -251,7 +251,7 @@ export type CapsuleMedia = {
   created_at: string
 }
 
-// ---------- Lion AI Assistant (Gemini) ----------
+// ---------- Lion AI Assistant ----------
 export type AiMessage = {
   id: string
   user_id: string

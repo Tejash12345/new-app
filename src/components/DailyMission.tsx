@@ -10,7 +10,7 @@ import { generateMission } from '../lib/ai'
 import { cn, todayKey } from '../lib/utils'
 
 /**
- * Daily Lion Mission — Gemini generates one personalized mission per day.
+ * Daily Lion Mission — Lion AI generates one personalized mission per day.
  * Auto-creates today's mission on first dashboard view, shows it as a card, and
  * tracks completion. Falls back gracefully if the AI service isn't reachable.
  */
@@ -68,7 +68,7 @@ export function DailyMissionCard() {
   // self-heal: an older mission may have been saved with raw ```json text
   // (before the parser fix). Salvage the real title/detail from it with a
   // regex and repair the row in place — no AI call, so it works even while
-  // Gemini quota is exhausted.
+  // the Lion AI quota is exhausted.
   const healed = useRef(false)
   useEffect(() => {
     if (!mission || healed.current || !user) return

@@ -3,7 +3,7 @@ import type { CareerReport, StartupPlan } from './types'
 
 // ----------------------------------------------------------------------------
 // Lion AI Assistant client. All calls go through the `lion-ai` Supabase Edge
-// Function, which holds the Gemini key as a server secret — the key is never in
+// Function, which holds the AI provider key as a server secret — the key is never in
 // this app. Every successful call is recorded for per-user usage statistics.
 // ----------------------------------------------------------------------------
 
@@ -16,7 +16,7 @@ export type ChatTurn = { role: 'user' | 'assistant'; content: string }
 
 export class AiError extends Error {}
 
-/** Low-level call to the Gemini proxy. Returns the model's text. */
+/** Low-level call to the Lion AI proxy. Returns the model's text. */
 export async function askLion(
   opts: { task: AiTask; input?: string; messages?: ChatTurn[] },
 ): Promise<string> {
@@ -25,7 +25,7 @@ export async function askLion(
   })
   if (error) {
     // FunctionsHttpError carries the function's Response in `context` — read its
-    // JSON body so we surface the REAL reason (e.g. bad Gemini key) not the
+    // JSON body so we surface the REAL reason (e.g. bad API key) not the
     // generic "non-2xx status code".
     let detail = error.message
     const ctx = (error as { context?: Response }).context
@@ -38,7 +38,7 @@ export async function askLion(
     }
     // friendly message for the free-tier daily quota / rate-limit case
     if (/RESOURCE_EXHAUSTED|exceeded your current quota|"code":\s*429|rate.?limit/i.test(detail)) {
-      throw new AiError("Lion AI has hit today's Gemini usage limit 🦁 — it resets daily. Try again later, or raise the limit in Google AI Studio.")
+      throw new AiError("Lion AI has hit today's usage limit 🦁 — it resets daily. Please try again later.")
     }
     throw new AiError(
       /Failed to fetch|FunctionsFetchError/i.test(detail)
@@ -47,7 +47,7 @@ export async function askLion(
     )
   }
   if (data?.error) throw new AiError(String(data.error))
-  // usage is now counted server-side in the Edge Function (only real Gemini
+  // usage is now counted server-side in the Edge Function (only real model
   // calls, not cache hits), so there's nothing to record here.
   return String(data?.text ?? '').trim()
 }
