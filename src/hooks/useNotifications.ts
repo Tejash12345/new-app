@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { useAuth } from './useAuth'
 import { useTable } from './db'
+import { supabase } from '../lib/supabase'
+import { useApp } from '../store/app'
 import type { AiMission, Capsule, Task, TimetableBlock } from '../lib/types'
 import { todayKey } from '../lib/utils'
 import { pushNotification, requestNotifPermission } from '../lib/notify'
@@ -9,6 +11,110 @@ import { pushNotification, requestNotifPermission } from '../lib/notify'
 const notify = pushNotification
 
 export { requestNotifPermission }
+
+type IncomingDM = {
+  id: string
+  sender_id: string
+  recipient_id: string
+  body: string
+  kind?: 'text' | 'image' | 'audio' | 'file' | 'post'
+  file_name?: string | null
+}
+
+/**
+ * App-wide incoming-DM notifications. Mounted once at the layout level so a new
+ * DM raises a notification no matter which page you're on — the previous
+ * ChatPage-only subscription missed every message unless you happened to be
+ * sitting on the chat screen. Uses the native FLNotify bridge in the Android
+ * app (or the browser Notification API on web). Skipped when the app is in the
+ * foreground AND you're already viewing that person's conversation. The
+ * `dm-<sender>` tag matches the server FCM push so the two collapse into one.
+ */
+export function useDMNotifications() {
+  const { user } = useAuth()
+  const notified = useRef<Set<string>>(new Set())
+  const names = useRef<Record<string, string>>({})
+
+  useEffect(() => {
+    if (!user) return
+    // friendly sender names for the notification title; falls back to a generic
+    // label until this resolves (or for someone not in your friends list)
+    supabase.rpc('my_friends').then(({ data }) => {
+      for (const f of (data as { friend_id: string; full_name?: string; email?: string }[]) ?? []) {
+        names.current[f.friend_id] = f.full_name?.trim() || f.email?.split('@')[0] || 'New message'
+      }
+    })
+
+    const channel = supabase
+      .channel(`dm-notify-${user.id}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'direct_messages', filter: `recipient_id=eq.${user.id}` },
+        (payload) => {
+          const m = payload.new as IncomingDM
+          if (m.sender_id === user.id) return
+          if (notified.current.has(m.id)) return
+          notified.current.add(m.id)
+          // don't notify for the conversation you're actively looking at
+          const visible = typeof document !== 'undefined' && document.visibilityState === 'visible'
+          if (visible && useApp.getState().activeChatPeer === m.sender_id) return
+          const name = names.current[m.sender_id] ?? 'New message'
+          const preview =
+            m.kind === 'image' ? '📷 Photo'
+            : m.kind === 'audio' ? '🎤 Voice message'
+            : m.kind === 'file' ? `📎 ${m.file_name ?? 'File'}`
+            : m.kind === 'post' ? '📨 Shared a post'
+            : (m.body || '')
+          notify(`💬 ${name}`, preview, `dm-${m.sender_id}`)
+        })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [user?.id])
+}
+
+/**
+ * App-wide friend-request notifications (and "request accepted"), mounted once
+ * at the layout level so they fire on any page while the app is open. Uses the
+ * native FLNotify bridge on Android / the browser Notification API on web. Same
+ * `friendreq-`/`friendacc-` tags as the server FCM push so the two collapse.
+ */
+export function useFriendRequestNotifications() {
+  const { user } = useAuth()
+  const notified = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!user) return
+    const nameOf = async (id: string) => {
+      const { data } = await supabase.from('profiles').select('full_name').eq('id', id).single()
+      return (data?.full_name as string | undefined)?.trim() || 'Someone'
+    }
+    const channel = supabase
+      .channel(`friend-notify-${user.id}`)
+      // someone sent YOU a request
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'friendships', filter: `addressee_id=eq.${user.id}` },
+        async (payload) => {
+          const r = payload.new as { id: string; requester_id: string; status: string }
+          if (r.status !== 'pending') return
+          const k = `req-${r.id}`
+          if (notified.current.has(k)) return
+          notified.current.add(k)
+          notify('👋 New friend request', `${await nameOf(r.requester_id)} wants to connect on FocusLion.`, `friendreq-${r.id}`)
+        })
+      // a request YOU sent was accepted
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'friendships', filter: `requester_id=eq.${user.id}` },
+        async (payload) => {
+          const r = payload.new as { id: string; addressee_id: string; status: string }
+          if (r.status !== 'accepted') return
+          const k = `acc-${r.id}`
+          if (notified.current.has(k)) return
+          notified.current.add(k)
+          notify('✅ Friend request accepted', `${await nameOf(r.addressee_id)} accepted your request — say hi! 👋`, `friendacc-${r.id}`)
+        })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [user?.id])
+}
 
 /**
  * In-app notification engine (runs while the app is open):

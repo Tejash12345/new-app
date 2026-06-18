@@ -27,6 +27,10 @@ type AppState = {
   stopScroll: () => void
   onlineIds: string[]
   setOnlineIds: (ids: string[]) => void
+  // the chat peer whose conversation is open in the foreground — the global DM
+  // notifier skips notifying for this one (you're already looking at it)
+  activeChatPeer: string | null
+  setActiveChatPeer: (id: string | null) => void
 }
 
 const prefersDark =
@@ -81,4 +85,6 @@ export const useApp = create<AppState>((set) => ({
   },
   onlineIds: [],
   setOnlineIds: (ids) => set({ onlineIds: ids }),
+  activeChatPeer: null,
+  setActiveChatPeer: (id) => set({ activeChatPeer: id }),
 }))

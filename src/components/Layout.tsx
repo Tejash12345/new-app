@@ -14,7 +14,7 @@ import { Onboarding } from './Onboarding'
 import { PresenceTracker } from './PresenceTracker'
 import { StoryRing, useStories } from './Stories'
 import { LionAI } from './LionAI'
-import { useNotificationEngine, requestNotifPermission } from '../hooks/useNotifications'
+import { useNotificationEngine, useDMNotifications, useFriendRequestNotifications, requestNotifPermission } from '../hooks/useNotifications'
 import { cn, levelForXp } from '../lib/utils'
 
 const NAV = [
@@ -45,6 +45,9 @@ export function Layout() {
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   useNotificationEngine()
+  // app-wide incoming-DM + friend-request notifications (fire on any page)
+  useDMNotifications()
+  useFriendRequestNotifications()
   // ask once so reminders (study, deadlines, time-almost-up) can actually fire
   useEffect(() => { requestNotifPermission() }, [])
 
