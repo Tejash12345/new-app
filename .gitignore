@@ -14,6 +14,9 @@ dist-ssr
 .env
 .vercel
 
+# Supabase CLI local link state (may contain connection details)
+supabase/.temp/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
