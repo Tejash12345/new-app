@@ -3,7 +3,6 @@ import { motion } from 'framer-motion'
 import { GraduationCap, Sparkles, Trash2, Check } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
-import { supabase } from '../lib/supabase'
 import type { LearningPath, LearningStep } from '../lib/types'
 import { Button, Empty, GlassCard, Input, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { generateLearningPath } from '../lib/ai'
@@ -15,7 +14,7 @@ const newId = () => (crypto?.randomUUID?.() ?? `${Date.now()}-${Math.round(Math.
 
 export function LearnPage() {
   const { user } = useAuth()
-  const { rows: paths, insert } = useTable<LearningPath>('learning_paths', { orderBy: 'created_at' })
+  const { rows: paths, insert, update, remove } = useTable<LearningPath>('learning_paths', { orderBy: 'created_at' })
 
   const [topic, setTopic] = useState('')
   const [level, setLevel] = useState('Beginner')
@@ -42,14 +41,17 @@ export function LearnPage() {
     }
   }
 
+  // route both through the useTable mutations so the query cache is invalidated
+  // — the toggle/delete reflects in the UI instantly instead of only after a
+  // page refresh (a plain supabase call doesn't refresh the cached list)
   async function toggleStep(p: LearningPath, stepId: string) {
     const steps = (p.steps ?? []).map((s) => (s.id === stepId ? { ...s, done: !s.done } : s))
-    await supabase.from('learning_paths').update({ steps, updated_at: new Date().toISOString() }).eq('id', p.id)
+    await update({ id: p.id, steps, updated_at: new Date().toISOString() } as Partial<LearningPath> & { id: string })
   }
 
   async function removePath(id: string) {
     if (!confirm('Delete this learning path?')) return
-    await supabase.from('learning_paths').delete().eq('id', id)
+    await remove(id)
   }
 
   return (
