@@ -121,20 +121,30 @@ async function sendOne(
       },
     },
   };
-  const resp = await fetch(
-    `https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`,
-    {
+  const url = `https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const resp = await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       body: JSON.stringify(message),
-    },
-  );
-  // 404 NOT_FOUND / 400 INVALID_ARGUMENT usually means the token is dead -> prune it
-  if (resp.status === 404 || resp.status === 400) {
-    await admin.from("user_push_tokens").delete().eq("fcm_token", token);
+    });
+    if (resp.ok) return true;
+    const errText = await resp.text();
+    // Prune ONLY a definitively dead token (FCM says UNREGISTERED / 404).
+    // Never delete on transient (429/5xx) or config (401/403) errors — that was
+    // wrongly removing valid tokens.
+    if (resp.status === 404 || errText.includes("UNREGISTERED")) {
+      await admin.from("user_push_tokens").delete().eq("fcm_token", token);
+      return false;
+    }
+    // transient — back off and retry; any other 4xx — give up but KEEP the token
+    if (resp.status === 429 || resp.status >= 500) {
+      await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+      continue;
+    }
     return false;
   }
-  return resp.ok;
+  return false;
 }
 
 Deno.serve(async (req) => {
