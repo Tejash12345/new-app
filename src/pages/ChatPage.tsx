@@ -448,8 +448,17 @@ function FriendsChat() {
       setRecording(true)
       setRecSeconds(0)
       recTimerRef.current = setInterval(() => setRecSeconds((s) => s + 1), 1000)
-    } catch {
-      setSendError('Microphone permission is needed for voice messages.')
+    } catch (e) {
+      // distinguish "no permission" from "no mic / busy" so the message is
+      // actionable — on Android, denied/dismissed lands here as NotAllowedError
+      const name = e instanceof DOMException ? e.name : ''
+      setSendError(
+        name === 'NotAllowedError' || name === 'SecurityError'
+          ? 'Microphone blocked. Enable it: Android Settings → Apps → FocusLion → Permissions → Microphone → Allow.'
+          : name === 'NotFoundError'
+          ? 'No microphone found on this device.'
+          : 'Could not start recording — check the microphone is free and permission is allowed.',
+      )
     }
   }
 
