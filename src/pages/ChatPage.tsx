@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { pushNotification } from '../lib/notify'
 import { getSocket } from '../lib/socket'
 import { useAuth } from '../hooks/useAuth'
 import { useAvatars } from '../hooks/useAvatars'
@@ -181,6 +182,8 @@ function FriendsChat() {
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const activeIdRef = useRef<string | null>(null)
+  const friendsRef = useRef<Friend[]>([])
+  const notifiedRef = useRef<Set<string>>(new Set())
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastTypingSent = useRef(0)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -196,7 +199,30 @@ function FriendsChat() {
     typingTimers.current[from] = setTimeout(
       () => setTypingUsers((t) => ({ ...t, [from]: false })), 2500)
   }
+
+  // Show a notification for an incoming DM — via the native FLNotify bridge in
+  // the Android app, or the browser Notification API on web. Skipped when you're
+  // already looking at that conversation in the foreground. The tag matches the
+  // server-side FCM push (`dm-<sender>`) so a push + this in-app notification
+  // collapse into one instead of showing twice.
+  function notifyIncomingDM(m: DMessage) {
+    const looking = typeof document !== 'undefined' && document.visibilityState === 'visible'
+    if (looking && activeIdRef.current === m.sender_id) return
+    if (notifiedRef.current.has(m.id)) return
+    notifiedRef.current.add(m.id)
+    const f = friendsRef.current.find((x) => x.friend_id === m.sender_id)
+    const name = f ? fname(f) : 'New message'
+    const preview =
+      m.kind === 'image' ? '📷 Photo'
+      : m.kind === 'audio' ? '🎤 Voice message'
+      : m.kind === 'file' ? `📎 ${m.file_name ?? 'File'}`
+      : m.kind === 'post' ? '📨 Shared a post'
+      : (m.body || '')
+    pushNotification(`💬 ${name}`, preview, `dm-${m.sender_id}`)
+  }
+
   useEffect(() => { activeIdRef.current = active?.friend_id ?? null }, [active?.friend_id])
+  useEffect(() => { friendsRef.current = friends }, [friends])
 
   // deep link from the Feed profile sheet: /chat?dm=<id>&n=<name> opens that
   // conversation directly. Prefer the loaded friend record (avatar/last_seen),
@@ -243,6 +269,7 @@ function FriendsChat() {
         { event: 'INSERT', schema: 'public', table: 'direct_messages', filter: `recipient_id=eq.${user.id}` },
         (payload) => {
           const m = payload.new as DMessage
+          notifyIncomingDM(m)
           if (activeIdRef.current === m.sender_id) {
             setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
           } else {
@@ -261,6 +288,7 @@ function FriendsChat() {
     if (!s) return
     const onDm = (m: DMessage) => {
       if (m.recipient_id !== user.id) return
+      notifyIncomingDM(m)
       if (activeIdRef.current === m.sender_id) {
         setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
       } else {

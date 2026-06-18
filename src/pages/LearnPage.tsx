@@ -15,7 +15,7 @@ const newId = () => (crypto?.randomUUID?.() ?? `${Date.now()}-${Math.round(Math.
 
 export function LearnPage() {
   const { user } = useAuth()
-  const { rows: paths } = useTable<LearningPath>('learning_paths', { orderBy: 'created_at' })
+  const { rows: paths, insert } = useTable<LearningPath>('learning_paths', { orderBy: 'created_at' })
 
   const [topic, setTopic] = useState('')
   const [level, setLevel] = useState('Beginner')
@@ -30,11 +30,11 @@ export function LearnPage() {
       const { summary, steps } = await generateLearningPath(t, level)
       if (!steps.length) { setError('Could not generate a roadmap — try again or rephrase the topic.'); return }
       const withIds: LearningStep[] = steps.map((s) => ({ id: newId(), title: s.title, detail: s.detail, done: false }))
-      const { error: insErr } = await supabase.from('learning_paths').insert({
-        user_id: user.id, topic: t, level, summary, steps: withIds,
-      })
-      if (insErr) setError(insErr.message)
-      else setTopic('')
+      // route through the useTable mutation so the query cache is invalidated on
+      // success — the new roadmap shows up instantly instead of only after you
+      // leave the page and come back (a plain supabase insert doesn't refresh it)
+      await insert({ topic: t, level, summary, steps: withIds } as Partial<LearningPath>)
+      setTopic('')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reach the AI service.')
     } finally {
