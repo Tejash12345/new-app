@@ -7,6 +7,7 @@ import { cn } from '../lib/utils'
 
 const GOALS = ['Stay fit', 'Lose weight', 'Build muscle', 'General health']
 const DIETS = ['Vegetarian', 'Non-vegetarian', 'Eggetarian', 'Vegan']
+const REGIONS = ['Any', 'South Indian', 'North Indian', 'Andhra Pradesh', 'Karnataka', 'Tamil Nadu', 'Kerala', 'Punjabi']
 const STORE = 'diet-plan'
 
 const MEALS: { key: keyof Pick<DietPlan, 'breakfast' | 'lunch' | 'dinner' | 'snacks'>; label: string; emoji: string }[] = [
@@ -53,9 +54,10 @@ function MealCard({ emoji, label, items }: { emoji: string; label: string; items
 }
 
 export function DietPage() {
-  const cached = load<{ goal?: string; diet?: string; plan?: DietPlan } | null>(STORE, null)
+  const cached = load<{ goal?: string; diet?: string; region?: string; plan?: DietPlan } | null>(STORE, null)
   const [goal, setGoal] = useState(cached?.goal ?? 'Stay fit')
   const [diet, setDiet] = useState(cached?.diet ?? 'Vegetarian')
+  const [region, setRegion] = useState(cached?.region ?? 'Any')
   const [plan, setPlan] = useState<DietPlan | null>(cached?.plan ?? null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -64,11 +66,11 @@ export function DietPage() {
     if (busy) return
     setBusy(true); setError('')
     try {
-      const p = await indianDietPlan({ goal, diet })
+      const p = await indianDietPlan({ goal, diet, region })
       const empty = !p.breakfast.length && !p.lunch.length && !p.dinner.length
       if (empty) { setError('Could not build a plan — please try again.'); return }
       setPlan(p)
-      save(STORE, { goal, diet, plan: p })
+      save(STORE, { goal, diet, region, plan: p })
     } catch (e) {
       setError(e instanceof AiError ? e.message : 'Could not reach the AI service. Check your connection.')
     } finally {
@@ -113,6 +115,17 @@ export function DietPage() {
           ))}
         </div>
 
+        <div className="mb-1 mt-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Regional style</div>
+        <div className="flex flex-wrap gap-2">
+          {REGIONS.map((rg) => (
+            <button key={rg} onClick={() => setRegion(rg)}
+              className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition',
+                region === rg ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20')}>
+              {rg}
+            </button>
+          ))}
+        </div>
+
         <Button onClick={generate} disabled={busy} className="mt-4 w-full sm:w-auto">
           {busy ? 'Building your plan…' : <>{plan ? <RefreshCw size={15} /> : <Sparkles size={15} />} {plan ? 'New plan' : 'Generate plan'}</>}
         </Button>
@@ -149,7 +162,7 @@ export function DietPage() {
             </div>
             {plan.summary && <p className="mt-3 break-words text-sm text-slate-600 dark:text-slate-300">{plan.summary}</p>}
             <p className="mt-1 text-[11px] text-slate-400">
-              This plan totals ~{totalKcal} kcal and ~{totalProtein}g protein. General guidance for {diet.toLowerCase()} eating — not medical advice.
+              This plan totals ~{totalKcal} kcal and ~{totalProtein}g protein. General guidance for {region !== 'Any' ? `${region} ` : ''}{diet.toLowerCase()} eating — not medical advice.
             </p>
           </GlassCard>
 

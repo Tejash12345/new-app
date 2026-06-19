@@ -130,10 +130,15 @@ export type DietPlan = {
  * + snacks) of everyday Indian foods, with calories & protein per dish and the
  * recommended daily calorie/protein targets, tailored to a goal + diet type.
  */
-export async function indianDietPlan(opts: { goal: string; diet: string }): Promise<DietPlan> {
+export async function indianDietPlan(opts: { goal: string; diet: string; region: string }): Promise<DietPlan> {
+  const regionLine =
+    opts.region && opts.region !== 'Any'
+      ? `Use authentic dishes typical of ${opts.region} cuisine. `
+      : 'Use everyday Indian dishes from across India. '
   const prompt =
-    `Create a realistic ONE-DAY healthy INDIAN diet plan for one person. Goal: ${opts.goal}. Diet preference: ${opts.diet}. ` +
-    'Use everyday Indian foods (e.g. poha, upma, idli, dosa, dal, roti, brown rice, paneer, curd, rajma, chana, sabzi, fruit; eggs/chicken/fish only if the diet preference allows). ' +
+    `Create a realistic ONE-DAY healthy INDIAN diet plan for one person. Goal: ${opts.goal}. Diet preference: ${opts.diet}. Regional style: ${opts.region}. ` +
+    regionLine +
+    'Examples by region — South: idli, dosa, upma, pongal, sambar, rasam, pesarattu, ragi mudde, bisi bele bath, avial, curd rice; North: roti, paratha, dal, rajma, chana masala, paneer, chole. Match dishes to the requested regional style; eggs/chicken/fish only if the diet preference allows. ' +
     'Respond with ONLY a JSON object, no prose, in exactly this shape: ' +
     '{"daily_calories":0,"daily_protein":0,"summary":"","breakfast":[{"name":"","kcal":0,"protein":0}],"lunch":[],"dinner":[],"snacks":[]}. ' +
     'kcal = calories per serving, protein = grams of protein per serving (numbers only, realistic single-person portions). ' +
