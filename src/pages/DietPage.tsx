@@ -30,24 +30,23 @@ function MealCard({ emoji, label, items }: { emoji: string; label: string; items
   const protein = items.reduce((a, i) => a + i.protein, 0)
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-      <GlassCard float>
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3 className="flex min-w-0 items-center gap-2 font-bold text-slate-900 dark:text-white">
-            <span className="text-lg">{emoji}</span> <span className="truncate">{label}</span>
-          </h3>
-          <span className="shrink-0 text-[11px] font-semibold text-slate-400">{kcal} kcal · {protein}g</span>
+      <GlassCard float className="!p-4">
+        <div className="mb-3 flex items-center gap-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-slate-500/10 text-base">{emoji}</span>
+          <h3 className="min-w-0 flex-1 truncate font-bold text-slate-900 dark:text-white">{label}</h3>
+          <span className="shrink-0 rounded-full bg-slate-500/10 px-2.5 py-1 text-[11px] font-bold text-slate-500 dark:text-slate-400">{kcal} kcal · {protein}g</span>
         </div>
-        <div className="space-y-1.5">
+        <ul className="space-y-1.5">
           {items.map((it, i) => (
-            <div key={i} className="rounded-xl bg-slate-500/5 px-3 py-2">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="min-w-0 flex-1 break-words text-sm font-semibold text-slate-700 dark:text-slate-200">{it.name}</span>
-                <span className="shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[11px] font-bold text-amber-600 dark:text-amber-300">{it.kcal} kcal</span>
-                <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-300">{it.protein}g protein</span>
-              </div>
-            </div>
+            <li key={i} className="flex items-center gap-3 rounded-2xl bg-slate-500/[0.06] px-3.5 py-2.5">
+              <span className="min-w-0 flex-1 break-words text-sm font-semibold text-slate-700 dark:text-slate-100">{it.name}</span>
+              <span className="shrink-0 text-right leading-tight">
+                <span className="block text-sm font-extrabold text-amber-500">{it.kcal}<span className="text-[10px] font-bold text-slate-400"> kcal</span></span>
+                <span className="block text-[11px] font-bold text-emerald-500">{it.protein}g protein</span>
+              </span>
+            </li>
           ))}
-        </div>
+        </ul>
       </GlassCard>
     </motion.div>
   )
@@ -139,30 +138,26 @@ export function DietPage() {
       ) : (
         <div className="space-y-4">
           {/* daily targets */}
-          <GlassCard className="!border-emerald-400/30">
-            <div className="flex flex-wrap gap-x-8 gap-y-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-400/20 text-2xl">🔥</div>
-                <div>
-                  <div className="text-2xl font-extrabold leading-none text-slate-900 dark:text-white">
-                    {plan.dailyCalories || totalKcal}<span className="ml-1 text-sm font-semibold text-slate-400">kcal/day</span>
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500">Daily calorie target</div>
+          <GlassCard className="!border-emerald-400/30 bg-gradient-to-br from-emerald-400/[0.07] to-transparent">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-3xl bg-gradient-to-br from-amber-400/20 to-amber-400/5 p-4 ring-1 ring-inset ring-amber-400/20">
+                <div className="text-2xl">🔥</div>
+                <div className="mt-1.5 text-2xl font-extrabold leading-none text-slate-900 dark:text-white sm:text-3xl">
+                  {plan.dailyCalories || totalKcal}<span className="ml-0.5 text-xs font-semibold text-slate-400">kcal</span>
                 </div>
+                <div className="mt-1 text-[11px] font-semibold text-slate-500">Daily calories</div>
               </div>
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/20 text-2xl">💪</div>
-                <div>
-                  <div className="text-2xl font-extrabold leading-none text-slate-900 dark:text-white">
-                    {plan.dailyProtein || totalProtein}<span className="ml-1 text-sm font-semibold text-slate-400">g/day</span>
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500">Daily protein target</div>
+              <div className="rounded-3xl bg-gradient-to-br from-emerald-400/20 to-emerald-400/5 p-4 ring-1 ring-inset ring-emerald-400/20">
+                <div className="text-2xl">💪</div>
+                <div className="mt-1.5 text-2xl font-extrabold leading-none text-slate-900 dark:text-white sm:text-3xl">
+                  {plan.dailyProtein || totalProtein}<span className="ml-0.5 text-xs font-semibold text-slate-400">g</span>
                 </div>
+                <div className="mt-1 text-[11px] font-semibold text-slate-500">Daily protein</div>
               </div>
             </div>
-            {plan.summary && <p className="mt-3 break-words text-sm text-slate-600 dark:text-slate-300">{plan.summary}</p>}
-            <p className="mt-1 text-[11px] text-slate-400">
-              This plan totals ~{totalKcal} kcal and ~{totalProtein}g protein. General guidance for {region !== 'Any' ? `${region} ` : ''}{diet.toLowerCase()} eating — not medical advice.
+            {plan.summary && <p className="mt-3 break-words text-sm leading-relaxed text-slate-600 dark:text-slate-300">{plan.summary}</p>}
+            <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
+              This plan totals ~{totalKcal} kcal · ~{totalProtein}g protein. General guidance for {region !== 'Any' ? `${region} ` : ''}{diet.toLowerCase()} eating — not medical advice.
             </p>
           </GlassCard>
 
