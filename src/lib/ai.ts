@@ -195,13 +195,19 @@ export type Recipe = {
 }
 
 /** AI recipe — how to prepare a given dish, Indian home-cooking style. */
-export async function recipeFor(dish: string, ctx?: { diet?: string; region?: string }): Promise<Recipe> {
+export async function recipeFor(dish: string, ctx?: { diet?: string; region?: string; language?: string }): Promise<Recipe> {
   const extra = [
     ctx?.region && ctx.region !== 'Any' ? `${ctx.region} style` : '',
     ctx?.diet && ctx.diet !== 'Non-vegetarian' ? ctx.diet.toLowerCase() : '',
   ].filter(Boolean).join(', ')
+  const lang = (ctx?.language ?? 'English').trim()
+  const langLine =
+    lang && lang.toLowerCase() !== 'english'
+      ? `Write ALL values — time, servings, ingredients, steps and the tip — in ${lang}, using that language's native script. Keep the JSON keys in English. `
+      : ''
   const prompt =
     `Give a simple home recipe to prepare "${dish}"${extra ? ` (${extra})` : ''}, Indian home-cooking style. ` +
+    langLine +
     'Respond with ONLY a JSON object, no prose: {"time":"","servings":"","ingredients":["",""],"steps":["",""],"tip":""}. ' +
     'time = total time like "20 min"; servings like "1 serving"; 5-12 ingredients with simple quantities; ' +
     '4-9 clear steps (each step plain text, no leading numbers); tip = one short helpful tip. Keep it beginner-friendly.'

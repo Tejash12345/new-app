@@ -10,6 +10,7 @@ const DIETS = ['Vegetarian', 'Non-vegetarian', 'Eggetarian', 'Vegan']
 const REGIONS = ['Any', 'South Indian', 'North Indian', 'Andhra Pradesh', 'Karnataka', 'Tamil Nadu', 'Kerala', 'Punjabi']
 const GENDERS = ['Male', 'Female', 'Other']
 const MODES = ['Easy', 'Medium', 'Hard']
+const LANGUAGES = ['English', 'Hindi', 'Telugu', 'Tamil', 'Kannada', 'Malayalam', 'Marathi', 'Bengali', 'Gujarati', 'Punjabi']
 const STORE = 'diet-plan'
 
 const MEALS: { key: keyof Pick<DietPlan, 'breakfast' | 'lunch' | 'dinner' | 'snacks'>; label: string; emoji: string }[] = [
@@ -77,13 +78,14 @@ function MealCard({ emoji, label, items, onSelect }: { emoji: string; label: str
 }
 
 export function DietPage() {
-  const cached = load<{ goal?: string; diet?: string; region?: string; age?: string; gender?: string; mode?: string; plan?: DietPlan } | null>(STORE, null)
+  const cached = load<{ goal?: string; diet?: string; region?: string; age?: string; gender?: string; mode?: string; language?: string; plan?: DietPlan } | null>(STORE, null)
   const [goal, setGoal] = useState(cached?.goal ?? 'Stay fit')
   const [diet, setDiet] = useState(cached?.diet ?? 'Vegetarian')
   const [region, setRegion] = useState(cached?.region ?? 'Any')
   const [age, setAge] = useState(cached?.age ?? '')
   const [gender, setGender] = useState(cached?.gender ?? 'Male')
   const [mode, setMode] = useState(cached?.mode ?? 'Medium')
+  const [language, setLanguage] = useState(cached?.language ?? 'English')
   const [plan, setPlan] = useState<DietPlan | null>(cached?.plan ?? null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -96,12 +98,12 @@ export function DietPage() {
 
   async function openRecipe(dish: string) {
     setRecipeDish(dish); setRecipeErr('')
-    const key = 'recipe-' + dish.toLowerCase().trim()
+    const key = `recipe-${language.toLowerCase()}-${dish.toLowerCase().trim()}`
     const cached = load<Recipe | null>(key, null)
     if (cached?.steps?.length) { setRecipe(cached); setRecipeBusy(false); return }
     setRecipe(null); setRecipeBusy(true)
     try {
-      const r = await recipeFor(dish, { diet, region })
+      const r = await recipeFor(dish, { diet, region, language })
       if (!r.steps.length) { setRecipeErr('Could not load the recipe — please try again.'); return }
       setRecipe(r)
       save(key, r)
@@ -120,7 +122,7 @@ export function DietPage() {
       const empty = !p.breakfast.length && !p.lunch.length && !p.dinner.length
       if (empty) { setError('Could not build a plan — please try again.'); return }
       setPlan(p)
-      save(STORE, { goal, diet, region, age: age.trim(), gender, mode, plan: p })
+      save(STORE, { goal, diet, region, age: age.trim(), gender, mode, language, plan: p })
     } catch (e) {
       setError(e instanceof AiError ? e.message : 'Could not reach the AI service. Check your connection.')
     } finally {
@@ -186,6 +188,12 @@ export function DietPage() {
               ))}
             </div>
           </div>
+          <div>
+            <Label>Recipe language</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {LANGUAGES.map((lg) => <Pill key={lg} active={language === lg} onClick={() => setLanguage(lg)}>{lg}</Pill>)}
+            </div>
+          </div>
         </div>
 
         <Button onClick={generate} disabled={busy} className="mt-4 w-full sm:w-auto">
@@ -248,10 +256,11 @@ export function DietPage() {
           </div>
         ) : recipe ? (
           <div className="space-y-4">
-            {(recipe.time || recipe.servings) && (
+            {(recipe.time || recipe.servings || language !== 'English') && (
               <div className="flex flex-wrap gap-2">
                 {recipe.time && <span className="rounded-full bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-600 dark:text-amber-300">⏱ {recipe.time}</span>}
                 {recipe.servings && <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-300">🍽 {recipe.servings}</span>}
+                {language !== 'English' && <span className="rounded-full bg-brand-500/15 px-3 py-1 text-xs font-bold text-brand-600 dark:text-brand-300">🌐 {language}</span>}
               </div>
             )}
             {recipe.ingredients.length > 0 && (
