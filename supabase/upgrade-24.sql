@@ -143,6 +143,10 @@ $$;
 -- ============================================================
 
 -- friend request received / accepted
+-- NOTE: the push `data` payload must NOT use the key `from` — it is a RESERVED
+-- key in FCM (HTTP v1) and makes FCM reject the whole message (sent:0). Use
+-- `sender` (or any non-reserved key) instead. This is why DM + friend-request
+-- pushes silently failed while feed pushes (which use `post`/`id`) worked.
 create or replace function public.tg_friendship_notify()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare v_name text;
@@ -154,7 +158,7 @@ begin
       NEW.addressee_id, '👋 New friend request',
       coalesce(v_name, 'Someone') || ' sent you a friend request.',
       'friendreq-' || NEW.id::text,
-      jsonb_build_object('type', 'friend_request', 'from', NEW.requester_id));
+      jsonb_build_object('type', 'friend_request', 'sender', NEW.requester_id));
   elsif (TG_OP = 'UPDATE' and NEW.status = 'accepted' and OLD.status is distinct from 'accepted') then
     select coalesce(nullif(full_name, ''), 'Someone') into v_name
       from public.profiles where id = NEW.addressee_id;
@@ -162,7 +166,7 @@ begin
       NEW.requester_id, '✅ Friend request accepted',
       coalesce(v_name, 'Someone') || ' accepted your friend request.',
       'friendacc-' || NEW.id::text,
-      jsonb_build_object('type', 'friend_accept', 'from', NEW.addressee_id));
+      jsonb_build_object('type', 'friend_accept', 'sender', NEW.addressee_id));
   end if;
   return NEW;
 end;
@@ -184,7 +188,7 @@ begin
   perform public.send_push(
     NEW.recipient_id, '💬 ' || coalesce(v_name, 'New message'),
     v_preview, 'dm-' || NEW.sender_id::text,
-    jsonb_build_object('type', 'dm', 'from', NEW.sender_id));
+    jsonb_build_object('type', 'dm', 'sender', NEW.sender_id));
   return NEW;
 end;
 $$;
