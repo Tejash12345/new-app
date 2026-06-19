@@ -60,6 +60,7 @@ function Gate() {
         <Route path="report" element={<ReportPage />} />
         <Route path="feed" element={<FeedPage />} />
         <Route path="chat" element={<ChatPage />} />
+        <Route path="community" element={<ChatPage />} />
         <Route path="friends" element={<FriendsPage />} />
         <Route path="install" element={<InstallPage />} />
         <Route path="settings" element={<SettingsPage />} />

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -121,7 +121,11 @@ function SharedPostBubble({ m, mine, onOpen }: { m: DMessage; mine: boolean; onO
 }
 
 export function ChatPage() {
-  const [mode, setMode] = useState<'friends' | 'rooms'>('friends')
+  const { pathname } = useLocation()
+  // open straight to the right view: /community shows the public rooms; every
+  // other entry (/chat and the DM notification deep-links) opens your private
+  // Friends messages. The in-page toggle still switches between the two.
+  const [mode, setMode] = useState<'friends' | 'rooms'>(pathname.startsWith('/community') ? 'rooms' : 'friends')
   return (
     <Page title="Chat" subtitle="Message your friends privately, or join the student community. 🦁">
       <div className="mb-4 flex gap-2">
