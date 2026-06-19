@@ -82,7 +82,6 @@ export function Onboarding() {
                 </>
               )}
             </div>
-            <p className="mt-4 text-[11px] text-slate-400">Tip: press <kbd className="rounded bg-slate-500/10 px-1 font-bold">Ctrl K</kbd> anywhere to search and jump around fast.</p>
           </motion.div>
         </motion.div>
       )}
