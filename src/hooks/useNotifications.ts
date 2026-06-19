@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useAuth } from './useAuth'
 import { useTable } from './db'
 import { supabase } from '../lib/supabase'
+import { getSocket } from '../lib/socket'
 import { useApp } from '../store/app'
 import type { AiMission, Capsule, Task, TimetableBlock } from '../lib/types'
 import { todayKey } from '../lib/utils'
@@ -45,29 +46,46 @@ export function useDMNotifications() {
       }
     })
 
+    // single place that turns an incoming DM into a notification. Both transports
+    // below feed into it; the per-message-id `notified` set means whichever
+    // arrives first wins and the other is ignored — so we never double-notify.
+    const handleIncoming = (m: IncomingDM | null | undefined) => {
+      if (!m || m.recipient_id !== user.id || m.sender_id === user.id) return
+      if (notified.current.has(m.id)) return
+      notified.current.add(m.id)
+      // don't notify for the conversation you're actively looking at
+      const visible = typeof document !== 'undefined' && document.visibilityState === 'visible'
+      if (visible && useApp.getState().activeChatPeer === m.sender_id) return
+      const name = names.current[m.sender_id] ?? 'New message'
+      const preview =
+        m.kind === 'image' ? '📷 Photo'
+        : m.kind === 'audio' ? '🎤 Voice message'
+        : m.kind === 'file' ? `📎 ${m.file_name ?? 'File'}`
+        : m.kind === 'post' ? '📨 Shared a post'
+        : (m.body || '')
+      notify(`💬 ${name}`, preview, `dm-${m.sender_id}`)
+    }
+
+    // 1) Supabase realtime — the always-available path (works even when the
+    //    dedicated socket server is asleep or VITE_SOCKET_URL isn't configured).
     const channel = supabase
       .channel(`dm-notify-${user.id}`)
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'direct_messages', filter: `recipient_id=eq.${user.id}` },
-        (payload) => {
-          const m = payload.new as IncomingDM
-          if (m.sender_id === user.id) return
-          if (notified.current.has(m.id)) return
-          notified.current.add(m.id)
-          // don't notify for the conversation you're actively looking at
-          const visible = typeof document !== 'undefined' && document.visibilityState === 'visible'
-          if (visible && useApp.getState().activeChatPeer === m.sender_id) return
-          const name = names.current[m.sender_id] ?? 'New message'
-          const preview =
-            m.kind === 'image' ? '📷 Photo'
-            : m.kind === 'audio' ? '🎤 Voice message'
-            : m.kind === 'file' ? `📎 ${m.file_name ?? 'File'}`
-            : m.kind === 'post' ? '📨 Shared a post'
-            : (m.body || '')
-          notify(`💬 ${name}`, preview, `dm-${m.sender_id}`)
-        })
+        (payload) => handleIncoming(payload.new as IncomingDM))
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+
+    // 2) socket.io fast path — when the realtime chat server is configured, the
+    //    sender relays each DM straight to us and this fires instantly, on ANY
+    //    page (we open/keep the connection here, not just on the Chat screen).
+    const sock = getSocket()
+    const onSocketDm = (m: IncomingDM) => handleIncoming(m)
+    sock?.on('dm', onSocketDm)
+
+    return () => {
+      supabase.removeChannel(channel)
+      sock?.off('dm', onSocketDm)
+    }
   }, [user?.id])
 }
 

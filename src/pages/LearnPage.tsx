@@ -72,10 +72,10 @@ export function LearnPage() {
           <Input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Or type any skill or subject…"
             onKeyDown={(e) => e.key === 'Enter' && generate()} />
           <select value={level} onChange={(e) => setLevel(e.target.value)}
-            className="rounded-2xl border border-slate-200/60 bg-white/70 px-3 py-2.5 text-sm text-slate-900 outline-none dark:border-white/10 dark:bg-white/5 dark:text-white dark:[&>option]:bg-slate-800">
+            className="w-full rounded-2xl border border-slate-200/60 bg-white/70 px-3 py-2.5 text-sm text-slate-900 outline-none sm:w-auto dark:border-white/10 dark:bg-white/5 dark:text-white dark:[&>option]:bg-slate-800">
             {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
           </select>
-          <Button onClick={generate} disabled={busy || !topic.trim()}>
+          <Button onClick={generate} disabled={busy || !topic.trim()} className="w-full sm:w-auto">
             {busy ? 'Generating…' : <><Sparkles size={15} /> Generate</>}
           </Button>
         </div>
@@ -95,33 +95,52 @@ export function LearnPage() {
             return (
               <motion.div key={p.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
                 <GlassCard float>
-                  <div className="flex items-start gap-3">
-                    <ProgressRing progress={pct} size={64} stroke={7} color="#FFB454" label={`${Math.round(pct * 100)}%`} />
+                  <div className="flex items-start gap-3 sm:gap-4">
+                    <ProgressRing progress={pct} size={56} stroke={6} color="#FFB454" label={`${Math.round(pct * 100)}%`} />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="truncate font-bold text-slate-900 dark:text-white">{p.topic}</h3>
-                        <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-300">{p.level}</span>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <h3 className="min-w-0 break-words font-bold text-slate-900 dark:text-white">{p.topic}</h3>
+                        <span className="shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-300">{p.level}</span>
                       </div>
                       <p className="break-words text-xs text-slate-500">{p.summary}</p>
                       <p className="mt-0.5 text-[11px] font-semibold text-slate-400">{done}/{steps.length} steps complete</p>
                     </div>
-                    <button onClick={() => removePath(p.id)} className="rounded-full p-1.5 text-slate-300 hover:bg-rose-500/10 hover:text-rose-500">
+                    <button onClick={() => removePath(p.id)} aria-label="Delete this learning path"
+                      className="shrink-0 rounded-full p-1.5 text-slate-300 hover:bg-rose-500/10 hover:text-rose-500">
                       <Trash2 size={15} />
                     </button>
                   </div>
 
-                  <div className="mt-3 space-y-1.5">
+                  {/* steps — completion is a deliberate action: only the checkbox or the
+                      "Mark done" button toggles a step, so tapping/reading the step text
+                      never flips it by accident. "Undo" lets you clear a mistaken one. */}
+                  <div className="mt-3 space-y-1">
                     {steps.map((s, i) => (
-                      <button key={s.id} onClick={() => toggleStep(p, s.id)} className="flex w-full items-start gap-2.5 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-500/5">
-                        <span className={cn('mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-white transition',
-                          s.done ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 dark:border-white/20')}>
-                          {s.done ? <Check size={13} /> : <span className="text-[10px] font-bold text-slate-400">{i + 1}</span>}
-                        </span>
-                        <span className="min-w-0">
+                      <div key={s.id} className={cn('flex items-start gap-2.5 rounded-xl px-2 py-1.5 transition', s.done && 'bg-emerald-500/[0.06]')}>
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={s.done}
+                          aria-label={s.done ? `Mark "${s.title}" as not done` : `Mark "${s.title}" as done`}
+                          onClick={() => toggleStep(p, s.id)}
+                          className={cn('mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-white transition active:scale-90',
+                            s.done ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 hover:border-emerald-400 dark:border-white/20 dark:hover:border-emerald-400')}>
+                          {s.done ? <Check size={14} /> : <span className="text-[10px] font-bold text-slate-400">{i + 1}</span>}
+                        </button>
+                        <div className="min-w-0 flex-1">
                           <span className={cn('block break-words text-sm font-semibold', s.done ? 'text-slate-400 line-through' : 'text-slate-800 dark:text-slate-100')}>{s.title}</span>
                           {s.detail && <span className="block break-words text-xs text-slate-500">{s.detail}</span>}
-                        </span>
-                      </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleStep(p, s.id)}
+                          className={cn('mt-0.5 shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold transition active:scale-95',
+                            s.done
+                              ? 'bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25 dark:text-emerald-400'
+                              : 'bg-slate-500/10 text-slate-500 hover:bg-emerald-500/15 hover:text-emerald-600')}>
+                          {s.done ? 'Undo' : 'Mark done'}
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </GlassCard>
