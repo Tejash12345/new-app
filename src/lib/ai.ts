@@ -76,6 +76,44 @@ export async function generateLearningPath(
   }
 }
 
+export type VocabWord = {
+  word: string
+  phonetic: string
+  partOfSpeech: string
+  meaning: string
+  examples: string[]
+  synonyms: string[]
+}
+
+/**
+ * AI "Word of the Day" — returns one useful vocabulary word with its meaning,
+ * example sentences and synonyms. Pass already-seen words to avoid repeats.
+ */
+export async function wordOfTheDay(avoid: string[] = []): Promise<VocabWord> {
+  const avoidLine = avoid.length
+    ? ` Do NOT choose any of these already-shown words: ${avoid.slice(0, 40).join(', ')}.`
+    : ''
+  const prompt =
+    'Teach me ONE genuinely useful English vocabulary word (intermediate level — useful in everyday or academic writing, not too obscure).' +
+    avoidLine +
+    ' Respond with ONLY a JSON object, no extra prose, in exactly this shape: ' +
+    '{"word":"","phonetic":"","part_of_speech":"","meaning":"","examples":["",""],"synonyms":["",""]}. ' +
+    'Keep "meaning" to one clear sentence, give 2 natural example sentences that actually use the word, and 3 synonyms.'
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
+  const o = parseJson<{
+    word?: unknown; phonetic?: unknown; part_of_speech?: unknown
+    meaning?: unknown; examples?: unknown; synonyms?: unknown
+  }>(raw)
+  return {
+    word: String(o?.word ?? '').trim(),
+    phonetic: String(o?.phonetic ?? '').trim(),
+    partOfSpeech: String(o?.part_of_speech ?? '').trim(),
+    meaning: String(o?.meaning ?? '').trim(),
+    examples: arr(o?.examples).map((s) => s.trim()).filter(Boolean).slice(0, 3),
+    synonyms: arr(o?.synonyms).map((s) => s.trim()).filter(Boolean).slice(0, 6),
+  }
+}
+
 // Robust JSON extraction: handles ```json fences and stray prose around the
 // object, so a slightly messy model response still parses.
 function parseJson<T>(raw: string): T | null {
