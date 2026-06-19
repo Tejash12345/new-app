@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { Salad, Sparkles, RefreshCw } from 'lucide-react'
 import { Page, GlassCard, Button, Empty, SectionTitle, Input, Modal } from '../components/ui'
@@ -24,6 +24,22 @@ function load<T>(key: string, fallback: T): T {
 }
 function save(key: string, val: unknown) {
   try { localStorage.setItem(key, JSON.stringify(val)) } catch { /* ignore */ }
+}
+
+function Label({ children }: { children: ReactNode }) {
+  return <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">{children}</div>
+}
+
+function Pill({ active, onClick, title, children }: { active: boolean; onClick: () => void; title?: string; children: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} title={title}
+      className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition active:scale-95',
+        active
+          ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/30'
+          : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20 dark:text-slate-300')}>
+      {children}
+    </button>
+  )
 }
 
 function MealCard({ emoji, label, items, onSelect }: { emoji: string; label: string; items: DietItem[]; onSelect: (dish: string) => void }) {
@@ -127,69 +143,49 @@ export function DietPage() {
       <GlassCard className="mb-6 !border-emerald-400/30 bg-gradient-to-br from-emerald-400/10 to-transparent">
         <SectionTitle><span className="flex items-center gap-2"><Salad size={18} className="text-emerald-500" /> Build your day's plan</span></SectionTitle>
 
-        <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Goal</div>
-        <div className="flex flex-wrap gap-2">
-          {GOALS.map((g) => (
-            <button key={g} onClick={() => setGoal(g)}
-              className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition',
-                goal === g ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20')}>
-              {g}
-            </button>
-          ))}
-        </div>
-
-        <div className="mb-1 mt-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Diet preference</div>
-        <div className="flex flex-wrap gap-2">
-          {DIETS.map((d) => (
-            <button key={d} onClick={() => setDiet(d)}
-              className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition',
-                diet === d ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20')}>
-              {d}
-            </button>
-          ))}
-        </div>
-
-        <div className="mb-1 mt-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Regional style</div>
-        <div className="flex flex-wrap gap-2">
-          {REGIONS.map((rg) => (
-            <button key={rg} onClick={() => setRegion(rg)}
-              className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition',
-                region === rg ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20')}>
-              {rg}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="space-y-3">
           <div>
-            <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Age</div>
-            <Input type="number" inputMode="numeric" min={5} max={100} value={age}
-              onChange={(e) => setAge(e.target.value)} placeholder="e.g. 21" />
+            <Label>Goal</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {GOALS.map((g) => <Pill key={g} active={goal === g} onClick={() => setGoal(g)}>{g}</Pill>)}
+            </div>
           </div>
           <div>
-            <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Gender</div>
-            <div className="flex flex-wrap gap-2">
-              {GENDERS.map((g) => (
-                <button key={g} onClick={() => setGender(g)}
-                  className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition',
-                    gender === g ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20')}>
-                  {g}
-                </button>
+            <Label>Diet preference</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {DIETS.map((d) => <Pill key={d} active={diet === d} onClick={() => setDiet(d)}>{d}</Pill>)}
+            </div>
+          </div>
+          <div>
+            <Label>Regional style</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {REGIONS.map((rg) => <Pill key={rg} active={region === rg} onClick={() => setRegion(rg)}>{rg}</Pill>)}
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Age</Label>
+              <Input type="number" inputMode="numeric" min={5} max={100} value={age}
+                onChange={(e) => setAge(e.target.value)} placeholder="e.g. 21" />
+            </div>
+            <div>
+              <Label>Gender</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {GENDERS.map((g) => <Pill key={g} active={gender === g} onClick={() => setGender(g)}>{g}</Pill>)}
+              </div>
+            </div>
+          </div>
+          <div>
+            <Label>Plan mode</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {MODES.map((m) => (
+                <Pill key={m} active={mode === m} onClick={() => setMode(m)}
+                  title={m === 'Easy' ? 'Simple, flexible everyday meals' : m === 'Hard' ? 'Strict, high-protein, clean eating' : 'Balanced & moderately disciplined'}>
+                  {m}
+                </Pill>
               ))}
             </div>
           </div>
-        </div>
-
-        <div className="mb-1 mt-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Plan mode</div>
-        <div className="flex flex-wrap gap-2">
-          {MODES.map((m) => (
-            <button key={m} onClick={() => setMode(m)}
-              title={m === 'Easy' ? 'Simple, flexible everyday meals' : m === 'Hard' ? 'Strict, high-protein, clean eating' : 'Balanced & moderately disciplined'}
-              className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition',
-                mode === m ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20')}>
-              {m}
-            </button>
-          ))}
         </div>
 
         <Button onClick={generate} disabled={busy} className="mt-4 w-full sm:w-auto">
@@ -261,7 +257,7 @@ export function DietPage() {
             {recipe.ingredients.length > 0 && (
               <div>
                 <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Ingredients</div>
-                <ul className="space-y-1.5">
+                <ul className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
                   {recipe.ingredients.map((ing, i) => (
                     <li key={i} className="flex items-start gap-2.5">
                       <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
