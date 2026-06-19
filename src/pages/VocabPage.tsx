@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Sparkles, Volume2, RefreshCw, Bookmark, BookmarkCheck, BookMarked, Trash2 } from 'lucide-react'
 import { Page, GlassCard, Button, Empty, SectionTitle } from '../components/ui'
 import { wordOfTheDay, AiError, type VocabWord } from '../lib/ai'
+import { speak } from '../lib/speak'
 import { todayKey } from '../lib/utils'
 
 const TODAY = 'vocab-today'   // { date, word } — keeps the same word all day
@@ -14,17 +15,6 @@ function load<T>(key: string, fallback: T): T {
 }
 function save(key: string, val: unknown) {
   try { localStorage.setItem(key, JSON.stringify(val)) } catch { /* ignore */ }
-}
-
-// read the word aloud (Web Speech API — works in the browser and the WebView)
-function speak(text: string) {
-  try {
-    if (!('speechSynthesis' in window)) return
-    window.speechSynthesis.cancel()
-    const u = new SpeechSynthesisUtterance(text)
-    u.rate = 0.9
-    window.speechSynthesis.speak(u)
-  } catch { /* ignore */ }
 }
 
 function LoadingCard() {
