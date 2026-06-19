@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Salad, Sparkles, RefreshCw } from 'lucide-react'
-import { Page, GlassCard, Button, Empty, SectionTitle } from '../components/ui'
+import { Page, GlassCard, Button, Empty, SectionTitle, Input } from '../components/ui'
 import { indianDietPlan, AiError, type DietPlan, type DietItem } from '../lib/ai'
 import { cn } from '../lib/utils'
 
 const GOALS = ['Stay fit', 'Lose weight', 'Build muscle', 'General health']
 const DIETS = ['Vegetarian', 'Non-vegetarian', 'Eggetarian', 'Vegan']
 const REGIONS = ['Any', 'South Indian', 'North Indian', 'Andhra Pradesh', 'Karnataka', 'Tamil Nadu', 'Kerala', 'Punjabi']
+const GENDERS = ['Male', 'Female', 'Other']
+const MODES = ['Easy', 'Medium', 'Hard']
 const STORE = 'diet-plan'
 
 const MEALS: { key: keyof Pick<DietPlan, 'breakfast' | 'lunch' | 'dinner' | 'snacks'>; label: string; emoji: string }[] = [
@@ -53,10 +55,13 @@ function MealCard({ emoji, label, items }: { emoji: string; label: string; items
 }
 
 export function DietPage() {
-  const cached = load<{ goal?: string; diet?: string; region?: string; plan?: DietPlan } | null>(STORE, null)
+  const cached = load<{ goal?: string; diet?: string; region?: string; age?: string; gender?: string; mode?: string; plan?: DietPlan } | null>(STORE, null)
   const [goal, setGoal] = useState(cached?.goal ?? 'Stay fit')
   const [diet, setDiet] = useState(cached?.diet ?? 'Vegetarian')
   const [region, setRegion] = useState(cached?.region ?? 'Any')
+  const [age, setAge] = useState(cached?.age ?? '')
+  const [gender, setGender] = useState(cached?.gender ?? 'Male')
+  const [mode, setMode] = useState(cached?.mode ?? 'Medium')
   const [plan, setPlan] = useState<DietPlan | null>(cached?.plan ?? null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -65,11 +70,11 @@ export function DietPage() {
     if (busy) return
     setBusy(true); setError('')
     try {
-      const p = await indianDietPlan({ goal, diet, region })
+      const p = await indianDietPlan({ goal, diet, region, age: age.trim(), gender, mode })
       const empty = !p.breakfast.length && !p.lunch.length && !p.dinner.length
       if (empty) { setError('Could not build a plan — please try again.'); return }
       setPlan(p)
-      save(STORE, { goal, diet, region, plan: p })
+      save(STORE, { goal, diet, region, age: age.trim(), gender, mode, plan: p })
     } catch (e) {
       setError(e instanceof AiError ? e.message : 'Could not reach the AI service. Check your connection.')
     } finally {
@@ -121,6 +126,38 @@ export function DietPage() {
               className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition',
                 region === rg ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20')}>
               {rg}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+            <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Age</div>
+            <Input type="number" inputMode="numeric" min={5} max={100} value={age}
+              onChange={(e) => setAge(e.target.value)} placeholder="e.g. 21" />
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Gender</div>
+            <div className="flex flex-wrap gap-2">
+              {GENDERS.map((g) => (
+                <button key={g} onClick={() => setGender(g)}
+                  className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition',
+                    gender === g ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20')}>
+                  {g}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-1 mt-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Plan mode</div>
+        <div className="flex flex-wrap gap-2">
+          {MODES.map((m) => (
+            <button key={m} onClick={() => setMode(m)}
+              title={m === 'Easy' ? 'Simple, flexible everyday meals' : m === 'Hard' ? 'Strict, high-protein, clean eating' : 'Balanced & moderately disciplined'}
+              className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition',
+                mode === m ? 'bg-emerald-500 text-white' : 'bg-slate-500/10 text-slate-500 hover:bg-slate-500/20')}>
+              {m}
             </button>
           ))}
         </div>

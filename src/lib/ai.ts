@@ -130,13 +130,29 @@ export type DietPlan = {
  * + snacks) of everyday Indian foods, with calories & protein per dish and the
  * recommended daily calorie/protein targets, tailored to a goal + diet type.
  */
-export async function indianDietPlan(opts: { goal: string; diet: string; region: string }): Promise<DietPlan> {
+export async function indianDietPlan(
+  opts: { goal: string; diet: string; region: string; age?: string; gender?: string; mode?: string },
+): Promise<DietPlan> {
   const regionLine =
     opts.region && opts.region !== 'Any'
       ? `Use authentic dishes typical of ${opts.region} cuisine. `
       : 'Use everyday Indian dishes from across India. '
+  const who = [
+    opts.age ? `${opts.age}-year-old` : '',
+    opts.gender && opts.gender !== 'Other' ? opts.gender.toLowerCase() : '',
+  ].filter(Boolean).join(' ')
+  const whoLine = who ? `Calibrate the daily calorie and protein targets for a typical ${who}. ` : ''
+  const modeLine =
+    opts.mode === 'Easy'
+      ? 'Plan mode: EASY — simple, easy-to-cook, flexible everyday meals and comfortable portions. '
+      : opts.mode === 'Hard'
+        ? 'Plan mode: HARD — strict, high-protein, clean eating with minimal fried/sugary food and disciplined portions for serious fitness. '
+        : 'Plan mode: MEDIUM — balanced and moderately disciplined with solid protein. '
   const prompt =
     `Create a realistic ONE-DAY healthy INDIAN diet plan for one person. Goal: ${opts.goal}. Diet preference: ${opts.diet}. Regional style: ${opts.region}. ` +
+    (opts.age ? `Age: ${opts.age}. ` : '') +
+    (opts.gender ? `Gender: ${opts.gender}. ` : '') +
+    whoLine + modeLine +
     regionLine +
     'Examples by region — South: idli, dosa, upma, pongal, sambar, rasam, pesarattu, ragi mudde, bisi bele bath, avial, curd rice; North: roti, paratha, dal, rajma, chana masala, paneer, chole. Match dishes to the requested regional style; eggs/chicken/fish only if the diet preference allows. ' +
     'Respond with ONLY a JSON object, no prose, in exactly this shape: ' +
