@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Salad, Sparkles, RefreshCw } from 'lucide-react'
-import { Page, GlassCard, Button, Empty, SectionTitle, Input } from '../components/ui'
-import { indianDietPlan, AiError, type DietPlan, type DietItem } from '../lib/ai'
+import { Page, GlassCard, Button, Empty, SectionTitle, Input, Modal } from '../components/ui'
+import { indianDietPlan, recipeFor, AiError, type DietPlan, type DietItem, type Recipe } from '../lib/ai'
 import { cn } from '../lib/utils'
 
 const GOALS = ['Stay fit', 'Lose weight', 'Build muscle', 'General health']
@@ -26,7 +26,7 @@ function save(key: string, val: unknown) {
   try { localStorage.setItem(key, JSON.stringify(val)) } catch { /* ignore */ }
 }
 
-function MealCard({ emoji, label, items }: { emoji: string; label: string; items: DietItem[] }) {
+function MealCard({ emoji, label, items, onSelect }: { emoji: string; label: string; items: DietItem[]; onSelect: (dish: string) => void }) {
   if (!items.length) return null
   const kcal = items.reduce((a, i) => a + i.kcal, 0)
   const protein = items.reduce((a, i) => a + i.protein, 0)
@@ -40,12 +40,18 @@ function MealCard({ emoji, label, items }: { emoji: string; label: string; items
         </div>
         <ul className="space-y-1.5">
           {items.map((it, i) => (
-            <li key={i} className="flex items-center gap-3 rounded-2xl bg-slate-500/[0.06] px-3.5 py-2.5">
-              <span className="min-w-0 flex-1 break-words text-sm font-semibold text-slate-700 dark:text-slate-100">{it.name}</span>
-              <span className="shrink-0 text-right leading-tight">
-                <span className="block text-sm font-extrabold text-amber-500">{it.kcal}<span className="text-[10px] font-bold text-slate-400"> kcal</span></span>
-                <span className="block text-[11px] font-bold text-emerald-500">{it.protein}g protein</span>
-              </span>
+            <li key={i}>
+              <button type="button" onClick={() => onSelect(it.name)}
+                className="flex w-full items-center gap-3 rounded-2xl bg-slate-500/[0.06] px-3.5 py-2.5 text-left transition hover:bg-emerald-500/10 active:scale-[0.99]">
+                <span className="min-w-0 flex-1">
+                  <span className="block break-words text-sm font-semibold text-slate-700 dark:text-slate-100">{it.name}</span>
+                  <span className="mt-0.5 block text-[10px] font-bold text-emerald-600/80 dark:text-emerald-400/80">Tap for recipe →</span>
+                </span>
+                <span className="shrink-0 text-right leading-tight">
+                  <span className="block text-sm font-extrabold text-amber-500">{it.kcal}<span className="text-[10px] font-bold text-slate-400"> kcal</span></span>
+                  <span className="block text-[11px] font-bold text-emerald-500">{it.protein}g protein</span>
+                </span>
+              </button>
             </li>
           ))}
         </ul>
@@ -65,6 +71,30 @@ export function DietPage() {
   const [plan, setPlan] = useState<DietPlan | null>(cached?.plan ?? null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  // recipe modal — opens when a dish is tapped
+  const [recipeDish, setRecipeDish] = useState<string | null>(null)
+  const [recipe, setRecipe] = useState<Recipe | null>(null)
+  const [recipeBusy, setRecipeBusy] = useState(false)
+  const [recipeErr, setRecipeErr] = useState('')
+
+  async function openRecipe(dish: string) {
+    setRecipeDish(dish); setRecipeErr('')
+    const key = 'recipe-' + dish.toLowerCase().trim()
+    const cached = load<Recipe | null>(key, null)
+    if (cached?.steps?.length) { setRecipe(cached); setRecipeBusy(false); return }
+    setRecipe(null); setRecipeBusy(true)
+    try {
+      const r = await recipeFor(dish, { diet, region })
+      if (!r.steps.length) { setRecipeErr('Could not load the recipe — please try again.'); return }
+      setRecipe(r)
+      save(key, r)
+    } catch (e) {
+      setRecipeErr(e instanceof AiError ? e.message : 'Could not reach the AI service. Check your connection.')
+    } finally {
+      setRecipeBusy(false)
+    }
+  }
 
   async function generate() {
     if (busy) return
@@ -200,10 +230,66 @@ export function DietPage() {
 
           {/* meals */}
           <div className="grid gap-4 lg:grid-cols-2">
-            {MEALS.map((m) => <MealCard key={m.key} emoji={m.emoji} label={m.label} items={plan[m.key]} />)}
+            {MEALS.map((m) => <MealCard key={m.key} emoji={m.emoji} label={m.label} items={plan[m.key]} onSelect={openRecipe} />)}
           </div>
         </div>
       )}
+
+      {/* recipe / preparation sheet — opens when a dish is tapped */}
+      <Modal open={!!recipeDish} onClose={() => setRecipeDish(null)} title={recipeDish ?? 'Recipe'}>
+        {recipeBusy ? (
+          <div className="animate-pulse space-y-3">
+            <div className="h-4 w-24 rounded bg-slate-500/15" />
+            <div className="h-3 w-full rounded bg-slate-500/10" />
+            <div className="h-3 w-5/6 rounded bg-slate-500/10" />
+            <div className="h-3 w-2/3 rounded bg-slate-500/10" />
+            <div className="h-3 w-4/5 rounded bg-slate-500/10" />
+          </div>
+        ) : recipeErr ? (
+          <div className="py-4 text-center">
+            <p className="text-sm font-semibold text-rose-500">{recipeErr}</p>
+            <Button onClick={() => recipeDish && openRecipe(recipeDish)} className="mt-3"><RefreshCw size={15} /> Try again</Button>
+          </div>
+        ) : recipe ? (
+          <div className="space-y-4">
+            {(recipe.time || recipe.servings) && (
+              <div className="flex flex-wrap gap-2">
+                {recipe.time && <span className="rounded-full bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-600 dark:text-amber-300">⏱ {recipe.time}</span>}
+                {recipe.servings && <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-300">🍽 {recipe.servings}</span>}
+              </div>
+            )}
+            {recipe.ingredients.length > 0 && (
+              <div>
+                <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Ingredients</div>
+                <ul className="space-y-1.5">
+                  {recipe.ingredients.map((ing, i) => (
+                    <li key={i} className="flex items-start gap-2.5">
+                      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                      <span className="break-words text-sm text-slate-700 dark:text-slate-200">{ing}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {recipe.steps.length > 0 && (
+              <div>
+                <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">How to prepare</div>
+                <ol className="space-y-2.5">
+                  {recipe.steps.map((st, i) => (
+                    <li key={i} className="flex gap-2.5">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-[11px] font-bold text-white">{i + 1}</span>
+                      <span className="break-words text-sm leading-relaxed text-slate-700 dark:text-slate-200">{st}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {recipe.tip && (
+              <div className="rounded-2xl bg-amber-400/10 px-3.5 py-2.5 text-sm text-amber-700 dark:text-amber-300">💡 {recipe.tip}</div>
+            )}
+          </div>
+        ) : null}
+      </Modal>
     </Page>
   )
 }

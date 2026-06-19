@@ -186,6 +186,36 @@ export async function indianDietPlan(
   }
 }
 
+export type Recipe = {
+  time: string
+  servings: string
+  ingredients: string[]
+  steps: string[]
+  tip: string
+}
+
+/** AI recipe — how to prepare a given dish, Indian home-cooking style. */
+export async function recipeFor(dish: string, ctx?: { diet?: string; region?: string }): Promise<Recipe> {
+  const extra = [
+    ctx?.region && ctx.region !== 'Any' ? `${ctx.region} style` : '',
+    ctx?.diet && ctx.diet !== 'Non-vegetarian' ? ctx.diet.toLowerCase() : '',
+  ].filter(Boolean).join(', ')
+  const prompt =
+    `Give a simple home recipe to prepare "${dish}"${extra ? ` (${extra})` : ''}, Indian home-cooking style. ` +
+    'Respond with ONLY a JSON object, no prose: {"time":"","servings":"","ingredients":["",""],"steps":["",""],"tip":""}. ' +
+    'time = total time like "20 min"; servings like "1 serving"; 5-12 ingredients with simple quantities; ' +
+    '4-9 clear steps (each step plain text, no leading numbers); tip = one short helpful tip. Keep it beginner-friendly.'
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
+  const o = parseJson<Record<string, unknown>>(raw)
+  return {
+    time: String(o?.time ?? '').trim(),
+    servings: String(o?.servings ?? '').trim(),
+    ingredients: arr(o?.ingredients).map((s) => s.trim()).filter(Boolean).slice(0, 16),
+    steps: arr(o?.steps).map((s) => s.trim()).filter(Boolean).slice(0, 12),
+    tip: String(o?.tip ?? '').trim(),
+  }
+}
+
 // Robust JSON extraction: handles ```json fences and stray prose around the
 // object, so a slightly messy model response still parses.
 function parseJson<T>(raw: string): T | null {
