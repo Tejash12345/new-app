@@ -8,12 +8,14 @@
  */
 type AppBridge = { postMessage: (msg: string) => void }
 
-export function pushNotification(title: string, body: string, tag?: string) {
-  // native Android app bridge (set up by the Flutter wrapper)
+export function pushNotification(title: string, body: string, tag?: string, route?: string) {
+  // native Android app bridge (set up by the Flutter wrapper). `route` lets a
+  // tap deep-link to the right page (e.g. the exact DM thread, Instagram-style)
+  // — main.dart's showAppNotification already reads `route` from this payload.
   try {
     const bridge = (window as unknown as { FLNotify?: AppBridge }).FLNotify
     if (bridge?.postMessage) {
-      bridge.postMessage(JSON.stringify({ title, body, tag }))
+      bridge.postMessage(JSON.stringify({ title, body, tag, route }))
       return
     }
   } catch { /* ignore */ }
@@ -21,7 +23,8 @@ export function pushNotification(title: string, body: string, tag?: string) {
   // browser
   try {
     if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(title, { body, tag })
+      const n = new Notification(title, { body, tag })
+      if (route) n.onclick = () => { try { window.focus() } catch { /* ignore */ } window.location.assign(route) }
     }
   } catch { /* ignore */ }
 }

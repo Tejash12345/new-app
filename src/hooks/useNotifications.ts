@@ -63,7 +63,8 @@ export function useDMNotifications() {
         : m.kind === 'file' ? `📎 ${m.file_name ?? 'File'}`
         : m.kind === 'post' ? '📨 Shared a post'
         : (m.body || '')
-      notify(`💬 ${name}`, preview, `dm-${m.sender_id}`)
+      // tapping it opens that exact conversation (Instagram-style)
+      notify(`💬 ${name}`, preview, `dm-${m.sender_id}`, `/chat?dm=${m.sender_id}`)
     }
 
     // 1) Supabase realtime — the always-available path (works even when the
@@ -116,7 +117,7 @@ export function useFriendRequestNotifications() {
           const k = `req-${r.id}`
           if (notified.current.has(k)) return
           notified.current.add(k)
-          notify('👋 New friend request', `${await nameOf(r.requester_id)} wants to connect on FocusLion.`, `friendreq-${r.id}`)
+          notify('👋 New friend request', `${await nameOf(r.requester_id)} wants to connect on FocusLion.`, `friendreq-${r.id}`, '/friends')
         })
       // a request YOU sent was accepted
       .on('postgres_changes',
@@ -127,7 +128,7 @@ export function useFriendRequestNotifications() {
           const k = `acc-${r.id}`
           if (notified.current.has(k)) return
           notified.current.add(k)
-          notify('✅ Friend request accepted', `${await nameOf(r.addressee_id)} accepted your request — say hi! 👋`, `friendacc-${r.id}`)
+          notify('✅ Friend request accepted', `${await nameOf(r.addressee_id)} accepted your request — say hi! 👋`, `friendacc-${r.id}`, `/chat?dm=${r.addressee_id}`)
         })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
