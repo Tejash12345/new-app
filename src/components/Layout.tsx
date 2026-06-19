@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, CalendarDays, CheckCircle2, Timer, Shield,
-  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard, Eye, Hourglass, GraduationCap, Briefcase, Rocket, BookOpen,
+  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard, Eye, Hourglass, GraduationCap, Briefcase, Rocket, BookOpen, Salad,
 } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
@@ -27,6 +27,7 @@ const NAV = [
   { to: '/capsule', label: 'Future Me', icon: Hourglass },
   { to: '/learn', label: 'Learn', icon: GraduationCap },
   { to: '/vocab', label: 'Word', icon: BookOpen },
+  { to: '/diet', label: 'Diet', icon: Salad },
   { to: '/career', label: 'Career', icon: Briefcase },
   { to: '/startup', label: 'Startup', icon: Rocket },
   { to: '/notes', label: 'Notes', icon: NotebookPen },

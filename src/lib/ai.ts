@@ -114,6 +114,57 @@ export async function wordOfTheDay(avoid: string[] = []): Promise<VocabWord> {
   }
 }
 
+export type DietItem = { name: string; kcal: number; protein: number }
+export type DietPlan = {
+  dailyCalories: number
+  dailyProtein: number
+  summary: string
+  breakfast: DietItem[]
+  lunch: DietItem[]
+  dinner: DietItem[]
+  snacks: DietItem[]
+}
+
+/**
+ * AI Indian healthy-diet planner — a one-day meal plan (breakfast/lunch/dinner
+ * + snacks) of everyday Indian foods, with calories & protein per dish and the
+ * recommended daily calorie/protein targets, tailored to a goal + diet type.
+ */
+export async function indianDietPlan(opts: { goal: string; diet: string }): Promise<DietPlan> {
+  const prompt =
+    `Create a realistic ONE-DAY healthy INDIAN diet plan for one person. Goal: ${opts.goal}. Diet preference: ${opts.diet}. ` +
+    'Use everyday Indian foods (e.g. poha, upma, idli, dosa, dal, roti, brown rice, paneer, curd, rajma, chana, sabzi, fruit; eggs/chicken/fish only if the diet preference allows). ' +
+    'Respond with ONLY a JSON object, no prose, in exactly this shape: ' +
+    '{"daily_calories":0,"daily_protein":0,"summary":"","breakfast":[{"name":"","kcal":0,"protein":0}],"lunch":[],"dinner":[],"snacks":[]}. ' +
+    'kcal = calories per serving, protein = grams of protein per serving (numbers only, realistic single-person portions). ' +
+    'Give 2-4 items per meal and 1-2 snacks. "summary" = one short sentence on the daily calorie & protein target and the approach.'
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
+  const o = parseJson<Record<string, unknown>>(raw)
+  const items = (v: unknown): DietItem[] =>
+    Array.isArray(v)
+      ? v
+          .map((x) => {
+            const r = (x ?? {}) as Record<string, unknown>
+            return {
+              name: String(r.name ?? '').trim(),
+              kcal: Math.max(0, Math.round(Number(r.kcal) || 0)),
+              protein: Math.max(0, Math.round(Number(r.protein) || 0)),
+            }
+          })
+          .filter((it) => it.name)
+          .slice(0, 6)
+      : []
+  return {
+    dailyCalories: Math.max(0, Math.round(Number(o?.daily_calories) || 0)),
+    dailyProtein: Math.max(0, Math.round(Number(o?.daily_protein) || 0)),
+    summary: String(o?.summary ?? '').trim(),
+    breakfast: items(o?.breakfast),
+    lunch: items(o?.lunch),
+    dinner: items(o?.dinner),
+    snacks: items(o?.snacks),
+  }
+}
+
 // Robust JSON extraction: handles ```json fences and stray prose around the
 // object, so a slightly messy model response still parses.
 function parseJson<T>(raw: string): T | null {

@@ -13,6 +13,7 @@ import { WellbeingPage } from './pages/WellbeingPage'
 import { CapsulePage } from './pages/CapsulePage'
 import { LearnPage } from './pages/LearnPage'
 import { VocabPage } from './pages/VocabPage'
+import { DietPage } from './pages/DietPage'
 import { CareerPage } from './pages/CareerPage'
 import { StartupPage } from './pages/StartupPage'
 import { NotesPage } from './pages/NotesPage'
@@ -53,6 +54,7 @@ function Gate() {
         <Route path="capsule" element={<CapsulePage />} />
         <Route path="learn" element={<LearnPage />} />
         <Route path="vocab" element={<VocabPage />} />
+        <Route path="diet" element={<DietPage />} />
         <Route path="career" element={<CareerPage />} />
         <Route path="startup" element={<StartupPage />} />
         <Route path="notes" element={<NotesPage />} />
