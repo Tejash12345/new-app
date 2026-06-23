@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { GraduationCap, Sparkles, Trash2, Check } from 'lucide-react'
+import { GraduationCap, Sparkles, Trash2, Check, BookOpen, ExternalLink } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { LearningPath, LearningStep } from '../lib/types'
@@ -26,13 +26,13 @@ export function LearnPage() {
     if (!t || !user || busy) return
     setBusy(true); setError('')
     try {
-      const { summary, steps } = await generateLearningPath(t, level)
+      const { summary, steps, resources } = await generateLearningPath(t, level)
       if (!steps.length) { setError('Could not generate a roadmap — try again or rephrase the topic.'); return }
       const withIds: LearningStep[] = steps.map((s) => ({ id: newId(), title: s.title, detail: s.detail, done: false }))
       // route through the useTable mutation so the query cache is invalidated on
       // success — the new roadmap shows up instantly instead of only after you
       // leave the page and come back (a plain supabase insert doesn't refresh it)
-      await insert({ topic: t, level, summary, steps: withIds } as Partial<LearningPath>)
+      await insert({ topic: t, level, summary, steps: withIds, resources } as Partial<LearningPath>)
       setTopic('')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reach the AI service.')
@@ -90,6 +90,7 @@ export function LearnPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           {paths.map((p) => {
             const steps = Array.isArray(p.steps) ? p.steps : []
+            const resources = Array.isArray(p.resources) ? p.resources : []
             const done = steps.filter((s) => s.done).length
             const pct = steps.length ? done / steps.length : 0
             return (
@@ -143,6 +144,39 @@ export function LearnPage() {
                       </div>
                     ))}
                   </div>
+
+                  {/* reference links — real resources (docs/courses/videos) the
+                      AI recommends for this topic. They open in a new tab on the
+                      web; inside the Android app the native WebView hands off-site
+                      links to the system browser (see focuslion_app main.dart). */}
+                  {resources.length > 0 && (
+                    <div className="mt-4 border-t border-slate-200/60 pt-3 dark:border-white/10">
+                      <p className="mb-2 flex items-center gap-1.5 text-xs font-bold text-slate-500">
+                        <BookOpen size={13} className="text-amber-500" /> Reference links
+                      </p>
+                      <div className="space-y-1">
+                        {resources.map((r, i) => (
+                          <a
+                            key={`${r.url}-${i}`}
+                            href={r.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="group flex items-center gap-2 rounded-xl px-2 py-1.5 transition hover:bg-amber-400/10"
+                          >
+                            {r.kind && (
+                              <span className="shrink-0 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-300">
+                                {r.kind}
+                              </span>
+                            )}
+                            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700 group-hover:text-amber-600 dark:text-slate-200 dark:group-hover:text-amber-300">
+                              {r.title}
+                            </span>
+                            <ExternalLink size={13} className="shrink-0 text-slate-400 group-hover:text-amber-500" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </GlassCard>
               </motion.div>
             )

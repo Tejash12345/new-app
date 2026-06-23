@@ -283,6 +283,9 @@ export type AiUsage = {
 
 export type LearningStep = { id: string; title: string; detail: string; done: boolean }
 
+/** A reference link the AI recommends for the topic — docs, course, video, etc. */
+export type LearningResource = { title: string; url: string; kind: string }
+
 export type LearningPath = {
   id: string
   user_id: string
@@ -290,6 +293,7 @@ export type LearningPath = {
   level: string
   summary: string
   steps: LearningStep[]
+  resources: LearningResource[]
   created_at: string
   updated_at: string
 }

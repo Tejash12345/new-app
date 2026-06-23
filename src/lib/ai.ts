@@ -60,19 +60,42 @@ export const explainConcept = (concept: string) => askLion({ task: 'explain', in
 export const dailyTip = () => askLion({ task: 'tip', input: 'Give me a productivity tip for today.' })
 export const dailyBriefing = (context: string) => askLion({ task: 'briefing', input: context })
 
-/** Generate an AI learning roadmap. Returns a summary + ordered steps. */
+/**
+ * Generate an AI learning roadmap. Returns a summary, ordered steps and a set
+ * of reference links (official docs, courses, videos…) the learner can open to
+ * actually study each part of the topic.
+ */
 export async function generateLearningPath(
   topic: string, level: string,
-): Promise<{ summary: string; steps: { title: string; detail: string }[] }> {
+): Promise<{
+  summary: string
+  steps: { title: string; detail: string }[]
+  resources: { title: string; url: string; kind: string }[]
+}> {
   const raw = await askLion({ task: 'learnpath', input: `Topic: ${topic}. Level: ${level}.` })
-  const obj = parseJson<{ summary?: unknown; steps?: { title?: unknown; detail?: unknown }[] }>(raw)
+  const obj = parseJson<{
+    summary?: unknown
+    steps?: { title?: unknown; detail?: unknown }[]
+    resources?: { title?: unknown; url?: unknown; kind?: unknown }[]
+  }>(raw)
   const steps = Array.isArray(obj?.steps) ? obj!.steps : []
+  const resources = Array.isArray(obj?.resources) ? obj!.resources : []
   return {
     summary: String(obj?.summary ?? `Your ${topic} roadmap`).slice(0, 240),
     steps: steps.slice(0, 14).map((s) => ({
       title: String(s?.title ?? 'Step').slice(0, 120),
       detail: String(s?.detail ?? '').slice(0, 280),
     })),
+    // only keep links with a safe http(s) URL — never render javascript:/data:
+    // links the model might emit, and cap the list so the card stays tidy
+    resources: resources
+      .map((r) => ({
+        title: String(r?.title ?? '').slice(0, 120).trim(),
+        url: String(r?.url ?? '').slice(0, 400).trim(),
+        kind: String(r?.kind ?? '').slice(0, 24).trim(),
+      }))
+      .filter((r) => r.title && /^https?:\/\/\S+$/i.test(r.url))
+      .slice(0, 8),
   }
 }
 

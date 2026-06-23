@@ -32,6 +32,9 @@ const AI_URL = `${BASE_URL}/chat/completions`
 // personalized and already cached per-day on the client.
 const CACHEABLE = ['summarize', 'hashtags', 'caption', 'explain', 'startup', 'career', 'learnpath']
 const JSON_TASKS = ['mission', 'learnpath', 'career', 'startup']
+// Bump when a task's prompt/response shape changes so stale cached answers in
+// the old format aren't served. (v2: learnpath now also returns reference links.)
+const PROMPT_VERSION = 'v2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -87,8 +90,14 @@ function systemFor(task: string): string {
     case 'learnpath':
       return `${BASE_PERSONA} Build a practical learning roadmap for the requested topic and level. ` +
         `Return STRICT JSON only, no markdown, with exactly: ` +
-        `{"summary": string (one sentence), "steps": [{"title": string, "detail": string}]} ` +
-        `with 8-12 ordered steps from basics to advanced, each detail one actionable sentence.`
+        `{"summary": string (one sentence), "steps": [{"title": string, "detail": string}], ` +
+        `"resources": [{"title": string, "url": string, "kind": string}]} ` +
+        `with 8-12 ordered steps from basics to advanced, each detail one actionable sentence. ` +
+        `"resources" = 4-6 high-quality REFERENCE LINKS for studying this topic — prefer official ` +
+        `documentation, well-known free courses/tutorials, and reputable YouTube videos. ` +
+        `Use only real, stable URLs you are confident exist (e.g. official docs sites, MDN, ` +
+        `freeCodeCamp, Coursera, official YouTube channels); never invent URLs or use placeholders. ` +
+        `"kind" is a one-word label like "Docs", "Course", "Video", "Article" or "Book".`
     case 'career':
       return `${BASE_PERSONA} You are an expert, encouraging career coach. Given a target role and the ` +
         `user's resume/skills, return STRICT JSON only, no markdown, with exactly: ` +
@@ -149,7 +158,7 @@ Deno.serve(async (req) => {
     const cacheable = CACHEABLE.includes(task) && !!input
     let cacheKey = ''
     if (cacheable) {
-      cacheKey = await sha256(`${MODEL}::${task}::${input}`)
+      cacheKey = await sha256(`${MODEL}::${PROMPT_VERSION}::${task}::${input}`)
       const { data: hit } = await admin.from('ai_cache').select('response').eq('cache_key', cacheKey).maybeSingle()
       if (hit?.response) {
         console.log(`[CACHE_HIT] task=${task} user=${user.id}`)
