@@ -3,13 +3,14 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, CalendarDays, CheckCircle2, Timer, Shield,
-  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard, Eye, Hourglass, GraduationCap, Briefcase, Rocket, BookOpen, Salad,
+  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard, Eye, Hourglass, GraduationCap, Briefcase, Rocket, BookOpen, Salad, Search,
 } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
 import { LionOverlay } from './LionOverlay'
 import { ScrollWatcher } from './ScrollWatcher'
 import { CommandPalette } from './CommandPalette'
+import { openSearch } from '../lib/search'
 import { Onboarding } from './Onboarding'
 import { PresenceTracker } from './PresenceTracker'
 import { StoryRing, useStories } from './Stories'
@@ -154,6 +155,23 @@ export function Layout() {
             {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
           </div>
           <div className="flex items-center gap-2">
+            {/* universal search — labelled pill on desktop, icon on mobile (the
+                Android WebView has no ⌘K, so a tappable button is essential) */}
+            <button
+              onClick={openSearch}
+              className="hidden items-center gap-2 rounded-full bg-slate-400/10 px-3.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-400/20 lg:flex dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10"
+            >
+              <Search size={16} />
+              <span>Search…</span>
+              <kbd className="ml-3 rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">⌘K</kbd>
+            </button>
+            <button
+              onClick={openSearch}
+              aria-label="Search"
+              className="rounded-full p-2.5 text-slate-500 hover:bg-slate-500/10 lg:hidden dark:text-slate-300"
+            >
+              <Search size={18} />
+            </button>
             <div className="hidden sm:flex items-center gap-1.5 rounded-full bg-amber-400/15 px-3 py-1.5 text-xs font-bold text-amber-600 dark:text-amber-300">
               ⭐ {profile?.xp ?? 0} XP · Lv {level}
             </div>
