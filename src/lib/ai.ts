@@ -240,18 +240,29 @@ export async function recipeFor(dish: string, ctx?: { diet?: string; region?: st
   const prompt =
     `Give a simple home recipe to prepare "${dish}"${extra ? ` (${extra})` : ''}, Indian home-cooking style. ` +
     simpleLine + langLine +
-    'Respond with ONLY a JSON object, no prose: {"time":"","servings":"","ingredients":["",""],"steps":["",""],"tip":""}. ' +
-    'time = total time like "20 min"; servings like "1 serving"; 5-12 ingredients with simple quantities; ' +
-    '4-9 clear steps (each step plain text, no leading numbers); tip = one short helpful tip. Keep it beginner-friendly.'
-  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
-  const o = parseJson<Record<string, unknown>>(raw)
-  return {
-    time: String(o?.time ?? '').trim(),
-    servings: String(o?.servings ?? '').trim(),
-    ingredients: arr(o?.ingredients).map((s) => s.trim()).filter(Boolean).slice(0, 16),
-    steps: arr(o?.steps).map((s) => s.trim()).filter(Boolean).slice(0, 12),
-    tip: String(o?.tip ?? '').trim(),
+    'Respond with ONLY a JSON object, no prose, no markdown: {"time":"","servings":"","ingredients":["",""],"steps":["",""],"tip":""}. ' +
+    // Keep it SHORT: non-Latin scripts (Telugu/Hindi/Tamil…) use ~3-4x more tokens,
+    // and a long recipe overflows the model's output limit mid-JSON → unparseable
+    // → "Could not load the recipe". A concise recipe reliably fits.
+    'Keep it SHORT so the whole reply fits: time like "20 min"; servings like "1 serving"; ' +
+    '5-8 ingredients (a few words each); 4-6 short steps (ONE short sentence each, plain text, no leading numbers); ' +
+    'tip = one short line. Write the native script directly; do NOT use \\u escape codes.'
+  const parse = (raw: string): Recipe => {
+    const o = parseJson<Record<string, unknown>>(raw)
+    return {
+      time: String(o?.time ?? '').trim(),
+      servings: String(o?.servings ?? '').trim(),
+      ingredients: arr(o?.ingredients).map((s) => s.trim()).filter(Boolean).slice(0, 16),
+      steps: arr(o?.steps).map((s) => s.trim()).filter(Boolean).slice(0, 12),
+      tip: String(o?.tip ?? '').trim(),
+    }
   }
+  let recipe = parse(await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] }))
+  // the 8B model occasionally returns malformed/truncated JSON — one clean retry
+  if (!recipe.steps.length) {
+    recipe = parse(await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] }))
+  }
+  return recipe
 }
 
 // Robust JSON extraction: handles ```json fences and stray prose around the
