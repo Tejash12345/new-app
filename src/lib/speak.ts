@@ -105,6 +105,9 @@ class Speech {
         }
         synth.speak(u)
       })
+      // Chrome quirk: after a previous pause()+cancel() the engine can stay
+      // internally paused, so a fresh speak() is silent. resume() clears it.
+      synth.resume()
       this.set('playing')
       return
     }
