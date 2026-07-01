@@ -189,7 +189,12 @@ Deno.serve(async (req) => {
       max_tokens:
         task === 'startup' || task === 'career' || task === 'learnpath' ? 2048
         : task === 'mission' ? 1024
-        : task === 'chat' ? 1024
+        // 'chat' also carries the Diet planner & recipe JSON. Non-English recipes
+        // (Telugu/Hindi/Tamil…) tokenize ~3-4x heavier than English, so 1024 tokens
+        // truncated them mid-string → invalid JSON → "Could not load the recipe".
+        // 3072 leaves room for Indic-script output while staying well under the
+        // ~150s Edge Function worker limit on a fast instruct model.
+        : task === 'chat' ? 3072
         : 512,
       stream: false,
       ...(JSON_TASKS.includes(task) ? { response_format: { type: 'json_object' } } : {}),
