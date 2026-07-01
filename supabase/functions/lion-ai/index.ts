@@ -19,11 +19,12 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// Fast NVIDIA NIM instruct model. Do NOT use a DeepSeek/MiniMax *reasoning*
-// model here: their long hidden <think> chains make a single call take 2-3 min,
-// which blows past the Edge Function worker time limit (~150s) and returns a
-// 546 WORKER_RESOURCE_LIMIT error to the app ("AI not working / too slow").
-const MODEL = Deno.env.get('NVIDIA_MODEL') ?? 'meta/llama-3.3-70b-instruct'
+// Fast, multilingual NVIDIA NIM model. Llama 4 Maverick is a MoE model: quick
+// like a small model (~4-7s) but strong at Indic languages (Telugu/Hindi/Tamil…)
+// so recipes come out correct + in good native script. Do NOT use a
+// DeepSeek/MiniMax *reasoning* model (long hidden <think> chains take 2-3 min →
+// 546 WORKER_RESOURCE_LIMIT), and NOT a dense 70B (too slow on free tier → 546).
+const MODEL = Deno.env.get('NVIDIA_MODEL') ?? 'meta/llama-4-maverick-17b-128e-instruct'
 // Prefer NVIDIA_API_KEY; fall back to GEMINI_API_KEY so an already-set secret
 // keeps working if you only swapped its value to the nvapi-… key.
 const AI_API_KEY = Deno.env.get('NVIDIA_API_KEY') ?? Deno.env.get('GEMINI_API_KEY') ?? ''
