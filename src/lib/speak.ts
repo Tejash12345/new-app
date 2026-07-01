@@ -44,12 +44,19 @@ type Listener = (s: SpeechState) => void
 class Speech {
   state: SpeechState = 'idle'
   private listeners = new Set<Listener>()
+  private noVoiceListeners = new Set<(lang: string) => void>()
   private mode: 'web' | 'native' | 'native-basic' | 'none' = 'none'
   private gen = 0 // invalidates stale onend callbacks after stop()/replay
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn)
     return () => { this.listeners.delete(fn) }
+  }
+
+  /** Fires when the native side reports the device has no voice for a language. */
+  onNoVoice(fn: (lang: string) => void): () => void {
+    this.noVoiceListeners.add(fn)
+    return () => { this.noVoiceListeners.delete(fn) }
   }
   private set(s: SpeechState) {
     if (this.state === s) return
@@ -76,6 +83,12 @@ class Speech {
       this.mode = 'native'
       ;(window as unknown as { __flSpeakEnded?: () => void }).__flSpeakEnded = () => {
         if (g === this.gen) this.set('idle')
+      }
+      // native tells us if the device has no TTS voice for this language
+      ;(window as unknown as { __flSpeakNoVoice?: (l: string) => void }).__flSpeakNoVoice = (l) => {
+        if (g !== this.gen) return
+        this.set('idle')
+        this.noVoiceListeners.forEach((fn) => fn(l))
       }
       bridge()!.postMessage(JSON.stringify({ a: 'speak', text: t, lang, rate: 0.92 }))
       this.set('playing')

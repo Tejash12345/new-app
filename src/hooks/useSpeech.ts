@@ -7,8 +7,11 @@ import { speech, type SpeechState } from '../lib/speak'
  */
 export function useSpeech() {
   const [state, setState] = useState<SpeechState>(speech.state)
+  // true when the device has no TTS voice for the language just requested (silent)
+  const [noVoice, setNoVoice] = useState(false)
 
   useEffect(() => speech.subscribe(setState), [])
+  useEffect(() => speech.onNoVoice(() => setNoVoice(true)), [])
   useEffect(() => () => speech.stop(), [])
 
   return {
@@ -17,9 +20,13 @@ export function useSpeech() {
     isPaused: state === 'paused',
     isIdle: state === 'idle',
     canControl: speech.canControl,
-    play: useCallback((text: string, lang?: string) => speech.play(text, lang), []),
+    noVoice,
+    play: useCallback((text: string, lang?: string) => {
+      setNoVoice(false)
+      speech.play(text, lang)
+    }, []),
     pause: useCallback(() => speech.pause(), []),
     resume: useCallback(() => speech.resume(), []),
-    stop: useCallback(() => speech.stop(), []),
+    stop: useCallback(() => { setNoVoice(false); speech.stop() }, []),
   }
 }

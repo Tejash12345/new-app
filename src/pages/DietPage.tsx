@@ -292,6 +292,13 @@ export function DietPage() {
                 )}
               </div>
             </div>
+            {voice.noVoice && (
+              <div className="rounded-2xl bg-amber-400/10 px-3.5 py-2.5 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+                🔇 Your phone doesn't have the <b>{language}</b> voice installed, so it can't read this aloud yet.
+                Install it once: <b>Settings → General management → Text-to-speech</b> (or Accessibility → Text-to-speech) →
+                tap the gear next to <b>Google Text-to-speech</b> → <b>Install voice data</b> → {language}. Then tap Listen again.
+              </div>
+            )}
             {(recipe.time || recipe.servings || language !== 'English') && (
               <div className="flex flex-wrap gap-2">
                 {recipe.time && <span className="rounded-full bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-600 dark:text-amber-300">⏱ {recipe.time}</span>}
