@@ -1,9 +1,20 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { Salad, Sparkles, RefreshCw } from 'lucide-react'
+import { Salad, Sparkles, RefreshCw, Volume2, Play, Pause, Square } from 'lucide-react'
 import { Page, GlassCard, Button, Empty, SectionTitle, Input, Modal } from '../components/ui'
 import { indianDietPlan, recipeFor, AiError, type DietPlan, type DietItem, type Recipe } from '../lib/ai'
+import { useSpeech } from '../hooks/useSpeech'
 import { cn } from '../lib/utils'
+
+// Build a natural, spoken narration of a recipe for the voice reader: dish
+// name, then ingredients, then numbered steps, then the tip.
+function recipeNarration(dish: string, r: Recipe): string {
+  const parts: string[] = [dish]
+  if (r.ingredients.length) parts.push(r.ingredients.join(', '))
+  r.steps.forEach((s, i) => parts.push(`${i + 1}. ${s}`))
+  if (r.tip) parts.push(r.tip)
+  return parts.join('. ')
+}
 
 const GOALS = ['Stay fit', 'Lose weight', 'Build muscle', 'General health']
 const DIETS = ['Vegetarian', 'Non-vegetarian', 'Eggetarian', 'Vegan']
@@ -95,10 +106,13 @@ export function DietPage() {
   const [recipe, setRecipe] = useState<Recipe | null>(null)
   const [recipeBusy, setRecipeBusy] = useState(false)
   const [recipeErr, setRecipeErr] = useState('')
+  const voice = useSpeech()
 
   async function openRecipe(dish: string) {
+    voice.stop() // silence any recipe currently being read
     setRecipeDish(dish); setRecipeErr('')
-    const key = `recipe-${language.toLowerCase()}-${dish.toLowerCase().trim()}`
+    // v2: simpler, modern-language recipes — bust older cached wording
+    const key = `recipe-v2-${language.toLowerCase()}-${dish.toLowerCase().trim()}`
     const cached = load<Recipe | null>(key, null)
     if (cached?.steps?.length) { setRecipe(cached); setRecipeBusy(false); return }
     setRecipe(null); setRecipeBusy(true)
@@ -240,7 +254,7 @@ export function DietPage() {
       )}
 
       {/* recipe / preparation sheet — opens when a dish is tapped */}
-      <Modal open={!!recipeDish} onClose={() => setRecipeDish(null)} title={recipeDish ?? 'Recipe'}>
+      <Modal open={!!recipeDish} onClose={() => { voice.stop(); setRecipeDish(null) }} title={recipeDish ?? 'Recipe'}>
         {recipeBusy ? (
           <div className="animate-pulse space-y-3">
             <div className="h-4 w-24 rounded bg-slate-500/15" />
@@ -256,6 +270,28 @@ export function DietPage() {
           </div>
         ) : recipe ? (
           <div className="space-y-4">
+            {/* voice reader — reads the recipe aloud in the chosen language */}
+            <div className="flex items-center gap-2 rounded-2xl bg-brand-500/10 px-3 py-2">
+              <Volume2 size={16} className="shrink-0 text-brand-500" />
+              <span className="text-xs font-bold text-brand-600 dark:text-brand-300">Listen to this recipe</span>
+              <div className="ml-auto flex items-center gap-1.5">
+                {voice.isIdle || !voice.canControl ? (
+                  <Button size="sm" variant="soft"
+                    onClick={() => recipeDish && voice.play(recipeNarration(recipeDish, recipe), language)}>
+                    <Play size={14} /> Listen
+                  </Button>
+                ) : (
+                  <>
+                    {voice.isPlaying ? (
+                      <Button size="sm" variant="soft" onClick={voice.pause}><Pause size={14} /> Pause</Button>
+                    ) : (
+                      <Button size="sm" variant="soft" onClick={voice.resume}><Play size={14} /> Resume</Button>
+                    )}
+                    <Button size="sm" variant="danger" onClick={voice.stop}><Square size={13} /> Stop</Button>
+                  </>
+                )}
+              </div>
+            </div>
             {(recipe.time || recipe.servings || language !== 'English') && (
               <div className="flex flex-wrap gap-2">
                 {recipe.time && <span className="rounded-full bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-600 dark:text-amber-300">⏱ {recipe.time}</span>}

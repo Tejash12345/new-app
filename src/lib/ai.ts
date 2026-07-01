@@ -224,13 +224,22 @@ export async function recipeFor(dish: string, ctx?: { diet?: string; region?: st
     ctx?.diet && ctx.diet !== 'Non-vegetarian' ? ctx.diet.toLowerCase() : '',
   ].filter(Boolean).join(', ')
   const lang = (ctx?.language ?? 'English').trim()
+  // Read easily on a phone AND sound natural when spoken aloud by the voice
+  // reader: use simple, modern, everyday words — not old/bookish/literary ones.
+  const simpleLine =
+    'Use very simple, modern, everyday language a school student or first-time cook understands. ' +
+    'Short, clear sentences and common words. '
   const langLine =
     lang && lang.toLowerCase() !== 'english'
-      ? `Write ALL values — time, servings, ingredients, steps and the tip — in ${lang}, using that language's native script. Keep the JSON keys in English. `
+      ? `Write ALL values — time, servings, ingredients, steps and the tip — in ${lang} using its native script, ` +
+        `in the simple, casual, spoken style people actually use today — NOT old-fashioned, literary or heavily ` +
+        `Sanskritised ${lang}. Prefer the common everyday word over the formal/pure one, and it's fine to keep ` +
+        `widely-used English kitchen words (oil, pan, mix, stove, minutes) as people normally say them. ` +
+        `Keep the JSON keys in English. `
       : ''
   const prompt =
     `Give a simple home recipe to prepare "${dish}"${extra ? ` (${extra})` : ''}, Indian home-cooking style. ` +
-    langLine +
+    simpleLine + langLine +
     'Respond with ONLY a JSON object, no prose: {"time":"","servings":"","ingredients":["",""],"steps":["",""],"tip":""}. ' +
     'time = total time like "20 min"; servings like "1 serving"; 5-12 ingredients with simple quantities; ' +
     '4-9 clear steps (each step plain text, no leading numbers); tip = one short helpful tip. Keep it beginner-friendly.'
