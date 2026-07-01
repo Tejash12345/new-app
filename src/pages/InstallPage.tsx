@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { Download, Smartphone, Share, Plus, Shield, CheckCircle2 } from 'lucide-react'
 import { GlassCard, Page, SectionTitle, Button } from '../components/ui'
+import { APP_VERSION } from '../version'
 
 export function InstallPage() {
   const [qr, setQr] = useState('')
@@ -75,6 +76,7 @@ export function InstallPage() {
           <p className="mt-2 text-xs text-slate-400">
             Android asks to allow "Install unknown apps" the first time — tap Allow, then Install.
           </p>
+          <p className="mt-2 text-center text-[11px] font-semibold text-slate-400">Version {APP_VERSION}</p>
 
           <div className="mt-4 flex items-start gap-2.5 rounded-2xl bg-amber-400/10 px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
             <Shield size={16} className="mt-0.5 shrink-0 text-amber-500" />
