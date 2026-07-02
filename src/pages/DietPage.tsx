@@ -178,7 +178,7 @@ export function DietPage() {
               {REGIONS.map((rg) => <Pill key={rg} active={region === rg} onClick={() => setRegion(rg)}>{rg}</Pill>)}
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <Label>Age</Label>
               <Input type="number" inputMode="numeric" min={5} max={100} value={age}
@@ -247,7 +247,7 @@ export function DietPage() {
           </GlassCard>
 
           {/* meals */}
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {MEALS.map((m) => <MealCard key={m.key} emoji={m.emoji} label={m.label} items={plan[m.key]} onSelect={openRecipe} />)}
           </div>
         </div>
@@ -309,7 +309,7 @@ export function DietPage() {
             {recipe.ingredients.length > 0 && (
               <div>
                 <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Ingredients</div>
-                <ul className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+                <ul className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
                   {recipe.ingredients.map((ing, i) => (
                     <li key={i} className="flex items-start gap-2.5">
                       <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />

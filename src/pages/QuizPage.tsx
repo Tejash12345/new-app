@@ -741,7 +741,7 @@ export function QuizPage() {
   return (
     <Page title="Quiz Arena" subtitle="Pick any topic — Leo builds the quiz, you earn the XP. ⚔️">
       {phase === 'setup' && (
-        <div className="grid gap-5 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
           {stage === 'pick' ? (
             <GlassCard className="min-w-0 lg:col-span-2">
               <SectionTitle>Pick your exam</SectionTitle>

@@ -110,7 +110,7 @@ export function SettingsPage() {
 
   return (
     <Page title="Settings" subtitle="Profile, notifications and preferences.">
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <GlassCard>
           <SectionTitle>Profile</SectionTitle>
           <div className="mb-4 flex items-center gap-4">
@@ -227,7 +227,7 @@ export function SettingsPage() {
           {'Notification' in window && Notification.permission === 'default' && (
             <Button variant="soft" className="mb-4" onClick={requestNotifPermission}>Enable browser notifications</Button>
           )}
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {notifRows.map((r) => (
               <div key={r.key} className="flex items-center justify-between rounded-2xl bg-white/40 dark:bg-white/5 px-4 py-3">
                 <div>

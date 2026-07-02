@@ -82,7 +82,7 @@ export function ArenaPage() {
 
   return (
     <Page title="Arena" subtitle="Earn XP, unlock badges, climb the leaderboard. 🏆">
-      <div className="grid gap-5 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* level card */}
         <GlassCard className="flex items-center gap-5">
           <ProgressRing size={96} stroke={10} progress={levelProgress(xp)} color="#FFB454" label={`Lv ${level}`} sub={levelTitle(level)} />

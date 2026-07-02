@@ -117,7 +117,7 @@ export function Dashboard() {
         ))}
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* today timetable */}
         <GlassCard className="lg:col-span-2">
           <SectionTitle right={<Link to="/planner" className="flex items-center gap-1 text-sm font-semibold text-brand-500 hover:underline">Open planner <ArrowRight size={14} /></Link>}>

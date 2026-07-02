@@ -87,14 +87,18 @@ export function LearnPage() {
           <Empty emoji="📚" text={'No learning paths yet.\nPick a skill above and let Leo build your roadmap.'} />
         </GlassCard>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* grid-cols-1 (minmax(0,1fr)) is required above: a bare `grid` leaves the
+              mobile column as an implicit `auto` track that grows to the widest
+              intrinsic content (e.g. nowrap `truncate` resource titles) and pushes
+              the whole card past the right edge of a 360px screen */}
           {paths.map((p) => {
             const steps = Array.isArray(p.steps) ? p.steps : []
             const resources = Array.isArray(p.resources) ? p.resources : []
             const done = steps.filter((s) => s.done).length
             const pct = steps.length ? done / steps.length : 0
             return (
-              <motion.div key={p.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
+              <motion.div key={p.id} className="min-w-0" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
                 <GlassCard float>
                   <div className="flex items-start gap-3 sm:gap-4">
                     <ProgressRing progress={pct} size={56} stroke={6} color="#FFB454" label={`${Math.round(pct * 100)}%`} />

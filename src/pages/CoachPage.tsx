@@ -167,7 +167,7 @@ export function CoachPage() {
 
   return (
     <Page title="Coach Leo" subtitle="Your AI mentor — sees your real progress and tailors advice on study, focus, career & more.">
-      <div className="grid gap-5 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* chat */}
         <GlassCard className="flex h-[34rem] flex-col lg:col-span-2">
           <div className="mb-2 flex items-center justify-between">

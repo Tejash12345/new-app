@@ -141,7 +141,7 @@ export function FocusPage() {
 
   return (
     <Page title="Focus" subtitle={`${minutesToLabel(todayMin)} focused today. Every minute counts.`}>
-      <div className="grid gap-5 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         <GlassCard className="lg:col-span-2 flex flex-col items-center py-10">
           <div className="mb-6 flex flex-wrap justify-center gap-2">
             {PRESETS.map((p) => (

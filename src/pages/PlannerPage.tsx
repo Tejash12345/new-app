@@ -175,7 +175,7 @@ export function PlannerPage() {
           </GlassCard>
         </>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           {DAYS.map((d, i) => (
             <GlassCard key={d} className="!p-3">
               <div className="mb-2 text-center text-sm font-extrabold text-slate-700 dark:text-slate-200">{d}</div>

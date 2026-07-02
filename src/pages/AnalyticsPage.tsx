@@ -75,7 +75,7 @@ export function AnalyticsPage() {
         </GlassCard>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <GlassCard>
           <SectionTitle>Study vs social — this week</SectionTitle>
           <div className="h-64">
@@ -119,7 +119,7 @@ export function AnalyticsPage() {
 
         <GlassCard className="lg:col-span-2">
           <SectionTitle>Weekly report</SectionTitle>
-          <div className="grid gap-3 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2">
             <p>📚 You studied <b>{minutesToLabel(weekStudy)}</b> across {sessions.filter((s) => s.started_at.slice(0, 10) >= weekStart).length} sessions this week.</p>
             <p>📱 Social media: <b>{minutesToLabel(weekSocial)}</b> — {focusScore >= 60 ? 'great balance! 🦁' : 'the lion suggests less scrolling. 🦁'}</p>
             <p>✅ Tasks completed this week: <b>{doneWeek}</b> of {totalWeek || '—'}.</p>

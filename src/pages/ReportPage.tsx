@@ -96,7 +96,7 @@ export function ReportPage() {
         </div>
       }
     >
-      <div className="grid gap-5 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* report card */}
         <GlassCard className="lg:col-span-2">
           <div className="flex flex-wrap items-start justify-between gap-3">

@@ -150,7 +150,7 @@ export function InsightsPage() {
         </GlassCard>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* AI report */}
         <GlassCard className="lg:col-span-2">
           <SectionTitle right={report && !loading ? (
@@ -166,7 +166,7 @@ export function InsightsPage() {
               <p className="mt-1 text-sm text-slate-500">Study hours, tasks, habits and moods — all of it.</p>
             </div>
           ) : report ? (
-            <div className="grid gap-5 sm:grid-cols-[auto_1fr]">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-[auto_1fr]">
               <div className="flex flex-col items-center gap-2">
                 <ProgressRing size={104} stroke={11} progress={report.weekScore / 100}
                   color={report.weekScore >= 70 ? '#10b981' : report.weekScore >= 40 ? '#FFB454' : '#f43f5e'}

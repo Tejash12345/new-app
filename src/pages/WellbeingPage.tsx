@@ -195,7 +195,7 @@ export function WellbeingPage() {
       </div>
 
       <SectionTitle>App limits</SectionTitle>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {SOCIAL_APPS.map((app) => {
           const lim = limitFor(app.name)
           const enabled = lim?.enabled ?? false

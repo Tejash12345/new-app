@@ -28,7 +28,7 @@ export function InstallPage() {
 
   return (
     <Page title="Get the App" subtitle="Install FocusLion on your phone — pick what suits you. 🦁">
-      <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-2">
         {/* Option 1: Install as app (PWA) */}
         <GlassCard className="overflow-hidden">
           <SectionTitle>

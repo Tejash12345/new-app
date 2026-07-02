@@ -476,7 +476,7 @@ function FriendsChat() {
 
   // mobile: show list OR thread
   return (
-    <div className="grid gap-5 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div className={cn('lg:col-span-1', active && 'hidden lg:block')}>
         <GlassCard className="!p-3">
           <div className="mb-2 px-2 text-xs font-bold uppercase tracking-widest text-slate-400">Friends</div>
@@ -794,7 +794,7 @@ function RoomsChat() {
   const grouped = messages.map((m, i) => ({ ...m, showHeader: i === 0 || messages[i - 1].user_id !== m.user_id }))
 
   return (
-    <div className="grid gap-5 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-4">
       <div className="lg:col-span-1">
         <GlassCard className="!p-3">
           <div className="mb-2 px-2 text-xs font-bold uppercase tracking-widest text-slate-400">Rooms</div>

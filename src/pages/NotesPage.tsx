@@ -72,7 +72,7 @@ function NotesTab() {
       {rows.length === 0 ? (
         <GlassCard><Empty emoji="📝" text="No notes yet. Capture ideas, summaries and class notes here." /></GlassCard>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {rows.map((n) => (
             <GlassCard key={n.id} float onClick={() => openEditor(n)} className="relative !p-4" >
               <div className="absolute left-0 top-0 h-1.5 w-full rounded-t-3xl" style={{ background: NOTE_COLORS[n.color % NOTE_COLORS.length] }} />
@@ -216,7 +216,7 @@ function FlashcardsTab() {
       {cards.length === 0 ? (
         <GlassCard><Empty emoji="🃏" text={'No flashcards yet.\nGreat for formulas, vocabulary and definitions!'} /></GlassCard>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {cards.map((c) => (
             <GlassCard key={c.id} className="group relative !p-4">
               <div className="text-xs font-bold uppercase tracking-wide text-brand-500">{c.deck}</div>
@@ -450,7 +450,7 @@ function JournalTab() {
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <GlassCard>
         <h3 className="mb-3 font-bold text-slate-900 dark:text-white">How do you feel today?</h3>
         <div className="mb-5 flex justify-around">
