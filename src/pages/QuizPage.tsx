@@ -37,6 +37,7 @@ const QTYPE_STYLE: Record<string, string> = {
   'ECG Interpretation': 'EVERY question must DESCRIBE an ECG finding in words (rate, rhythm, PR/QRS, ST changes, characteristic pattern) and ask for the interpretation or the priority nursing action. Do NOT reference an image the student cannot see — describe the tracing fully in text.',
   'X-Ray Interpretation': 'EVERY question must DESCRIBE a chest X-ray / radiograph finding in words and ask for the likely diagnosis or nursing implication. Describe the finding fully in text — never reference an unseen image.',
   'Instrument Identification': 'EVERY question must describe a medical/surgical instrument or equipment by its use and features and ask the student to identify it, or ask about its correct use/care. Describe it in words — never reference an unseen image.',
+  'Output Prediction': 'EVERY question must show a short code snippet (in the chosen language) in the question text and ask what it prints/returns or whether it errors; the explanation must trace the code.',
 }
 
 // PYQ year filter (shown in Previous-year mode)
@@ -51,8 +52,6 @@ const SOURCE_STYLE: Record<string, string> = {
   Rapid: 'Generate RAPID-REVISION one-liners — short, high-yield factual questions that can be answered quickly.',
 }
 
-/** seconds per question in mock mode — real NORCET/NEET pace (~72s) */
-const MOCK_SECONDS_PER_Q = 72
 
 // ---- local revision stores (bookmarks + wrong questions), no backend needed ----
 type SavedQ = QuizQuestion & { topic: string }
@@ -74,7 +73,14 @@ type ExamSpec = {
   qtypes?: string[]
   /** quick topic chips per subject — the Subject → Topic hierarchy */
   topics?: Record<string, string[]>
+  /** real exam pace, seconds per question (drives the mock timer) */
+  secondsPerQ?: number
+  /** short real-pattern label shown under the exam header, e.g. "200 Q · 200 min" */
+  pattern?: string
 }
+
+/** the mock timer falls back to this when an exam has no secondsPerQ set */
+const DEFAULT_SECONDS_PER_Q = 60
 
 const EXAMS: ExamSpec[] = [
   {
@@ -82,11 +88,12 @@ const EXAMS: ExamSpec[] = [
     subjects: ['Botany', 'Zoology', 'Physics', 'Chemistry', 'Mixed'],
     style: 'NEET-UG (India medical entrance) exam pattern — NCERT Class 11-12 syllabus, single-correct MCQs like the real paper',
     qtypes: ['Standard MCQ', 'Assertion-Reason', 'Statement Based'],
+    secondsPerQ: 60, pattern: '200 Q · 200 min · +4 / −1',
     topics: {
-      Botany: ['Photosynthesis', 'Plant Kingdom', 'Cell Biology', 'Genetics & Evolution', 'Plant Physiology', 'Ecology'],
-      Zoology: ['Human Physiology', 'Animal Kingdom', 'Reproduction', 'Biotechnology', 'Human Health & Disease'],
-      Physics: ['Mechanics', 'Thermodynamics', 'Electrostatics', 'Current Electricity', 'Optics', 'Modern Physics'],
-      Chemistry: ['Organic Chemistry', 'Chemical Bonding', 'Equilibrium', 'Coordination Compounds', 'Biomolecules'],
+      Botany: ['Photosynthesis', 'Plant Kingdom', 'Cell Biology', 'Genetics & Evolution', 'Plant Physiology', 'Ecology', 'Molecular Biology', 'Morphology of Plants'],
+      Zoology: ['Human Physiology', 'Animal Kingdom', 'Reproduction', 'Biotechnology', 'Human Health & Disease', 'Evolution', 'Biomolecules', 'Neural Control'],
+      Physics: ['Mechanics', 'Thermodynamics', 'Electrostatics', 'Current Electricity', 'Magnetism', 'Optics', 'Modern Physics', 'Semiconductors'],
+      Chemistry: ['Organic Chemistry', 'Chemical Bonding', 'Equilibrium', 'Coordination Compounds', 'Biomolecules', 'Thermodynamics', 'Electrochemistry', 'p-Block Elements'],
     },
   },
   {
@@ -94,10 +101,11 @@ const EXAMS: ExamSpec[] = [
     subjects: ['Physics', 'Chemistry', 'Maths', 'Mixed'],
     style: 'JEE Main (India engineering entrance) exam pattern — Class 11-12 syllabus, conceptual and numerical single-correct MCQs',
     qtypes: ['Standard MCQ', 'Numerical Value', 'Assertion-Reason'],
+    secondsPerQ: 120, pattern: '90 Q · 180 min · +4 / −1',
     topics: {
-      Physics: ['Kinematics', 'Rotational Motion', 'Thermodynamics', 'Electromagnetism', 'Optics', 'Modern Physics'],
-      Chemistry: ['Physical Chemistry', 'Organic Chemistry', 'Inorganic Chemistry', 'Equilibrium', 'Electrochemistry'],
-      Maths: ['Calculus', 'Coordinate Geometry', 'Algebra', 'Trigonometry', 'Vectors & 3D', 'Probability'],
+      Physics: ['Kinematics', 'Rotational Motion', 'Thermodynamics', 'Electromagnetism', 'Optics', 'Modern Physics', 'Waves & SHM', 'Current Electricity'],
+      Chemistry: ['Physical Chemistry', 'Organic Chemistry', 'Inorganic Chemistry', 'Equilibrium', 'Electrochemistry', 'Chemical Kinetics', 'Coordination Compounds', 'Thermodynamics'],
+      Maths: ['Calculus', 'Coordinate Geometry', 'Algebra', 'Trigonometry', 'Vectors & 3D', 'Probability', 'Complex Numbers', 'Matrices & Determinants'],
     },
   },
   {
@@ -115,6 +123,7 @@ const EXAMS: ExamSpec[] = [
       'Health Education', 'Environmental Hygiene',
     ],
     style: 'NORCET / AIIMS Nursing Officer exam pattern — clinical, applied nursing questions exactly like the real recruitment exam, with AIIMS-favourite points',
+    secondsPerQ: 54, pattern: '100 Q · 90 min · +1 / −⅓',
     qtypes: [
       'Standard MCQ', 'Clinical Scenario', 'Priority Question', 'Drug Dose & Calculation', 'Case Study',
       'Assertion & Reason', 'Match the Following', 'Multiple Correct', 'Fill in the Blank',
@@ -179,82 +188,201 @@ const EXAMS: ExamSpec[] = [
     key: 'upsc', name: 'UPSC', emoji: '🏛️', tagline: 'Civil services',
     subjects: ['Polity', 'History', 'Geography', 'Economy', 'Environment', 'Science & Tech', 'Art & Culture', 'Mixed'],
     style: 'UPSC Civil Services Prelims (GS Paper 1) pattern — analytical, statement-based questions where suitable',
-    qtypes: ['Standard MCQ', 'Statement Based', 'Match the Following'],
+    qtypes: ['Standard MCQ', 'Statement Based', 'Match the Following', 'Assertion & Reason'],
+    secondsPerQ: 72, pattern: 'Prelims GS-I: 100 Q · 120 min · +2 / −⅔',
+    topics: {
+      Polity: ['Constitution & Amendments', 'Fundamental Rights', 'Parliament', 'Judiciary', 'Federalism', 'Local Government', 'Elections'],
+      History: ['Ancient India', 'Medieval India', 'Modern India', 'Freedom Struggle', 'Post-Independence', 'Indian National Movement'],
+      Geography: ['Physical Geography', 'Indian Geography', 'World Geography', 'Climatology', 'Resources', 'Agriculture'],
+      Economy: ['Basic Concepts', 'Banking & Finance', 'Budget & Taxation', 'Planning', 'External Sector', 'Government Schemes'],
+      Environment: ['Ecology', 'Biodiversity', 'Climate Change', 'Conservation', 'Pollution', 'Environmental Laws'],
+      'Science & Tech': ['Space & Defence', 'Biotechnology', 'IT & Computers', 'Health & Diseases', 'Recent Innovations'],
+      'Art & Culture': ['Architecture', 'Dance & Music', 'Paintings', 'Festivals', 'Literature', 'UNESCO Sites'],
+    },
   },
   {
     key: 'ca', name: 'Current Affairs', emoji: '📰', tagline: 'News & events GK',
     subjects: ['National', 'International', 'Sports', 'Science & Tech', 'Awards & Honours', 'Mixed'],
     style: 'competitive-exam current-affairs section — events, appointments, schemes, awards, sports and summits from recent years, plus linked static GK; only well-established facts you are sure of',
+    secondsPerQ: 40, pattern: 'GA section pace · ~40s / Q',
+    topics: {
+      National: ['Government Schemes', 'Appointments', 'Bills & Acts', 'Reports & Indices', 'Summits in India'],
+      International: ['Summits & Conferences', 'Bilateral Relations', 'Global Organizations', 'Treaties'],
+      Sports: ['Olympics & Asian Games', 'Cricket', 'Tournaments & Winners', 'Sports Awards'],
+      'Science & Tech': ['Space Missions', 'Defence & Weapons', 'Tech Launches', 'Health & Vaccines'],
+      'Awards & Honours': ['Civilian Awards', 'Nobel Prizes', 'Film Awards', 'Gallantry Awards'],
+    },
   },
   {
     key: 'banking', name: 'Banking', emoji: '🏦', tagline: 'IBPS · SBI · RBI',
     subjects: ['Quantitative Aptitude', 'Reasoning', 'Banking Awareness', 'English', 'Mixed'],
     style: 'IBPS / SBI bank exam pattern (Prelims + Mains style)',
+    secondsPerQ: 36, pattern: 'Prelims: 100 Q · 60 min · −¼',
+    topics: {
+      'Quantitative Aptitude': ['Simplification', 'Number Series', 'Data Interpretation', 'Quadratic Equations', 'Percentage', 'Profit & Loss', 'Time & Work'],
+      Reasoning: ['Puzzles & Seating', 'Syllogism', 'Blood Relations', 'Coding-Decoding', 'Inequalities', 'Direction Sense'],
+      'Banking Awareness': ['RBI & Monetary Policy', 'Banking Terms', 'Types of Accounts', 'Financial Institutions', 'Banking History'],
+      English: ['Reading Comprehension', 'Cloze Test', 'Error Spotting', 'Para Jumbles', 'Fillers'],
+    },
   },
   {
     key: 'ssc', name: 'SSC', emoji: '🏢', tagline: 'CGL · CHSL · MTS · GD',
     subjects: ['General Awareness', 'Quantitative Aptitude', 'Reasoning', 'English', 'Mixed'],
     style: 'SSC (CGL / CHSL / MTS / GD) exam pattern',
+    secondsPerQ: 36, pattern: 'Tier-1: 100 Q · 60 min · −½',
+    topics: {
+      'General Awareness': ['History', 'Geography', 'Polity', 'Economics', 'General Science', 'Current Affairs', 'Static GK'],
+      'Quantitative Aptitude': ['Arithmetic', 'Algebra', 'Geometry', 'Trigonometry', 'Data Interpretation', 'Mensuration'],
+      Reasoning: ['Analogy', 'Series', 'Coding-Decoding', 'Non-Verbal', 'Classification', 'Blood Relations'],
+      English: ['Vocabulary', 'Grammar', 'Comprehension', 'Idioms & Phrases', 'One Word Substitution'],
+    },
   },
   {
     key: 'railways', name: 'Railways', emoji: '🚆', tagline: 'NTPC · Group D · ALP · JE',
     subjects: ['General Awareness', 'Maths', 'Reasoning', 'General Science', 'Mixed'],
     style: 'Indian Railways RRB exam pattern (NTPC, Group D, ALP, JE, RPF)',
+    secondsPerQ: 54, pattern: 'NTPC CBT-1: 100 Q · 90 min · −⅓',
+    topics: {
+      'General Awareness': ['Current Affairs', 'Indian Polity', 'History', 'Geography', 'Static GK', 'Railway GK'],
+      Maths: ['Number System', 'Percentage', 'Ratio & Proportion', 'Time & Distance', 'Mensuration', 'Simple & Compound Interest'],
+      Reasoning: ['Analogy', 'Coding-Decoding', 'Syllogism', 'Series', 'Statement & Conclusion', 'Venn Diagrams'],
+      'General Science': ['Physics', 'Chemistry', 'Biology', 'Environmental Science'],
+    },
   },
   {
     key: 'groups', name: 'Groups', emoji: '🎯', tagline: 'Group 1 · 2 · 3 · 4',
     subjects: ['Group 1', 'Group 2', 'Group 3', 'Group 4', 'Mixed'],
     style: 'State PSC Groups services exam pattern (TSPSC / APPSC style) — General Studies, state history, culture, geography, economy, polity and current affairs, pitched at the level of the chosen Group (Group 1 toughest, Group 4 basic)',
+    secondsPerQ: 60, pattern: 'Screening/Mains: 150 Q · 150 min',
+    topics: {
+      'Group 1': ['History & Culture', 'Polity & Governance', 'Economy', 'Geography', 'Science & Tech', 'Current Affairs', 'Data & Analytical Ability'],
+      'Group 2': ['Polity', 'History', 'Economy', 'State GK', 'Current Affairs', 'Mental Ability'],
+      'Group 3': ['General Studies', 'State Economy', 'Current Affairs', 'Arithmetic'],
+      'Group 4': ['General Studies', 'General Science', 'Current Affairs', 'Arithmetic & Reasoning'],
+    },
   },
   {
     key: 'mro', name: 'MRO / VRO', emoji: '🏘️', tagline: 'Revenue dept exams',
     subjects: ['Land Revenue & Rural Admin', 'State GK & Culture', 'Polity', 'Economy', 'Current Affairs', 'Arithmetic & Reasoning', 'Mixed'],
     style: 'MRO / VRO Revenue department recruitment exam pattern (Telangana / Andhra Pradesh style) — village and mandal administration, land revenue system, rural development schemes and state-specific General Studies',
+    secondsPerQ: 60, pattern: '150 Q · 150 min',
+    topics: {
+      'Land Revenue & Rural Admin': ['Village Administration', 'Land Records & Survey', 'Revenue System', 'Rural Development Schemes', 'Panchayati Raj', 'Disaster Management'],
+      'Arithmetic & Reasoning': ['Number System', 'Percentage', 'Averages', 'Series', 'Coding-Decoding', 'Data Interpretation'],
+    },
   },
   {
     key: 'statepsc', name: 'State Exams', emoji: '🗳️', tagline: 'PSC · Panchayat Secretary',
     subjects: ['State GK & Culture', 'Polity', 'History', 'Geography', 'Economy', 'Science', 'Current Affairs', 'Mixed'],
     style: 'State Public Service Commission exam pattern (Panchayat Secretary, Endowments, other state posts) — state-specific GK, history, culture and schemes where relevant',
+    secondsPerQ: 60, pattern: '150 Q · 150 min',
+    topics: {
+      Polity: ['Constitution', 'Panchayati Raj', 'State Government', 'Rights & Duties'],
+      History: ['Ancient', 'Medieval', 'Modern', 'State History', 'Freedom Movement'],
+      Geography: ['Indian Geography', 'State Geography', 'Physical Geography', 'Resources'],
+      Economy: ['Indian Economy', 'State Economy', 'Schemes', 'Banking'],
+    },
   },
   {
     key: 'police', name: 'Police', emoji: '🚔', tagline: 'SI · Constable',
     subjects: ['General Studies', 'Reasoning', 'Maths', 'Current Affairs', 'Mixed'],
     style: 'State Police SI / Constable recruitment exam pattern',
+    secondsPerQ: 60, pattern: '200 Q · 180-200 min',
+    topics: {
+      'General Studies': ['History', 'Polity', 'Geography', 'General Science', 'Static GK'],
+      Reasoning: ['Analogy', 'Series', 'Coding-Decoding', 'Non-Verbal', 'Blood Relations'],
+      Maths: ['Arithmetic', 'Percentage', 'Ratio', 'Time & Work', 'Mensuration'],
+    },
   },
   {
     key: 'teaching', name: 'Teaching', emoji: '🧑‍🏫', tagline: 'CTET · TET · DSC',
     subjects: ['Child Development & Pedagogy', 'Maths', 'EVS', 'Science', 'Social Studies', 'Language', 'Mixed'],
     style: 'CTET / State TET / DSC teacher recruitment exam pattern',
+    secondsPerQ: 60, pattern: 'CTET: 150 Q · 150 min · no negative marking',
+    topics: {
+      'Child Development & Pedagogy': ['Development Concepts', 'Learning Theories', 'Inclusive Education', 'Assessment', 'Motivation', 'Piaget & Vygotsky'],
+      Maths: ['Number System', 'Geometry', 'Data Handling', 'Pedagogy of Maths'],
+      EVS: ['Family & Friends', 'Water & Shelter', 'Plants & Animals', 'Pedagogy of EVS'],
+      'Social Studies': ['History', 'Geography', 'Civics', 'Pedagogy of Social Science'],
+    },
   },
   {
     key: 'gate', name: 'GATE', emoji: '🎓', tagline: 'Engineering PG',
     subjects: ['CS & IT', 'Mechanical', 'Civil', 'Electrical', 'Electronics', 'Engineering Maths'],
     style: 'GATE exam pattern — concept-heavy, applied engineering questions',
+    qtypes: ['Standard MCQ', 'Numerical Value', 'Multiple Correct'],
+    secondsPerQ: 165, pattern: '65 Q · 180 min · MCQ −⅓ / MSQ & NAT no negative',
+    topics: {
+      'CS & IT': ['Data Structures', 'Algorithms', 'Operating Systems', 'DBMS', 'Computer Networks', 'Theory of Computation', 'Digital Logic', 'Compiler Design'],
+      Mechanical: ['Thermodynamics', 'Fluid Mechanics', 'Strength of Materials', 'Theory of Machines', 'Manufacturing', 'Heat Transfer'],
+      Civil: ['Structural Analysis', 'Geotechnical', 'Fluid Mechanics', 'Transportation', 'Environmental Engg', 'Surveying'],
+      Electrical: ['Circuits', 'Power Systems', 'Control Systems', 'Machines', 'Power Electronics', 'Signals'],
+      Electronics: ['Networks', 'Electronic Devices', 'Analog Circuits', 'Digital Circuits', 'Signals & Systems', 'Communications'],
+      'Engineering Maths': ['Linear Algebra', 'Calculus', 'Differential Equations', 'Probability', 'Numerical Methods'],
+    },
   },
   {
     key: 'defence', name: 'Defence', emoji: '🎖️', tagline: 'NDA · CDS · AFCAT',
     subjects: ['Maths', 'General Ability', 'English', 'Mixed'],
     style: 'NDA / CDS defence entrance exam pattern',
+    secondsPerQ: 55, pattern: 'NDA: Maths 120 Q · GAT 150 Q · −⅓',
+    topics: {
+      Maths: ['Algebra', 'Trigonometry', 'Calculus', 'Coordinate Geometry', 'Statistics & Probability', 'Matrices'],
+      'General Ability': ['Physics', 'Chemistry', 'General Science', 'History', 'Geography', 'Current Affairs', 'Polity'],
+      English: ['Grammar', 'Vocabulary', 'Comprehension', 'Sentence Improvement', 'Antonyms & Synonyms'],
+    },
   },
   {
     key: 'aptitude', name: 'Aptitude', emoji: '🧮', tagline: 'Placement prep',
     subjects: ['Quantitative', 'Logical Reasoning', 'Verbal', 'Data Interpretation', 'Mixed'],
     style: 'campus-placement aptitude test pattern (TCS / Infosys / accenture style)',
+    secondsPerQ: 60, pattern: 'Placement round · ~60s / Q',
+    topics: {
+      Quantitative: ['Number System', 'Percentage', 'Profit & Loss', 'Time-Speed-Distance', 'Time & Work', 'Permutation & Combination', 'Probability'],
+      'Logical Reasoning': ['Series', 'Blood Relations', 'Syllogism', 'Seating Arrangement', 'Coding-Decoding', 'Puzzles'],
+      Verbal: ['Reading Comprehension', 'Sentence Correction', 'Synonyms & Antonyms', 'Para Jumbles'],
+      'Data Interpretation': ['Tables', 'Bar Graphs', 'Pie Charts', 'Line Graphs', 'Caselets'],
+    },
   },
   {
     key: 'coding', name: 'Coding', emoji: '💻', tagline: 'CS & programming',
     subjects: ['Python', 'JavaScript', 'Java', 'C', 'DSA', 'SQL', 'Mixed'],
     style: 'programming and computer-science MCQs, with short code snippets in questions where useful',
+    qtypes: ['Standard MCQ', 'Output Prediction', 'Fill in the Blank'],
+    secondsPerQ: 75, pattern: 'Concept + code-output MCQs',
+    topics: {
+      Python: ['Data Types', 'Functions', 'OOP', 'List & Dict', 'Exceptions', 'Comprehensions', 'Decorators'],
+      JavaScript: ['Closures', 'Promises & Async', 'Prototypes', 'ES6 Features', 'Event Loop', 'this Keyword'],
+      Java: ['OOP Concepts', 'Collections', 'Exceptions', 'Multithreading', 'Generics', 'JVM'],
+      C: ['Pointers', 'Arrays & Strings', 'Memory Management', 'Structures', 'File Handling'],
+      DSA: ['Arrays', 'Linked Lists', 'Trees', 'Sorting & Searching', 'Graphs', 'Dynamic Programming', 'Time Complexity'],
+      SQL: ['Joins', 'Aggregations', 'Subqueries', 'Indexes', 'Normalization', 'Transactions'],
+    },
   },
   {
     key: 'english', name: 'English', emoji: '🇬🇧', tagline: 'Grammar & vocab',
     subjects: ['Grammar', 'Vocabulary', 'Idioms & Phrases', 'Comprehension', 'Mixed'],
     style: 'competitive-exam English section pattern',
+    secondsPerQ: 45, pattern: 'Language section · ~45s / Q',
+    topics: {
+      Grammar: ['Tenses', 'Articles', 'Prepositions', 'Subject-Verb Agreement', 'Error Spotting', 'Sentence Improvement'],
+      Vocabulary: ['Synonyms', 'Antonyms', 'One Word Substitution', 'Spellings', 'Word Usage'],
+      'Idioms & Phrases': ['Common Idioms', 'Phrasal Verbs', 'Proverbs'],
+      Comprehension: ['Reading Passages', 'Cloze Test', 'Para Jumbles', 'Inference'],
+    },
   },
   {
     key: 'gk', name: 'General Knowledge', emoji: '🌍', tagline: 'Static GK',
     subjects: ['India', 'World', 'Science', 'History', 'Sports', 'Mixed'],
     style: 'static general-knowledge quiz for competitive exams',
+    secondsPerQ: 40, pattern: 'GK round · ~40s / Q',
+    topics: {
+      India: ['States & Capitals', 'National Symbols', 'Rivers & Mountains', 'Monuments', 'Dance & Festivals', 'Constitution Basics'],
+      World: ['Countries & Capitals', 'Currencies', 'World Organizations', 'Wonders', 'Rivers & Deserts'],
+      Science: ['Physics Facts', 'Chemistry Facts', 'Biology Facts', 'Inventions & Discoveries', 'Units & Measurements'],
+      History: ['Ancient', 'Medieval', 'Modern', 'World History', 'Freedom Fighters'],
+      Sports: ['Olympics', 'Cricket', 'Trophies & Cups', 'Sports Personalities'],
+    },
   },
 ]
 
@@ -315,6 +443,9 @@ export function QuizPage() {
   const [plan, setPlan] = useState<ExamStudyPlan | null>(null)
 
   const voice = useSpeech()
+
+  /** this exam's real per-question pace (drives the mock timer + estimate) */
+  const secPerQ = exam?.secondsPerQ ?? DEFAULT_SECONDS_PER_Q
 
   /** true for exams where the user's state matters (Groups/MRO/Police/DSC) */
   const isStateExam = !!exam && ['groups', 'mro', 'statepsc', 'police', 'teaching'].includes(exam.key)
@@ -388,7 +519,7 @@ export function QuizPage() {
     setDetail('')
     setWasMock(isMock)
     setWasNeg(isMock && negOn)
-    setRemaining(isMock && timerOn ? qs.length * MOCK_SECONDS_PER_Q : 0)
+    setRemaining(isMock && timerOn ? qs.length * secPerQ : 0)
     setPhase('playing')
   }
 
@@ -574,7 +705,7 @@ export function QuizPage() {
   const strongTopic = rated.length ? rated.reduce((m, x) => (x.pct > m.pct ? x : m)).k : null
 
   // estimated time + marks for the configured quiz
-  const estMin = Math.max(1, Math.round((count * MOCK_SECONDS_PER_Q) / 60))
+  const estMin = Math.max(1, Math.round((count * secPerQ) / 60))
   const isBookmarked = q ? marks.some((m) => qKey(m) === qKey(q)) : false
 
   return (
@@ -639,6 +770,13 @@ export function QuizPage() {
                 <div className="truncate text-xs text-slate-500">{exam?.tagline ?? 'Anything you want, or one of your notes'}</div>
               </div>
             </div>
+            {/* real exam pattern + timing */}
+            {exam?.pattern && (
+              <div className="mb-4 flex items-center gap-1.5 rounded-2xl bg-slate-500/5 px-3.5 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                <Timer size={13} className="shrink-0" />
+                <span className="min-w-0 truncate">Real pattern · {exam.pattern}</span>
+              </div>
+            )}
             <div className="space-y-4">
               {/* custom topic mode */}
               {!exam && (
@@ -844,7 +982,7 @@ export function QuizPage() {
                 {mock && (
                   <div className="mt-2 space-y-1.5">
                     <label className="flex items-center justify-between rounded-2xl bg-slate-500/5 px-3.5 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-                      <span>⏱️ Timed ({MOCK_SECONDS_PER_Q}s / question)</span>
+                      <span>⏱️ Timed ({secPerQ}s / question)</span>
                       <input type="checkbox" checked={timed} onChange={(e) => setTimed(e.target.checked)} className="h-4 w-4 accent-rose-500" />
                     </label>
                     <label className="flex items-center justify-between rounded-2xl bg-slate-500/5 px-3.5 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
