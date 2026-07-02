@@ -82,6 +82,34 @@ type ExamSpec = {
 /** the mock timer falls back to this when an exam has no secondsPerQ set */
 const DEFAULT_SECONDS_PER_Q = 60
 
+// per-exam marking scheme (points per correct, deducted per wrong) — matches
+// each exam's real paper; drives the mock marks card + the scoring note.
+// Exams not listed (and custom topics) use DEFAULT_MARKING.
+const DEFAULT_MARKING = { pos: 1, neg: 1 / 3 }
+const MARKING: Record<string, { pos: number; neg: number }> = {
+  neet: { pos: 4, neg: 1 },
+  jee: { pos: 4, neg: 1 },
+  norcet: { pos: 1, neg: 1 / 3 },
+  upsc: { pos: 2, neg: 2 / 3 },
+  banking: { pos: 1, neg: 0.25 },
+  ssc: { pos: 2, neg: 0.5 },
+  railways: { pos: 1, neg: 1 / 3 },
+  police: { pos: 1, neg: 0.25 },
+  gate: { pos: 1, neg: 1 / 3 },
+  teaching: { pos: 1, neg: 0 },   // CTET/TET — no negative marking
+  aptitude: { pos: 1, neg: 0 },
+  coding: { pos: 1, neg: 0 },
+  english: { pos: 1, neg: 0 },
+  gk: { pos: 1, neg: 0 },
+  ca: { pos: 1, neg: 0 },
+}
+/** pretty fraction glyph for a marking value: 0.33→⅓, 0.25→¼, 0.5→½, 0.67→⅔ */
+function fracGlyph(n: number): string {
+  if (Number.isInteger(n)) return String(n)
+  const map: Record<string, string> = { '0.33': '⅓', '0.25': '¼', '0.50': '½', '0.67': '⅔', '0.75': '¾' }
+  return map[n.toFixed(2)] ?? n.toFixed(2)
+}
+
 const EXAMS: ExamSpec[] = [
   {
     key: 'neet', name: 'NEET', emoji: '🩺', tagline: 'Medical entrance',
@@ -446,6 +474,8 @@ export function QuizPage() {
 
   /** this exam's real per-question pace (drives the mock timer + estimate) */
   const secPerQ = exam?.secondsPerQ ?? DEFAULT_SECONDS_PER_Q
+  /** this exam's real marking scheme (drives the marks card + scoring note) */
+  const mk = MARKING[exam?.key ?? ''] ?? DEFAULT_MARKING
 
   /** true for exams where the user's state matters (Groups/MRO/Police/DSC) */
   const isStateExam = !!exam && ['groups', 'mro', 'statepsc', 'police', 'teaching'].includes(exam.key)
@@ -989,7 +1019,9 @@ export function QuizPage() {
                       <span>➖ Negative marking (−⅓)</span>
                       <input type="checkbox" checked={negMark} onChange={(e) => setNegMark(e.target.checked)} className="h-4 w-4 accent-rose-500" />
                     </label>
-                    <p className="text-[11px] text-slate-400">AIIMS pattern: +1 per correct{negMark ? ', −⅓ per wrong' : ''}{timed ? `, auto-submit at 0:00` : ''}.</p>
+                    <p className="text-[11px] text-slate-400">
+                      {exam ? exam.name : 'Standard'} scoring: +{mk.pos} per correct{negMark && mk.neg > 0 ? `, −${fracGlyph(mk.neg)} per wrong` : ' (no negative marking)'}{timed ? ', auto-submit at 0:00' : ''}.
+                    </p>
                   </div>
                 )}
               </div>
@@ -1035,7 +1067,7 @@ export function QuizPage() {
                 </div>
                 <span className="text-slate-300 dark:text-white/20">·</span>
                 <div>
-                  <span className="font-extrabold text-slate-900 dark:text-white">{count}</span>
+                  <span className="font-extrabold text-slate-900 dark:text-white">{count * mk.pos}</span>
                   <span className="text-slate-500"> marks</span>
                 </div>
               </div>
@@ -1286,10 +1318,10 @@ export function QuizPage() {
             {wasMock && (
               <div className="mx-auto mt-3 max-w-xs rounded-2xl bg-slate-500/10 px-4 py-2.5">
                 <div className="text-lg font-extrabold text-slate-900 dark:text-white">
-                  {(Math.round((correct - (wasNeg ? wrongCnt / 3 : 0)) * 100) / 100).toFixed(2)} / {questions.length} marks
+                  {(Math.round((correct * mk.pos - (wasNeg ? wrongCnt * mk.neg : 0)) * 100) / 100).toFixed(2)} / {questions.length * mk.pos} marks
                 </div>
                 <div className="text-[11px] text-slate-500">
-                  +1 × {correct} correct{wasNeg ? ` · −⅓ × ${wrongCnt} wrong` : ` · ${wrongCnt} wrong (no penalty)`}{questions.length - correct - wrongCnt > 0 ? ` · ${questions.length - correct - wrongCnt} unanswered` : ''}
+                  +{mk.pos} × {correct} correct{wasNeg && mk.neg > 0 ? ` · −${fracGlyph(mk.neg)} × ${wrongCnt} wrong` : ` · ${wrongCnt} wrong (no penalty)`}{questions.length - correct - wrongCnt > 0 ? ` · ${questions.length - correct - wrongCnt} unanswered` : ''}
                 </div>
               </div>
             )}
