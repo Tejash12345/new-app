@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { Sparkles, Swords, RotateCw, CheckCircle2, XCircle } from 'lucide-react'
 import { useTable } from '../hooks/db'
 import { useAuth } from '../hooks/useAuth'
-import { generateQuiz, type QuizQuestion } from '../lib/ai'
+import { explainQuizQuestion, generateQuiz, type QuizQuestion } from '../lib/ai'
 import type { Note, QuizResult } from '../lib/types'
 import { Button, Empty, GlassCard, Input, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { cn, timeAgo } from '../lib/utils'
@@ -54,9 +54,29 @@ const EXAMS: ExamSpec[] = [
     style: 'IBPS / SBI bank exam pattern (Prelims + Mains style)',
   },
   {
-    key: 'ssc', name: 'SSC & Railways', emoji: '🚆', tagline: 'CGL · CHSL · RRB',
+    key: 'ssc', name: 'SSC', emoji: '🏢', tagline: 'CGL · CHSL · MTS · GD',
     subjects: ['General Awareness', 'Quantitative Aptitude', 'Reasoning', 'English', 'Mixed'],
-    style: 'SSC CGL / RRB NTPC exam pattern',
+    style: 'SSC (CGL / CHSL / MTS / GD) exam pattern',
+  },
+  {
+    key: 'railways', name: 'Railways', emoji: '🚆', tagline: 'NTPC · Group D · ALP · JE',
+    subjects: ['General Awareness', 'Maths', 'Reasoning', 'General Science', 'Mixed'],
+    style: 'Indian Railways RRB exam pattern (NTPC, Group D, ALP, JE, RPF)',
+  },
+  {
+    key: 'statepsc', name: 'State Exams', emoji: '🗳️', tagline: 'Groups · MRO · VRO · PSC',
+    subjects: ['State GK & Culture', 'Polity', 'History', 'Geography', 'Economy', 'Science', 'Current Affairs', 'Mixed'],
+    style: 'State Public Service Commission exam pattern (Group 1/2/3/4, MRO, VRO, Panchayat Secretary) — state-specific GK, history, culture and schemes where relevant',
+  },
+  {
+    key: 'police', name: 'Police', emoji: '🚔', tagline: 'SI · Constable',
+    subjects: ['General Studies', 'Reasoning', 'Maths', 'Current Affairs', 'Mixed'],
+    style: 'State Police SI / Constable recruitment exam pattern',
+  },
+  {
+    key: 'teaching', name: 'Teaching', emoji: '🧑‍🏫', tagline: 'CTET · TET · DSC',
+    subjects: ['Child Development & Pedagogy', 'Maths', 'EVS', 'Science', 'Social Studies', 'Language', 'Mixed'],
+    style: 'CTET / State TET / DSC teacher recruitment exam pattern',
   },
   {
     key: 'gate', name: 'GATE', emoji: '🎓', tagline: 'Engineering PG',
@@ -98,7 +118,8 @@ export function QuizPage() {
   const [phase, setPhase] = useState<Phase>('setup')
   const [exam, setExam] = useState<ExamSpec | null>(null)   // null = custom topic mode
   const [subject, setSubject] = useState('Mixed')
-  const [pyq, setPyq] = useState(true)                      // previous-year questions vs fresh practice
+  const [qsrc, setQsrc] = useState<'pyq' | 'repeated' | 'fresh'>('pyq')
+  const [stateName, setStateName] = useState('')            // for state-level exams (Groups/MRO/Police/DSC)
   const [topic, setTopic] = useState('')
   const [difficulty, setDifficulty] = useState<(typeof DIFFICULTIES)[number]>('Medium')
   const [count, setCount] = useState<(typeof COUNTS)[number]>(5)
@@ -112,28 +133,46 @@ export function QuizPage() {
   const [correct, setCorrect] = useState(0)
   const [earned, setEarned] = useState(0)
 
+  // on-demand deep explanation for the current question
+  const [detail, setDetail] = useState('')
+  const [detailLoading, setDetailLoading] = useState(false)
+
+  /** true for exams where the user's state matters (Groups/MRO/Police/DSC) */
+  const isStateExam = !!exam && ['statepsc', 'police', 'teaching'].includes(exam.key)
+
   async function start() {
     const note = exam ? undefined : notes.find((n) => n.id === noteId)
     // strip the note's rich-text HTML down to plain study material
     const source = note ? note.body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ''
+    // state-level exams get the user's state woven into the name + style
+    const examName = exam ? (isStateExam && stateName.trim() ? `${stateName.trim()} ${exam.name}` : exam.name) : ''
+    const examStyle = exam
+      ? exam.style + (isStateExam && stateName.trim() ? ` Focus on ${stateName.trim()} state-specific GK, history, culture, rivers, schemes and current affairs where relevant.` : '')
+      : undefined
     // what the AI is quizzed on vs. the short label saved to history
     const aiTopic = exam
-      ? (subject === 'Mixed' ? `the full ${exam.name} syllabus` : `${subject} (${exam.name} syllabus)`)
+      ? (subject === 'Mixed' ? `the full ${examName} syllabus` : `${subject} (${examName} syllabus)`)
       : (topic.trim() || note?.title.trim() || '')
+    const srcTag = qsrc === 'pyq' ? ' · 📜 PYQ' : qsrc === 'repeated' ? ' · 🔁 Repeated' : ''
     const label = exam
-      ? `${exam.emoji} ${exam.name}${subject !== 'Mixed' ? ` · ${subject}` : ''}${pyq ? ' · 📜 PYQ' : ''}`
+      ? `${exam.emoji} ${examName}${subject !== 'Mixed' ? ` · ${subject}` : ''}${srcTag}`
       : (topic.trim() || note?.title.trim() || '')
     if (!aiTopic) return
     setPhase('loading')
     setError('')
     try {
-      const qs = await generateQuiz({ topic: aiTopic, difficulty, count, source: source || undefined, style: exam?.style, pyq: !!exam && pyq })
+      const qs = await generateQuiz({
+        topic: aiTopic, difficulty, count,
+        source: source || undefined, style: examStyle,
+        mode: exam ? qsrc : 'fresh',
+      })
       if (qs.length < 3) throw new Error('Leo could not build that quiz — try a clearer topic. 🦁')
       setPlayedTopic(label)
       setQuestions(qs)
       setI(0)
       setPicked(null)
       setCorrect(0)
+      setDetail('')
       setPhase('playing')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.')
@@ -147,10 +186,24 @@ export function QuizPage() {
     if (idx === questions[i].answer) setCorrect((c) => c + 1)
   }
 
+  async function explainMore() {
+    if (detailLoading || detail) return
+    setDetailLoading(true)
+    try {
+      const text = await explainQuizQuestion({ q: q.q, options: q.options, answer: q.answer, topic: playedTopic })
+      setDetail(text || 'Leo had no more to add on this one. 🦁')
+    } catch (e) {
+      setDetail(e instanceof Error ? e.message : 'Could not load the explanation — try again.')
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
   async function next() {
     if (i + 1 < questions.length) {
       setI(i + 1)
       setPicked(null)
+      setDetail('')
       return
     }
     // finished — `correct` already includes this question (picked before Next)
@@ -226,29 +279,50 @@ export function QuizPage() {
                 </div>
               )}
 
-              {/* PYQ vs fresh practice */}
+              {/* your state — for Groups/MRO/VRO, Police, DSC */}
+              {isStateExam && (
+                <div>
+                  <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Your state (optional — makes GK state-specific)</div>
+                  <Input placeholder="e.g. Telangana, Andhra Pradesh, UP, Maharashtra…"
+                    value={stateName} onChange={(e) => setStateName(e.target.value)} />
+                </div>
+              )}
+
+              {/* question source: PYQ / most repeated / fresh */}
               {exam && (
                 <div>
                   <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Question source</div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setPyq(true)}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => setQsrc('pyq')}
                       className={cn(
-                        'flex-1 rounded-2xl px-4 py-2.5 text-sm font-bold transition',
-                        pyq ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-white shadow-lg shadow-amber-500/30' : 'glass text-slate-600 dark:text-slate-300',
+                        'flex-1 whitespace-nowrap rounded-2xl px-3 py-2.5 text-sm font-bold transition',
+                        qsrc === 'pyq' ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-white shadow-lg shadow-amber-500/30' : 'glass text-slate-600 dark:text-slate-300',
                       )}>
-                      📜 Previous year Qs
+                      📜 Previous year
                     </button>
-                    <button onClick={() => setPyq(false)}
+                    <button onClick={() => setQsrc('repeated')}
                       className={cn(
-                        'flex-1 rounded-2xl px-4 py-2.5 text-sm font-bold transition',
-                        !pyq ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg shadow-brand-500/30' : 'glass text-slate-600 dark:text-slate-300',
+                        'flex-1 whitespace-nowrap rounded-2xl px-3 py-2.5 text-sm font-bold transition',
+                        qsrc === 'repeated' ? 'bg-gradient-to-r from-purple-500 to-purple-400 text-white shadow-lg shadow-purple-500/30' : 'glass text-slate-600 dark:text-slate-300',
                       )}>
-                      ✨ Fresh practice
+                      🔁 Most repeated
+                    </button>
+                    <button onClick={() => setQsrc('fresh')}
+                      className={cn(
+                        'flex-1 whitespace-nowrap rounded-2xl px-3 py-2.5 text-sm font-bold transition',
+                        qsrc === 'fresh' ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg shadow-brand-500/30' : 'glass text-slate-600 dark:text-slate-300',
+                      )}>
+                      ✨ Fresh
                     </button>
                   </div>
-                  {pyq && (
+                  {qsrc === 'pyq' && (
                     <p className="mt-1.5 text-[11px] text-slate-400">
-                      Leo recalls real past-paper questions and tags each with the exam session (month/year). For final revision, cross-check with official papers.
+                      Real past-paper questions, each tagged with the exam session (month/year). Cross-check with official papers for final revision.
+                    </p>
+                  )}
+                  {qsrc === 'repeated' && (
+                    <p className="mt-1.5 text-[11px] text-slate-400">
+                      The high-frequency questions asked again and again across years — the ones toppers revise first, tagged with the years they appeared.
                     </p>
                   )}
                 </div>
@@ -377,8 +451,16 @@ export function QuizPage() {
 
           <GlassCard>
             {q.asked && (
-              <div className="mb-2.5 inline-flex items-center gap-1.5 rounded-full bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-600 dark:text-amber-300">
-                📜 {q.asked === 'PYQ-style' ? 'PYQ-style question' : `Asked in ${q.asked}`}
+              <div className={cn(
+                'mb-2.5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold',
+                /,|&/.test(q.asked) || q.asked === 'Frequently asked'
+                  ? 'bg-purple-400/15 text-purple-600 dark:text-purple-300'
+                  : 'bg-amber-400/15 text-amber-600 dark:text-amber-300',
+              )}>
+                {q.asked === 'PYQ-style' ? '📜 PYQ-style question'
+                  : q.asked === 'Frequently asked' ? '🔁 Frequently asked question'
+                    : /,|&/.test(q.asked) ? `🔁 Repeated: ${q.asked}`
+                      : `📜 Asked in ${q.asked}`}
               </div>
             )}
             <div className="mb-4 text-lg font-bold text-slate-900 dark:text-white">{q.q}</div>
@@ -422,6 +504,19 @@ export function QuizPage() {
                     {picked === q.answer ? '✅ ' : '💡 '}{q.explain}
                   </p>
                 )}
+
+                {/* on-demand deep-dive from Leo */}
+                {detail ? (
+                  <div className="mt-2.5 rounded-2xl bg-brand-500/10 px-4 py-3">
+                    <div className="mb-1 text-xs font-bold uppercase tracking-wide text-brand-500">🦁 Leo explains</div>
+                    <p className="whitespace-pre-line text-sm text-slate-700 dark:text-slate-200">{detail}</p>
+                  </div>
+                ) : (
+                  <Button variant="ghost" size="sm" className="mt-2.5 w-full" onClick={explainMore} disabled={detailLoading}>
+                    {detailLoading ? '🦁 Leo is thinking…' : '🔍 Explain this in detail'}
+                  </Button>
+                )}
+
                 <Button className="mt-3 w-full" size="lg" onClick={next}>
                   {i + 1 < questions.length ? 'Next question' : 'See my score'}
                 </Button>

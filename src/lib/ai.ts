@@ -319,21 +319,27 @@ export type QuizQuestion = { q: string; options: string[]; answer: number; expla
  * AI quiz generator — multiple-choice questions on any topic, or on the
  * user's own study material when `source` is given. `style` (optional)
  * makes questions match a real exam's pattern (NEET, JEE, NORCET…).
- * `pyq` asks for real previous-year questions, each tagged in `asked` with
- * the exam session it appeared in (e.g. "NEET 2022", "JEE Main Jan 2023").
+ * `mode`: 'pyq' = real previous-year questions tagged in `asked` with the
+ * session they appeared in (e.g. "NEET 2022"); 'repeated' = the most
+ * frequently repeated questions across years; 'fresh' (default) = new ones.
  */
 export async function generateQuiz(
-  opts: { topic: string; difficulty: string; count: number; source?: string; style?: string; pyq?: boolean },
+  opts: { topic: string; difficulty: string; count: number; source?: string; style?: string; mode?: 'fresh' | 'pyq' | 'repeated' },
 ): Promise<QuizQuestion[]> {
   const src = opts.source?.trim()
     ? ` Base every question ONLY on this study material:\n"""${opts.source.slice(0, 4000)}"""`
     : ''
   const style = opts.style?.trim() ? ` Question style: ${opts.style.trim()}.` : ''
-  const pyq = opts.pyq
-    ? ' Use REAL previous-year questions (PYQs) from actual past papers of this exam, reproduced as accurately as you remember them. ' +
-      'Fill "asked" with the exam name and session each question appeared in — as specific as you genuinely know it, e.g. "NEET 2022", "JEE Main Jan 2023", "NORCET Nov 2023" (month + year when you know it, otherwise the year alone). ' +
-      'If you are NOT certain a question is a real PYQ, write "PYQ-style" in "asked" instead of inventing a year — never guess dates.'
-    : ' Set "asked" to an empty string "" for every question.'
+  const pyq =
+    opts.mode === 'pyq'
+      ? ' Use REAL previous-year questions (PYQs) from actual past papers of this exam, reproduced as accurately as you remember them. ' +
+        'Fill "asked" with the exam name and session each question appeared in — as specific as you genuinely know it, e.g. "NEET 2022", "JEE Main Jan 2023", "NORCET Nov 2023" (month + year when you know it, otherwise the year alone). ' +
+        'If you are NOT certain a question is a real PYQ, write "PYQ-style" in "asked" instead of inventing a year — never guess dates.'
+      : opts.mode === 'repeated'
+        ? ' Choose the MOST REPEATED questions — the high-frequency questions that have been asked again and again across different years of this exam (the ones toppers prioritize). ' +
+          'Fill "asked" with the years each appeared in when you genuinely know them, e.g. "NEET 2019, 2021, 2023" or "SSC CGL 2018 & 2022". ' +
+          'If you are not certain of the exact years, write "Frequently asked" in "asked" instead of guessing.'
+        : ' Set "asked" to an empty string "" for every question.'
   const prompt =
     `Create a ${opts.count}-question multiple-choice quiz about "${opts.topic}" for a student. Difficulty: ${opts.difficulty}.` +
     style + pyq + src +
@@ -353,12 +359,35 @@ export async function generateQuiz(
         options,
         answer: Math.max(0, Math.min(options.length - 1, Math.round(Number(r.answer) || 0))),
         explain: String(r.explain ?? '').trim(),
-        // only trust the year tag in PYQ mode — otherwise force it empty
-        asked: opts.pyq ? String(r.asked ?? '').trim().slice(0, 60) : '',
+        // only trust the year tag in PYQ/repeated modes — otherwise force it empty
+        asked: opts.mode === 'pyq' || opts.mode === 'repeated' ? String(r.asked ?? '').trim().slice(0, 60) : '',
       }
     })
     .filter((q) => q.q && q.options.length === 4)
     .slice(0, opts.count)
+}
+
+/**
+ * Deep-dive tutor explanation for one quiz question — the underlying
+ * concept, why the right option wins and the others fail, a memory trick,
+ * and what to revise. Plain text (not JSON), called on demand.
+ */
+export async function explainQuizQuestion(
+  opts: { q: string; options: string[]; answer: number; topic: string },
+): Promise<string> {
+  const prompt =
+    `You are Leo, a friendly exam tutor. A student preparing for ${opts.topic} wants a DETAILED explanation of this question:\n\n` +
+    `Question: ${opts.q}\n` +
+    opts.options.map((o, i) => `${String.fromCharCode(65 + i)}. ${o}`).join('\n') +
+    `\nCorrect answer: ${String.fromCharCode(65 + opts.answer)}. ${opts.options[opts.answer] ?? ''}\n\n` +
+    'Explain in this order, with these exact section headers on their own lines:\n' +
+    '📖 Concept — the core concept behind this question in 2-3 simple sentences (include key dates/years if the fact is time-based).\n' +
+    '✅ Why this answer — why the correct option is right.\n' +
+    '❌ Why not the others — one short line each on why the other options are wrong.\n' +
+    '🧠 Memory trick — one mnemonic or quick way to remember it.\n' +
+    '📚 Revise next — 2-3 related sub-topics to study for this exam.\n' +
+    'Plain text only (no markdown symbols like ** or #), under 200 words, simple words a student understands.'
+  return askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
 }
 
 // ---------- AI Day Planner ----------
