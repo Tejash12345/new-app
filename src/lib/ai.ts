@@ -317,17 +317,19 @@ export type QuizQuestion = { q: string; options: string[]; answer: number; expla
 
 /**
  * AI quiz generator — multiple-choice questions on any topic, or on the
- * user's own study material when `source` is given.
+ * user's own study material when `source` is given. `style` (optional)
+ * makes questions match a real exam's pattern (NEET, JEE, NORCET…).
  */
 export async function generateQuiz(
-  opts: { topic: string; difficulty: string; count: number; source?: string },
+  opts: { topic: string; difficulty: string; count: number; source?: string; style?: string },
 ): Promise<QuizQuestion[]> {
   const src = opts.source?.trim()
     ? ` Base every question ONLY on this study material:\n"""${opts.source.slice(0, 4000)}"""`
     : ''
+  const style = opts.style?.trim() ? ` Question style: ${opts.style.trim()}.` : ''
   const prompt =
     `Create a ${opts.count}-question multiple-choice quiz about "${opts.topic}" for a student. Difficulty: ${opts.difficulty}.` +
-    src +
+    style + src +
     ' Respond with ONLY a JSON object, no prose, no markdown: ' +
     '{"questions":[{"q":"","options":["","","",""],"answer":0,"explain":""}]}. ' +
     'Rules: exactly 4 plausible options per question; "answer" = the index (0-3) of the correct option — vary its position across questions; ' +
