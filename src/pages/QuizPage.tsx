@@ -64,9 +64,19 @@ const EXAMS: ExamSpec[] = [
     style: 'Indian Railways RRB exam pattern (NTPC, Group D, ALP, JE, RPF)',
   },
   {
-    key: 'statepsc', name: 'State Exams', emoji: '🗳️', tagline: 'Groups · MRO · VRO · PSC',
+    key: 'groups', name: 'Groups', emoji: '🎯', tagline: 'Group 1 · 2 · 3 · 4',
+    subjects: ['Group 1', 'Group 2', 'Group 3', 'Group 4', 'Mixed'],
+    style: 'State PSC Groups services exam pattern (TSPSC / APPSC style) — General Studies, state history, culture, geography, economy, polity and current affairs, pitched at the level of the chosen Group (Group 1 toughest, Group 4 basic)',
+  },
+  {
+    key: 'mro', name: 'MRO / VRO', emoji: '🏘️', tagline: 'Revenue dept exams',
+    subjects: ['Land Revenue & Rural Admin', 'State GK & Culture', 'Polity', 'Economy', 'Current Affairs', 'Arithmetic & Reasoning', 'Mixed'],
+    style: 'MRO / VRO Revenue department recruitment exam pattern (Telangana / Andhra Pradesh style) — village and mandal administration, land revenue system, rural development schemes and state-specific General Studies',
+  },
+  {
+    key: 'statepsc', name: 'State Exams', emoji: '🗳️', tagline: 'PSC · Panchayat Secretary',
     subjects: ['State GK & Culture', 'Polity', 'History', 'Geography', 'Economy', 'Science', 'Current Affairs', 'Mixed'],
-    style: 'State Public Service Commission exam pattern (Group 1/2/3/4, MRO, VRO, Panchayat Secretary) — state-specific GK, history, culture and schemes where relevant',
+    style: 'State Public Service Commission exam pattern (Panchayat Secretary, Endowments, other state posts) — state-specific GK, history, culture and schemes where relevant',
   },
   {
     key: 'police', name: 'Police', emoji: '🚔', tagline: 'SI · Constable',
@@ -138,7 +148,7 @@ export function QuizPage() {
   const [detailLoading, setDetailLoading] = useState(false)
 
   /** true for exams where the user's state matters (Groups/MRO/Police/DSC) */
-  const isStateExam = !!exam && ['statepsc', 'police', 'teaching'].includes(exam.key)
+  const isStateExam = !!exam && ['groups', 'mro', 'statepsc', 'police', 'teaching'].includes(exam.key)
 
   async function start() {
     const note = exam ? undefined : notes.find((n) => n.id === noteId)
