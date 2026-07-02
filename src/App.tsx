@@ -12,6 +12,8 @@ import { FocusPage } from './pages/FocusPage'
 import { WellbeingPage } from './pages/WellbeingPage'
 import { CapsulePage } from './pages/CapsulePage'
 import { LearnPage } from './pages/LearnPage'
+import { QuizPage } from './pages/QuizPage'
+import { InsightsPage } from './pages/InsightsPage'
 import { VocabPage } from './pages/VocabPage'
 import { DietPage } from './pages/DietPage'
 import { CareerPage } from './pages/CareerPage'
@@ -53,6 +55,8 @@ function Gate() {
         <Route path="wellbeing" element={<WellbeingPage />} />
         <Route path="capsule" element={<CapsulePage />} />
         <Route path="learn" element={<LearnPage />} />
+        <Route path="quiz" element={<QuizPage />} />
+        <Route path="insights" element={<InsightsPage />} />
         <Route path="vocab" element={<VocabPage />} />
         <Route path="diet" element={<DietPage />} />
         <Route path="career" element={<CareerPage />} />

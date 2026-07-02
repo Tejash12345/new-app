@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react'
-import { Bold, Italic, List, Plus, Trash2, RotateCw } from 'lucide-react'
+import { Bold, Italic, List, Plus, Sparkles, Trash2, RotateCw, Zap } from 'lucide-react'
 import { useTable } from '../hooks/db'
 import { useAuth } from '../hooks/useAuth'
+import { flashcardsFrom } from '../lib/ai'
 import type { Flashcard, Habit, JournalEntry, Note } from '../lib/types'
 import { Button, Empty, GlassCard, Input, Modal, Page, TextArea } from '../components/ui'
-import { SUBJECT_COLORS, cn, todayKey } from '../lib/utils'
+import { SUBJECT_COLORS, addDays, cn, todayKey } from '../lib/utils'
 
 const NOTE_COLORS = ['#FFF59D', '#B2EBF2', '#FFCCBC', '#C8E6C9', '#E1BEE7', '#FFE0E6']
 const TABS = ['Notes', 'Flashcards', 'Habits', 'Journal'] as const
@@ -119,12 +120,24 @@ function NotesTab() {
 // ---------------- Flashcards ----------------
 function FlashcardsTab() {
   const { rows, insert, update, remove } = useTable<Flashcard>('flashcards')
+  const { rows: notes } = useTable<Note>('notes', { orderBy: 'updated_at' })
   const { addXp } = useAuth()
   const [open, setOpen] = useState(false)
   const [front, setFront] = useState('')
   const [back, setBack] = useState('')
   const [deck, setDeck] = useState('General')
-  const [study, setStudy] = useState<{ i: number; flipped: boolean } | null>(null)
+  // study takes a snapshot of the cards so "weakest first" keeps its order
+  const [study, setStudy] = useState<{ cards: Flashcard[]; i: number; flipped: boolean } | null>(null)
+
+  // ---- AI card generation ----
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiDeck, setAiDeck] = useState('')
+  const [aiNoteId, setAiNoteId] = useState('')
+  const [aiText, setAiText] = useState('')
+  const [aiCount, setAiCount] = useState(8)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [preview, setPreview] = useState<{ front: string; back: string; keep: boolean }[] | null>(null)
 
   const decks = [...new Set(rows.map((c) => c.deck))]
   const [activeDeck, setActiveDeck] = useState<string | null>(null)
@@ -138,11 +151,41 @@ function FlashcardsTab() {
 
   async function grade(know: boolean) {
     if (!study) return
-    const card = cards[study.i]
+    const card = study.cards[study.i]
     await update({ id: card.id, ease: Math.max(0, Math.min(5, card.ease + (know ? 1 : -1))) } as Partial<Flashcard> & { id: string })
     if (know) await addXp(2, 'Flashcard recalled')
-    if (study.i + 1 < cards.length) setStudy({ i: study.i + 1, flipped: false })
+    if (study.i + 1 < study.cards.length) setStudy({ ...study, i: study.i + 1, flipped: false })
     else { setStudy(null); await addXp(10, 'Deck review complete') }
+  }
+
+  async function aiGenerate() {
+    const note = notes.find((n) => n.id === aiNoteId)
+    const source = aiText.trim() || (note ? `${note.title}\n${note.body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')}` : '')
+    if (!source.trim()) return
+    setAiLoading(true)
+    setAiError('')
+    try {
+      const generated = await flashcardsFrom(source, aiCount)
+      if (!generated.length) throw new Error('Leo could not make cards from that — try richer material. 🦁')
+      setPreview(generated.map((c) => ({ ...c, keep: true })))
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : 'Something went wrong.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  async function aiAddCards() {
+    if (!preview) return
+    const note = notes.find((n) => n.id === aiNoteId)
+    const deckName = aiDeck.trim() || note?.title.trim() || 'AI cards'
+    for (const c of preview) {
+      if (c.keep) await insert({ front: c.front, back: c.back, deck: deckName } as Partial<Flashcard>)
+    }
+    setAiOpen(false)
+    setPreview(null)
+    setAiText('')
+    setActiveDeck(deckName)
   }
 
   return (
@@ -158,8 +201,14 @@ function FlashcardsTab() {
             {d}
           </button>
         ))}
-        <div className="ml-auto flex gap-2">
-          {cards.length > 0 && <Button variant="soft" onClick={() => setStudy({ i: 0, flipped: false })}><RotateCw size={15} /> Study {cards.length}</Button>}
+        <div className="ml-auto flex flex-wrap gap-2">
+          {cards.length > 0 && <Button variant="soft" onClick={() => setStudy({ cards, i: 0, flipped: false })}><RotateCw size={15} /> Study {cards.length}</Button>}
+          {cards.length > 1 && (
+            <Button variant="ghost" onClick={() => setStudy({ cards: [...cards].sort((a, b) => a.ease - b.ease), i: 0, flipped: false })}>
+              <Zap size={15} /> Weakest first
+            </Button>
+          )}
+          <Button variant="soft" onClick={() => { setAiOpen(true); setAiError(''); setPreview(null) }}><Sparkles size={15} /> AI cards</Button>
           <Button onClick={() => setOpen(true)}><Plus size={16} /> Add card</Button>
         </div>
       </div>
@@ -191,8 +240,8 @@ function FlashcardsTab() {
         </div>
       </Modal>
 
-      <Modal open={!!study} onClose={() => setStudy(null)} title={`Card ${(study?.i ?? 0) + 1} of ${cards.length}`}>
-        {study && cards[study.i] && (
+      <Modal open={!!study} onClose={() => setStudy(null)} title={`Card ${(study?.i ?? 0) + 1} of ${study?.cards.length ?? 0}`}>
+        {study && study.cards[study.i] && (
           <div className="space-y-4">
             <button
               onClick={() => setStudy({ ...study, flipped: !study.flipped })}
@@ -200,7 +249,7 @@ function FlashcardsTab() {
             >
               <div className="text-xs font-bold uppercase tracking-widest text-slate-400">{study.flipped ? 'Answer' : 'Question — tap to flip'}</div>
               <div className="mt-2 text-lg font-bold text-slate-900 dark:text-white">
-                {study.flipped ? cards[study.i].back : cards[study.i].front}
+                {study.flipped ? study.cards[study.i].back : study.cards[study.i].front}
               </div>
             </button>
             {study.flipped && (
@@ -209,6 +258,76 @@ function FlashcardsTab() {
                 <Button className="flex-1" onClick={() => grade(true)}>Knew it! +2 XP</Button>
               </div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* ---- AI flashcard generator ---- */}
+      <Modal open={aiOpen} onClose={() => setAiOpen(false)} title="✨ Generate flashcards with AI" wide>
+        {aiLoading ? (
+          <div className="flex flex-col items-center py-12 text-center">
+            <div className="animate-bounce text-5xl">🦁</div>
+            <p className="mt-3 font-bold text-slate-900 dark:text-white">Leo is making your cards…</p>
+            <p className="mt-1 text-sm text-slate-500">Pulling out the most important facts.</p>
+          </div>
+        ) : preview ? (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500">Tap a card to include/exclude it, then add the ones you want.</p>
+            <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
+              {preview.map((c, i) => (
+                <button key={i}
+                  onClick={() => setPreview(preview.map((p, j) => (j === i ? { ...p, keep: !p.keep } : p)))}
+                  className={cn(
+                    'w-full rounded-2xl border px-4 py-3 text-left transition',
+                    c.keep
+                      ? 'border-emerald-400/50 bg-emerald-500/10'
+                      : 'border-slate-200/40 dark:border-white/5 bg-white/30 dark:bg-white/[0.03] opacity-50',
+                  )}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="text-sm font-bold text-slate-900 dark:text-white">{c.front}</div>
+                    <span className="shrink-0 text-base">{c.keep ? '✅' : '⬜'}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">{c.back}</div>
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" className="flex-1" onClick={aiGenerate}><RotateCw size={15} /> Regenerate</Button>
+              <Button className="flex-1" onClick={aiAddCards} disabled={!preview.some((c) => c.keep)}>
+                <Plus size={15} /> Add {preview.filter((c) => c.keep).length} cards
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <Input placeholder="Deck name (e.g. Biology ch. 4) — optional" value={aiDeck} onChange={(e) => setAiDeck(e.target.value)} />
+            {notes.length > 0 && (
+              <select value={aiNoteId} onChange={(e) => setAiNoteId(e.target.value)}
+                className="w-full rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-3 py-2.5 text-sm text-slate-900 dark:text-white dark:[&>option]:bg-slate-800">
+                <option value="">Pick one of your notes…</option>
+                {notes.map((n) => <option key={n.id} value={n.id}>{n.title || '(untitled note)'}</option>)}
+              </select>
+            )}
+            <TextArea rows={5} placeholder="…or paste your study material here (textbook paragraph, class notes, anything)"
+              value={aiText} onChange={(e) => setAiText(e.target.value)} />
+            <div>
+              <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">How many cards</div>
+              <div className="flex gap-2">
+                {[6, 8, 12].map((n) => (
+                  <button key={n} onClick={() => setAiCount(n)}
+                    className={cn(
+                      'flex-1 rounded-2xl px-4 py-2 text-sm font-bold transition',
+                      aiCount === n ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg shadow-brand-500/30' : 'glass text-slate-600 dark:text-slate-300',
+                    )}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {aiError && <p className="rounded-2xl bg-rose-500/10 px-4 py-2.5 text-sm font-medium text-rose-500">{aiError}</p>}
+            <Button className="w-full" size="lg" onClick={aiGenerate} disabled={!aiText.trim() && !aiNoteId}>
+              <Sparkles size={16} /> Generate cards
+            </Button>
           </div>
         )}
       </Modal>
@@ -225,7 +344,7 @@ function HabitsTab() {
   const [emoji, setEmoji] = useState('🌟')
   const [color, setColor] = useState(SUBJECT_COLORS[0])
   const today = todayKey()
-  const last7 = Array.from({ length: 7 }, (_, i) => todayKey(new Date(Date.now() - (6 - i) * 86_400_000)))
+  const last7 = Array.from({ length: 7 }, (_, i) => todayKey(addDays(new Date(), -(6 - i))))
 
   async function toggle(h: Habit, day: string) {
     const has = h.checks.includes(day)
@@ -245,7 +364,7 @@ function HabitsTab() {
           {rows.map((h) => {
             let streak = 0
             for (let i = 0; ; i++) {
-              const k = todayKey(new Date(Date.now() - i * 86_400_000))
+              const k = todayKey(addDays(new Date(), -i))
               if (h.checks.includes(k)) streak++
               else if (i === 0) continue
               else break

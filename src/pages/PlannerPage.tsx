@@ -1,14 +1,17 @@
 import { useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Check, Plus, RotateCw, Sparkles, Trash2 } from 'lucide-react'
 import { useTable } from '../hooks/db'
-import type { TimetableBlock } from '../lib/types'
+import { planMyDay, type DayPlan, type DayPlanBlock } from '../lib/ai'
+import type { Task, TimetableBlock } from '../lib/types'
 import { Button, Empty, GlassCard, Input, Modal, Page } from '../components/ui'
-import { SUBJECT_COLORS, cn, timeLabel } from '../lib/utils'
+import { SUBJECT_COLORS, cn, timeLabel, todayKey } from '../lib/utils'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const PLAN_CACHE_KEY = () => `fl:dayplan:${todayKey()}`
 
 export function PlannerPage() {
   const { rows, insert, remove } = useTable<TimetableBlock>('timetable_blocks')
+  const { rows: tasks } = useTable<Task>('tasks')
   const [day, setDay] = useState((new Date().getDay() + 6) % 7)
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
@@ -18,9 +21,82 @@ export function PlannerPage() {
   const [color, setColor] = useState(SUBJECT_COLORS[0])
   const [view, setView] = useState<'day' | 'week'>('day')
 
+  // ---- AI "Plan my day" ----
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [plan, setPlan] = useState<DayPlan | null>(null)
+  const [added, setAdded] = useState<Set<number>>(new Set())
+
   const toMin = (t: string) => {
     const [h, m] = t.split(':').map(Number)
     return h * 60 + m
+  }
+
+  const todayIdx = (new Date().getDay() + 6) % 7
+
+  function buildPlanContext() {
+    const now = new Date()
+    const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const pending = tasks
+      .filter((t) => !t.done)
+      .sort((a, b) => (b.priority - a.priority) || ((a.due_at ?? '9999') > (b.due_at ?? '9999') ? 1 : -1))
+      .slice(0, 8)
+      .map((t) =>
+        `- ${t.kind}${t.subject ? ` (${t.subject})` : ''}: ${t.title}` +
+        `${t.due_at ? `, due ${new Date(t.due_at).toLocaleDateString()}` : ''}` +
+        `${t.priority === 2 ? ' [high priority]' : ''}`)
+    const fixed = dayBlocks(todayIdx).map((b) => `- ${timeLabel(b.start_min)}–${timeLabel(b.end_min)}: ${b.title}`)
+    return [
+      `Current time: ${hhmm} on ${DAYS[todayIdx]}.`,
+      fixed.length ? `Fixed timetable blocks today (do NOT overlap these):\n${fixed.join('\n')}` : 'No fixed timetable blocks today.',
+      pending.length ? `Pending tasks:\n${pending.join('\n')}` : 'No pending tasks — suggest useful revision and skill-building blocks.',
+    ].join('\n\n')
+  }
+
+  async function openAiPlan(regenerate = false) {
+    setAiOpen(true)
+    if (!regenerate) {
+      // today's plan is cached so reopening it costs no AI call
+      try {
+        const cached = localStorage.getItem(PLAN_CACHE_KEY())
+        if (cached) { setPlan(JSON.parse(cached) as DayPlan); return }
+      } catch { /* regenerate below */ }
+      if (plan) return
+    }
+    if (aiLoading) return
+    setAiLoading(true)
+    setAiError('')
+    setPlan(null)
+    try {
+      const p = await planMyDay(buildPlanContext())
+      if (!p.blocks.length) throw new Error('Leo could not build a plan — please try again. 🦁')
+      setPlan(p)
+      setAdded(new Set())
+      try { localStorage.setItem(PLAN_CACHE_KEY(), JSON.stringify(p)) } catch { /* cache is best-effort */ }
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : 'Something went wrong.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  async function addPlanBlock(b: DayPlanBlock, idx: number) {
+    if (added.has(idx)) return
+    await insert({
+      title: `${b.emoji} ${b.title}`.trim(), subject: b.subject,
+      day_of_week: todayIdx, start_min: toMin(b.start), end_min: toMin(b.end),
+      color: SUBJECT_COLORS[idx % SUBJECT_COLORS.length],
+    } as Partial<TimetableBlock>)
+    setAdded((prev) => new Set(prev).add(idx))
+  }
+
+  async function addAllPlanBlocks() {
+    if (!plan) return
+    for (let idx = 0; idx < plan.blocks.length; idx++) {
+      if (!added.has(idx)) await addPlanBlock(plan.blocks[idx], idx)
+    }
+    setDay(todayIdx)
   }
 
   async function add() {
@@ -42,7 +118,7 @@ export function PlannerPage() {
       title="Planner"
       subtitle="Your daily timetable and weekly study plan."
       actions={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <div className="glass flex rounded-2xl p-1">
             {(['day', 'week'] as const).map((v) => (
               <button key={v}
@@ -56,6 +132,7 @@ export function PlannerPage() {
               </button>
             ))}
           </div>
+          <Button variant="soft" onClick={() => openAiPlan()}><Sparkles size={16} /> Plan my day</Button>
           <Button onClick={() => setOpen(true)}><Plus size={16} /> Add block</Button>
         </div>
       }
@@ -137,6 +214,52 @@ export function PlannerPage() {
           </div>
           <Button className="w-full" size="lg" onClick={add}>Add to timetable</Button>
         </div>
+      </Modal>
+
+      {/* ---- AI day plan ---- */}
+      <Modal open={aiOpen} onClose={() => setAiOpen(false)} title="🦁 Leo's plan for your day" wide>
+        {aiLoading ? (
+          <div className="flex flex-col items-center py-12 text-center">
+            <div className="animate-bounce text-5xl">🦁</div>
+            <p className="mt-3 font-bold text-slate-900 dark:text-white">Reading your tasks, exams and timetable…</p>
+            <p className="mt-1 text-sm text-slate-500">Building the smartest plan for the rest of today.</p>
+          </div>
+        ) : aiError ? (
+          <div className="space-y-3">
+            <p className="rounded-2xl bg-rose-500/10 px-4 py-3 text-sm font-medium text-rose-500">{aiError}</p>
+            <Button className="w-full" onClick={() => openAiPlan(true)}><RotateCw size={15} /> Try again</Button>
+          </div>
+        ) : plan ? (
+          <div className="space-y-3">
+            {plan.summary && (
+              <p className="rounded-2xl bg-brand-500/10 px-4 py-3 text-sm font-medium text-brand-600 dark:text-brand-300">
+                {plan.summary}
+              </p>
+            )}
+            <div className="space-y-2">
+              {plan.blocks.map((b, idx) => (
+                <div key={idx} className="flex items-center gap-3 rounded-2xl bg-white/40 dark:bg-white/5 px-4 py-3">
+                  <div className="text-xl">{b.emoji}</div>
+                  <div className="w-24 text-xs font-semibold text-slate-500">{b.start}<br />– {b.end}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-bold text-slate-900 dark:text-white">{b.title}</div>
+                    {b.subject && <div className="truncate text-xs text-slate-500">{b.subject}</div>}
+                  </div>
+                  <Button size="sm" variant={added.has(idx) ? 'ghost' : 'soft'} onClick={() => addPlanBlock(b, idx)} disabled={added.has(idx)}>
+                    {added.has(idx) ? <><Check size={14} /> Added</> : <><Plus size={14} /> Add</>}
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" className="flex-1" onClick={() => openAiPlan(true)}><RotateCw size={15} /> Regenerate</Button>
+              <Button className="flex-1" onClick={addAllPlanBlocks} disabled={added.size >= plan.blocks.length}>
+                <Sparkles size={15} /> Add all to today
+              </Button>
+            </div>
+            <p className="text-center text-[11px] text-slate-400">Blocks land on {DAYS[todayIdx]} in your timetable.</p>
+          </div>
+        ) : null}
       </Modal>
     </Page>
   )

@@ -298,6 +298,18 @@ export type LearningPath = {
   updated_at: string
 }
 
+// ---------- AI Quiz Arena ----------
+export type QuizResult = {
+  id: string
+  user_id: string
+  topic: string
+  difficulty: string
+  score: number
+  total: number
+  xp: number
+  created_at: string
+}
+
 // ---------- AI Career Coach ----------
 export type CareerReport = {
   readiness: number

@@ -312,6 +312,129 @@ export async function startupPlan(idea: string): Promise<StartupPlan> {
   }
 }
 
+// ---------- AI Quiz Arena ----------
+export type QuizQuestion = { q: string; options: string[]; answer: number; explain: string }
+
+/**
+ * AI quiz generator — multiple-choice questions on any topic, or on the
+ * user's own study material when `source` is given.
+ */
+export async function generateQuiz(
+  opts: { topic: string; difficulty: string; count: number; source?: string },
+): Promise<QuizQuestion[]> {
+  const src = opts.source?.trim()
+    ? ` Base every question ONLY on this study material:\n"""${opts.source.slice(0, 4000)}"""`
+    : ''
+  const prompt =
+    `Create a ${opts.count}-question multiple-choice quiz about "${opts.topic}" for a student. Difficulty: ${opts.difficulty}.` +
+    src +
+    ' Respond with ONLY a JSON object, no prose, no markdown: ' +
+    '{"questions":[{"q":"","options":["","","",""],"answer":0,"explain":""}]}. ' +
+    'Rules: exactly 4 plausible options per question; "answer" = the index (0-3) of the correct option — vary its position across questions; ' +
+    '"explain" = one short sentence on why that answer is correct. Questions must be clear, factual and unambiguous.'
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
+  const o = parseJson<{ questions?: unknown }>(raw)
+  return (Array.isArray(o?.questions) ? o!.questions : [])
+    .map((x) => {
+      const r = (x ?? {}) as Record<string, unknown>
+      const options = arr(r.options).map((s) => s.trim()).filter(Boolean).slice(0, 4)
+      return {
+        q: String(r.q ?? '').trim(),
+        options,
+        answer: Math.max(0, Math.min(options.length - 1, Math.round(Number(r.answer) || 0))),
+        explain: String(r.explain ?? '').trim(),
+      }
+    })
+    .filter((q) => q.q && q.options.length === 4)
+    .slice(0, opts.count)
+}
+
+// ---------- AI Day Planner ----------
+export type DayPlanBlock = { start: string; end: string; title: string; subject: string; emoji: string }
+export type DayPlan = { summary: string; blocks: DayPlanBlock[] }
+
+/** AI day planner — turns tasks/exams/timetable + the current time into an hour-by-hour plan for the rest of today. */
+export async function planMyDay(context: string): Promise<DayPlan> {
+  const prompt =
+    'You are a study planner. Build a realistic, motivating schedule for the REST of today from the student context below. ' +
+    'Respond with ONLY a JSON object, no prose: {"summary":"","blocks":[{"start":"HH:MM","end":"HH:MM","title":"","subject":"","emoji":""}]}. ' +
+    'Rules: 4-8 blocks; 24-hour times; start at or after the current time and end by 22:30; 25-90 minute work blocks with a short break after long stretches; ' +
+    'do NOT overlap the fixed timetable blocks; prioritize urgent/overdue tasks and upcoming exams; include one short wellbeing block (walk, water, stretch). ' +
+    '"summary" = one energetic sentence about the plan.\n\n' + context
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
+  const o = parseJson<{ summary?: unknown; blocks?: unknown }>(raw)
+  // "9:5" → "09:05"; anything that isn't a valid time drops the block
+  const hhmm = (s: unknown): string | null => {
+    const m = String(s ?? '').trim().match(/^(\d{1,2}):(\d{2})/)
+    if (!m) return null
+    return `${String(Math.min(23, Number(m[1]))).padStart(2, '0')}:${String(Math.min(59, Number(m[2]))).padStart(2, '0')}`
+  }
+  const blocks = (Array.isArray(o?.blocks) ? o!.blocks : [])
+    .map((x) => {
+      const r = (x ?? {}) as Record<string, unknown>
+      const start = hhmm(r.start)
+      const end = hhmm(r.end)
+      if (!start || !end || end <= start) return null
+      return {
+        start, end,
+        title: String(r.title ?? '').trim().slice(0, 80),
+        subject: String(r.subject ?? '').trim().slice(0, 40),
+        emoji: String(r.emoji ?? '📚').trim().slice(0, 4) || '📚',
+      }
+    })
+    .filter((b): b is DayPlanBlock => !!b && !!b.title)
+    .slice(0, 10)
+  return { summary: String(o?.summary ?? '').trim(), blocks }
+}
+
+// ---------- Weekly AI Insights ----------
+export type WeeklyInsights = {
+  headline: string
+  weekScore: number
+  patterns: string[]
+  recommendations: string[]
+  kudos: string
+}
+
+/** AI weekly insights — finds real patterns in the week's study/task/mood data. */
+export async function weeklyInsights(context: string): Promise<WeeklyInsights> {
+  const prompt =
+    "You are a data-savvy study coach. Analyze this student's week and find REAL patterns in the numbers. " +
+    'Respond with ONLY a JSON object, no prose: ' +
+    '{"headline":"","week_score":0,"patterns":["",""],"recommendations":["",""],"kudos":""}. ' +
+    '"headline" = one punchy sentence summarizing the week; "week_score" = 0-100 overall productivity score; ' +
+    '"patterns" = 2-4 specific observations grounded in the data (mention actual numbers, days or hours); ' +
+    '"recommendations" = exactly 3 concrete, doable actions for next week; "kudos" = one line celebrating their best win.\n\n' + context
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
+  const o = parseJson<Record<string, unknown>>(raw)
+  return {
+    headline: String(o?.headline ?? '').trim(),
+    weekScore: Math.max(0, Math.min(100, Math.round(Number(o?.week_score) || 0))),
+    patterns: arr(o?.patterns).map((s) => s.trim()).filter(Boolean).slice(0, 5),
+    recommendations: arr(o?.recommendations).map((s) => s.trim()).filter(Boolean).slice(0, 4),
+    kudos: String(o?.kudos ?? '').trim(),
+  }
+}
+
+/** AI flashcard maker — turns study material into question/answer cards. */
+export async function flashcardsFrom(text: string, count: number): Promise<{ front: string; back: string }[]> {
+  const prompt =
+    `Create ${count} flashcards from this study material. ` +
+    'Respond with ONLY a JSON object, no prose: {"cards":[{"front":"","back":""}]}. ' +
+    '"front" = a short question, term or fill-in-the-blank; "back" = the concise answer (max 2 sentences). ' +
+    'Cover the MOST important facts; no duplicate cards; keep both sides short.\n\nMaterial:\n"""' +
+    text.slice(0, 4000) + '"""'
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
+  const o = parseJson<{ cards?: unknown }>(raw)
+  return (Array.isArray(o?.cards) ? o!.cards : [])
+    .map((x) => {
+      const r = (x ?? {}) as Record<string, unknown>
+      return { front: String(r.front ?? '').trim().slice(0, 300), back: String(r.back ?? '').trim().slice(0, 400) }
+    })
+    .filter((c) => c.front && c.back)
+    .slice(0, Math.max(count, 20))
+}
+
 /** Generate today's personalized mission. Returns parsed {title, detail, xp}. */
 export async function generateMission(context: string): Promise<{ title: string; detail: string; xp: number }> {
   const raw = await askLion({ task: 'mission', input: context })

@@ -6,6 +6,7 @@ import {
   BarChart3, Trophy, Bot, FileText, Settings, Search, CornerDownLeft,
   Clapperboard, Hourglass, GraduationCap, BookOpen, Salad, Briefcase, Rocket,
   MessageCircle, Users, Download, Moon, Sun, LogOut, Crown, ArrowRight, Clock,
+  Swords, Sparkles,
 } from 'lucide-react'
 import { useTable } from '../hooks/db'
 import { useApp } from '../store/app'
@@ -147,6 +148,8 @@ export function CommandPalette() {
       { to: '/wellbeing', label: 'Digital Wellbeing', icon: <Shield size={17} />, keywords: ['screen time', 'app limit', 'app blocker', 'social', 'guard', 'detox', 'instagram limit'] },
       { to: '/capsule', label: 'Future Me', icon: <Hourglass size={17} />, keywords: ['time capsule', 'future', 'letter', 'growth', 'goals'] },
       { to: '/learn', label: 'Learn', icon: <GraduationCap size={17} />, keywords: ['roadmap', 'learning path', 'course', 'study plan', 'skills', 'topic'] },
+      { to: '/quiz', label: 'Quiz Arena', icon: <Swords size={17} />, keywords: ['quiz', 'test', 'mcq', 'questions', 'practice', 'exam prep', 'trivia', 'ai quiz'] },
+      { to: '/insights', label: 'AI Insights', icon: <Sparkles size={17} />, keywords: ['weekly report', 'patterns', 'ai insights', 'recommendations', 'mood', 'focus hours', 'week score'] },
       { to: '/vocab', label: 'Word of the Day', icon: <BookOpen size={17} />, keywords: ['vocabulary', 'english', 'word', 'dictionary', 'meaning'] },
       { to: '/diet', label: 'Diet', icon: <Salad size={17} />, keywords: ['meal', 'food', 'nutrition', 'calories', 'protein', 'recipe', 'indian', 'plan'] },
       { to: '/career', label: 'Career Coach', icon: <Briefcase size={17} />, keywords: ['job', 'resume', 'cv', 'interview', 'readiness', 'role'] },
