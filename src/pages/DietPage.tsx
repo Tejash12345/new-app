@@ -313,7 +313,9 @@ export function DietPage() {
                   {recipe.ingredients.map((ing, i) => (
                     <li key={i} className="flex items-start gap-2.5">
                       <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-                      <span className="break-words text-sm text-slate-700 dark:text-slate-200">{ing}</span>
+                      <span className="min-w-0 flex-1 break-words text-sm text-slate-700 dark:text-slate-200">{ing}</span>
+                      <button type="button" onClick={() => voice.play(ing, language)} aria-label="Speak this ingredient"
+                        className="mt-0.5 shrink-0 text-slate-300 transition hover:text-brand-500 active:scale-90"><Volume2 size={13} /></button>
                     </li>
                   ))}
                 </ul>
@@ -321,19 +323,32 @@ export function DietPage() {
             )}
             {recipe.steps.length > 0 && (
               <div>
-                <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">How to prepare</div>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">How to prepare</span>
+                  <button type="button" aria-label="Read all steps aloud"
+                    onClick={() => voice.play(recipe.steps.map((s, i) => `${i + 1}. ${s}`).join('. '), language)}
+                    className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-bold text-brand-600 transition hover:bg-brand-500/20 active:scale-95 dark:text-brand-300">
+                    <Volume2 size={12} /> Listen
+                  </button>
+                </div>
                 <ol className="space-y-2.5">
                   {recipe.steps.map((st, i) => (
                     <li key={i} className="flex gap-2.5">
                       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-[11px] font-bold text-white">{i + 1}</span>
-                      <span className="break-words text-sm leading-relaxed text-slate-700 dark:text-slate-200">{st}</span>
+                      <span className="min-w-0 flex-1 break-words text-sm leading-relaxed text-slate-700 dark:text-slate-200">{st}</span>
+                      <button type="button" onClick={() => voice.play(st, language)} aria-label="Speak this step"
+                        className="mt-0.5 shrink-0 text-slate-300 transition hover:text-brand-500 active:scale-90"><Volume2 size={13} /></button>
                     </li>
                   ))}
                 </ol>
               </div>
             )}
             {recipe.tip && (
-              <div className="rounded-2xl bg-amber-400/10 px-3.5 py-2.5 text-sm text-amber-700 dark:text-amber-300">💡 {recipe.tip}</div>
+              <div className="flex items-start gap-2 rounded-2xl bg-amber-400/10 px-3.5 py-2.5 text-sm text-amber-700 dark:text-amber-300">
+                <span className="min-w-0 flex-1">💡 {recipe.tip}</span>
+                <button type="button" onClick={() => voice.play(recipe.tip, language)} aria-label="Speak tip"
+                  className="mt-0.5 shrink-0 text-amber-500/70 transition hover:text-amber-600 active:scale-90"><Volume2 size={13} /></button>
+              </div>
             )}
           </div>
         ) : null}
