@@ -213,6 +213,8 @@ export function QuizPage() {
   const { rows: notes } = useTable<Note>('notes', { orderBy: 'updated_at' })
 
   const [phase, setPhase] = useState<Phase>('setup')
+  // two-step setup keeps the mobile UI clean: pick an exam, then configure
+  const [stage, setStage] = useState<'pick' | 'config'>('pick')
   const [exam, setExam] = useState<ExamSpec | null>(null)   // null = custom topic mode
   const [subject, setSubject] = useState('Mixed')
   const [qsrc, setQsrc] = useState<'pyq' | 'repeated' | 'fresh'>('pyq')
@@ -402,10 +404,9 @@ export function QuizPage() {
     <Page title="Quiz Arena" subtitle="Pick any topic — Leo builds the quiz, you earn the XP. ⚔️">
       {phase === 'setup' && (
         <div className="grid gap-5 lg:grid-cols-3">
-          <GlassCard className="lg:col-span-2">
-            <SectionTitle>Pick your exam</SectionTitle>
-            <div className="space-y-4">
-              {/* exam categories */}
+          {stage === 'pick' ? (
+            <GlassCard className="lg:col-span-2">
+              <SectionTitle>Pick your exam</SectionTitle>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                 {EXAMS.map((ex) => (
                   <button key={ex.key}
@@ -415,9 +416,10 @@ export function QuizPage() {
                       setNoteId('')
                       setTopic('')
                       setQtype('Standard MCQ')
+                      setStage('config')
                     }}
                     className={cn(
-                      'min-w-0 rounded-2xl border p-2.5 sm:p-3 text-left transition',
+                      'min-w-0 rounded-2xl border p-2.5 sm:p-3 text-left transition active:scale-95',
                       exam?.key === ex.key
                         ? 'border-brand-400/60 bg-brand-500/15 shadow-lg shadow-brand-500/20'
                         : 'glass border-transparent hover:bg-brand-500/10',
@@ -428,9 +430,9 @@ export function QuizPage() {
                   </button>
                 ))}
                 <button
-                  onClick={() => setExam(null)}
+                  onClick={() => { setExam(null); setTopic(''); setNoteId(''); setStage('config') }}
                   className={cn(
-                    'min-w-0 rounded-2xl border p-2.5 sm:p-3 text-left transition',
+                    'min-w-0 rounded-2xl border p-2.5 sm:p-3 text-left transition active:scale-95',
                     exam === null
                       ? 'border-brand-400/60 bg-brand-500/15 shadow-lg shadow-brand-500/20'
                       : 'glass border-transparent hover:bg-brand-500/10',
@@ -440,11 +442,45 @@ export function QuizPage() {
                   <div className="truncate text-[10px] text-slate-500">Anything, or a note</div>
                 </button>
               </div>
+            </GlassCard>
+          ) : (
+          <GlassCard className="lg:col-span-2">
+            {/* selected exam header + change */}
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-500/15 text-2xl">
+                {exam?.emoji ?? '✏️'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-base font-extrabold text-slate-900 dark:text-white">{exam?.name ?? 'My topic'}</div>
+                <div className="truncate text-xs text-slate-500">{exam?.tagline ?? 'Anything you want, or one of your notes'}</div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setStage('pick')}>Change</Button>
+            </div>
+            <div className="space-y-4">
+              {/* custom topic mode */}
+              {!exam && (
+                <>
+                  <Input
+                    placeholder="Topic — e.g. Photosynthesis, World War 2, Python basics…"
+                    value={topic} onChange={(e) => setTopic(e.target.value)}
+                  />
+                  {notes.length > 0 && (
+                    <div>
+                      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Quiz me on one of my notes (optional)</div>
+                      <select value={noteId} onChange={(e) => setNoteId(e.target.value)}
+                        className="w-full rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-3 py-2.5 text-sm text-slate-900 dark:text-white dark:[&>option]:bg-slate-800">
+                        <option value="">No — just the topic above</option>
+                        {notes.map((n) => <option key={n.id} value={n.id}>{n.title || '(untitled note)'}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </>
+              )}
 
               {/* subject for the chosen exam — pills, or a dropdown for big syllabi (NORCET) */}
               {exam && (
                 <div>
-                  <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">{exam.emoji} {exam.name} — subject</div>
+                  <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Subject</div>
                   {exam.subjects.length > 8 ? (
                     <select value={subject} onChange={(e) => { setSubject(e.target.value); setTopic('') }}
                       className="w-full rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-3 py-2.5 text-sm text-slate-900 dark:text-white dark:[&>option]:bg-slate-800">
@@ -593,26 +629,6 @@ export function QuizPage() {
                 )}
               </div>
 
-              {/* custom topic mode */}
-              {!exam && (
-                <>
-                  <Input
-                    placeholder="Topic — e.g. Photosynthesis, World War 2, Python basics…"
-                    value={topic} onChange={(e) => setTopic(e.target.value)}
-                  />
-                  {notes.length > 0 && (
-                    <div>
-                      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Quiz me on one of my notes (optional)</div>
-                      <select value={noteId} onChange={(e) => setNoteId(e.target.value)}
-                        className="w-full rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-3 py-2.5 text-sm text-slate-900 dark:text-white dark:[&>option]:bg-slate-800">
-                        <option value="">No — just the topic above</option>
-                        {notes.map((n) => <option key={n.id} value={n.id}>{n.title || '(untitled note)'}</option>)}
-                      </select>
-                    </div>
-                  )}
-                </>
-              )}
-
               <div>
                 <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Difficulty</div>
                 <div className="flex gap-2">
@@ -642,18 +658,19 @@ export function QuizPage() {
                 </div>
               </div>
               {error && <p className="rounded-2xl bg-rose-500/10 px-4 py-2.5 text-sm font-medium text-rose-500">{error}</p>}
-              <div className="flex gap-2">
-                {exam && (
-                  <Button variant="soft" size="lg" onClick={openPlanner}>
-                    <CalendarDays size={17} /> Study plan
-                  </Button>
-                )}
-                <Button className="flex-1" size="lg" onClick={start} disabled={!exam && !topic.trim() && !noteId}>
+              <div className="space-y-2 pt-1">
+                <Button className="w-full" size="lg" onClick={start} disabled={!exam && !topic.trim() && !noteId}>
                   <Swords size={17} /> Start {exam ? `${exam.name} ${mock ? 'mock' : 'quiz'}` : 'quiz'}
                 </Button>
+                {exam && (
+                  <Button variant="soft" className="w-full" onClick={openPlanner}>
+                    <CalendarDays size={16} /> Build my {exam.name} study plan
+                  </Button>
+                )}
               </div>
             </div>
           </GlassCard>
+          )}
 
           <GlassCard>
             <SectionTitle>Your record</SectionTitle>
@@ -836,7 +853,7 @@ export function QuizPage() {
               </div>
             )}
             <div className="mt-5 flex gap-3">
-              <Button variant="soft" className="flex-1" onClick={() => { setPhase('setup'); setTopic('') }}>
+              <Button variant="soft" className="flex-1" onClick={() => { setPhase('setup'); setStage('pick'); setTopic('') }}>
                 <Sparkles size={15} /> New quiz
               </Button>
               <Button className="flex-1" onClick={start}>
