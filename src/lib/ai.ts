@@ -391,6 +391,51 @@ export async function explainQuizQuestion(
   return askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
 }
 
+// ---------- AI Exam Study Planner ----------
+export type ExamStudyPlan = {
+  summary: string
+  phases: { title: string; detail: string }[]
+  dailyRoutine: string[]
+  mockSchedule: string
+  tips: string[]
+}
+
+/**
+ * Personalized exam study plan — days left + hours/day + level in,
+ * phased syllabus coverage, a daily routine, a mock-test calendar and
+ * exam-specific tips out.
+ */
+export async function examStudyPlan(
+  opts: { exam: string; daysLeft: number; hoursPerDay: number; level: string },
+): Promise<ExamStudyPlan> {
+  const prompt =
+    `You are an expert ${opts.exam} coach. Create a personalized study plan. ` +
+    `Days until the exam: ${opts.daysLeft}. Study hours available per day: ${opts.hoursPerDay}. Current preparation level: ${opts.level}. ` +
+    'Respond with ONLY a JSON object, no prose: ' +
+    '{"summary":"","phases":[{"title":"","detail":""}],"daily_routine":["",""],"mock_schedule":"","tips":["",""]}. ' +
+    `"summary" = one motivating sentence sizing up the runway; ` +
+    `"phases" = 3-5 study phases dividing the ${opts.daysLeft} days (title like "Days 1-20: Foundations", detail = which subjects/topics + strategy, weighted toward high-yield areas for this exam and the student's level); ` +
+    `"daily_routine" = 4-6 short bullets filling ${opts.hoursPerDay} hours (new topics, revision, MCQ practice, flashcards, breaks); ` +
+    '"mock_schedule" = one line on when and how often to take mock tests as the exam nears; ' +
+    '"tips" = 3 sharp, exam-specific tips. Keep every string short and concrete.'
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
+  const o = parseJson<Record<string, unknown>>(raw)
+  const phases = (Array.isArray(o?.phases) ? o!.phases : [])
+    .map((x) => {
+      const r = (x ?? {}) as Record<string, unknown>
+      return { title: String(r.title ?? '').trim().slice(0, 80), detail: String(r.detail ?? '').trim().slice(0, 400) }
+    })
+    .filter((p) => p.title)
+    .slice(0, 6)
+  return {
+    summary: String(o?.summary ?? '').trim(),
+    phases,
+    dailyRoutine: arr(o?.daily_routine).map((s) => s.trim()).filter(Boolean).slice(0, 8),
+    mockSchedule: String(o?.mock_schedule ?? '').trim(),
+    tips: arr(o?.tips).map((s) => s.trim()).filter(Boolean).slice(0, 5),
+  }
+}
+
 // ---------- AI Day Planner ----------
 export type DayPlanBlock = { start: string; end: string; title: string; subject: string; emoji: string }
 export type DayPlan = { summary: string; blocks: DayPlanBlock[] }
