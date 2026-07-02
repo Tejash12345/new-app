@@ -324,10 +324,18 @@ export type QuizQuestion = { q: string; options: string[]; answer: number; expla
  * frequently repeated questions across years; 'fresh' (default) = new ones.
  */
 export async function generateQuiz(
-  opts: { topic: string; difficulty: string; count: number; source?: string; style?: string; mode?: 'fresh' | 'pyq' | 'repeated' },
+  opts: {
+    topic: string; difficulty: string; count: number
+    source?: string; style?: string; mode?: 'fresh' | 'pyq' | 'repeated'
+    /** question texts already shown — batching (20-Q quizzes) passes the first batch here to avoid duplicates */
+    avoid?: string[]
+  },
 ): Promise<QuizQuestion[]> {
   const src = opts.source?.trim()
     ? ` Base every question ONLY on this study material:\n"""${opts.source.slice(0, 4000)}"""`
+    : ''
+  const avoid = opts.avoid?.length
+    ? ` Do NOT repeat any of these already-asked questions: ${opts.avoid.map((a) => `"${a.slice(0, 60)}"`).join('; ')}.`
     : ''
   const style = opts.style?.trim() ? ` Question style: ${opts.style.trim()}.` : ''
   const pyq =
@@ -343,7 +351,7 @@ export async function generateQuiz(
         : ' Set "asked" to an empty string "" for every question.'
   const prompt =
     `Create a ${opts.count}-question multiple-choice quiz about "${opts.topic}" for a student. Difficulty: ${opts.difficulty}.` +
-    style + pyq + src +
+    style + pyq + src + avoid +
     ' Respond with ONLY a JSON object, no prose, no markdown: ' +
     '{"questions":[{"q":"","options":["","","",""],"answer":0,"explain":"","asked":""}]}. ' +
     'Rules: exactly 4 plausible options per question; "answer" = the index (0-3) of the correct option — vary its position across questions; ' +
@@ -385,9 +393,30 @@ export async function explainQuizQuestion(
     '📖 Concept — the core concept behind this question in 2-3 simple sentences (include key dates/years if the fact is time-based).\n' +
     '✅ Why this answer — why the correct option is right.\n' +
     '❌ Why not the others — one short line each on why the other options are wrong.\n' +
+    '💎 Clinical pearl — one high-yield clinical/practical point examiners love (skip this line for non-clinical topics).\n' +
     '🧠 Memory trick — one mnemonic or quick way to remember it.\n' +
-    '📚 Revise next — 2-3 related sub-topics to study for this exam.\n' +
-    'Plain text only (no markdown symbols like ** or #), under 200 words, simple words a student understands.'
+    '📚 Reference & revise — the standard textbook/reference for this fact plus 2-3 related sub-topics to study, and how frequently this concept appears in the exam (e.g. "asked almost every year").\n' +
+    'Plain text only (no markdown symbols like ** or #), under 230 words, simple words a student understands.'
+  return askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
+}
+
+/**
+ * Mini-lesson on the concept behind a question — a structured teach-me
+ * card (definition, key points, management, nursing role, mnemonic).
+ * Plain text, on demand.
+ */
+export async function teachTopic(concept: string, examName: string): Promise<string> {
+  const prompt =
+    `You are Leo, a friendly ${examName} faculty tutor. Teach the topic behind this, from scratch, to a student who got it wrong: "${concept.slice(0, 400)}".\n` +
+    'Use these exact section headers on their own lines (skip any that do not apply):\n' +
+    '📖 What it is — simple definition, 2-3 sentences.\n' +
+    '🔑 Key points — 3-5 must-know facts (values, classifications, criteria).\n' +
+    '⚠️ Signs & red flags — what presentation/findings to recognise.\n' +
+    '💊 Management — first-line treatment/action in exam terms.\n' +
+    '🩺 Nursing role — what the nurse assesses/does first (if a nursing exam).\n' +
+    '🧠 Mnemonic — one memory aid.\n' +
+    '⭐ High-yield — 2-3 points this exam repeatedly asks about this topic.\n' +
+    'Plain text only (no ** or #), under 260 words, simple language.'
   return askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
 }
 
