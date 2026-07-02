@@ -98,6 +98,7 @@ export function QuizPage() {
   const [phase, setPhase] = useState<Phase>('setup')
   const [exam, setExam] = useState<ExamSpec | null>(null)   // null = custom topic mode
   const [subject, setSubject] = useState('Mixed')
+  const [pyq, setPyq] = useState(true)                      // previous-year questions vs fresh practice
   const [topic, setTopic] = useState('')
   const [difficulty, setDifficulty] = useState<(typeof DIFFICULTIES)[number]>('Medium')
   const [count, setCount] = useState<(typeof COUNTS)[number]>(5)
@@ -120,13 +121,13 @@ export function QuizPage() {
       ? (subject === 'Mixed' ? `the full ${exam.name} syllabus` : `${subject} (${exam.name} syllabus)`)
       : (topic.trim() || note?.title.trim() || '')
     const label = exam
-      ? `${exam.emoji} ${exam.name}${subject !== 'Mixed' ? ` · ${subject}` : ''}`
+      ? `${exam.emoji} ${exam.name}${subject !== 'Mixed' ? ` · ${subject}` : ''}${pyq ? ' · 📜 PYQ' : ''}`
       : (topic.trim() || note?.title.trim() || '')
     if (!aiTopic) return
     setPhase('loading')
     setError('')
     try {
-      const qs = await generateQuiz({ topic: aiTopic, difficulty, count, source: source || undefined, style: exam?.style })
+      const qs = await generateQuiz({ topic: aiTopic, difficulty, count, source: source || undefined, style: exam?.style, pyq: !!exam && pyq })
       if (qs.length < 3) throw new Error('Leo could not build that quiz — try a clearer topic. 🦁')
       setPlayedTopic(label)
       setQuestions(qs)
@@ -222,6 +223,34 @@ export function QuizPage() {
                       </button>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* PYQ vs fresh practice */}
+              {exam && (
+                <div>
+                  <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Question source</div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setPyq(true)}
+                      className={cn(
+                        'flex-1 rounded-2xl px-4 py-2.5 text-sm font-bold transition',
+                        pyq ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-white shadow-lg shadow-amber-500/30' : 'glass text-slate-600 dark:text-slate-300',
+                      )}>
+                      📜 Previous year Qs
+                    </button>
+                    <button onClick={() => setPyq(false)}
+                      className={cn(
+                        'flex-1 rounded-2xl px-4 py-2.5 text-sm font-bold transition',
+                        !pyq ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg shadow-brand-500/30' : 'glass text-slate-600 dark:text-slate-300',
+                      )}>
+                      ✨ Fresh practice
+                    </button>
+                  </div>
+                  {pyq && (
+                    <p className="mt-1.5 text-[11px] text-slate-400">
+                      Leo recalls real past-paper questions and tags each with the exam session (month/year). For final revision, cross-check with official papers.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -347,6 +376,11 @@ export function QuizPage() {
           </div>
 
           <GlassCard>
+            {q.asked && (
+              <div className="mb-2.5 inline-flex items-center gap-1.5 rounded-full bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-600 dark:text-amber-300">
+                📜 {q.asked === 'PYQ-style' ? 'PYQ-style question' : `Asked in ${q.asked}`}
+              </div>
+            )}
             <div className="mb-4 text-lg font-bold text-slate-900 dark:text-white">{q.q}</div>
             <div className="space-y-2.5">
               {q.options.map((opt, idx) => {

@@ -313,27 +313,35 @@ export async function startupPlan(idea: string): Promise<StartupPlan> {
 }
 
 // ---------- AI Quiz Arena ----------
-export type QuizQuestion = { q: string; options: string[]; answer: number; explain: string }
+export type QuizQuestion = { q: string; options: string[]; answer: number; explain: string; asked: string }
 
 /**
  * AI quiz generator — multiple-choice questions on any topic, or on the
  * user's own study material when `source` is given. `style` (optional)
  * makes questions match a real exam's pattern (NEET, JEE, NORCET…).
+ * `pyq` asks for real previous-year questions, each tagged in `asked` with
+ * the exam session it appeared in (e.g. "NEET 2022", "JEE Main Jan 2023").
  */
 export async function generateQuiz(
-  opts: { topic: string; difficulty: string; count: number; source?: string; style?: string },
+  opts: { topic: string; difficulty: string; count: number; source?: string; style?: string; pyq?: boolean },
 ): Promise<QuizQuestion[]> {
   const src = opts.source?.trim()
     ? ` Base every question ONLY on this study material:\n"""${opts.source.slice(0, 4000)}"""`
     : ''
   const style = opts.style?.trim() ? ` Question style: ${opts.style.trim()}.` : ''
+  const pyq = opts.pyq
+    ? ' Use REAL previous-year questions (PYQs) from actual past papers of this exam, reproduced as accurately as you remember them. ' +
+      'Fill "asked" with the exam name and session each question appeared in — as specific as you genuinely know it, e.g. "NEET 2022", "JEE Main Jan 2023", "NORCET Nov 2023" (month + year when you know it, otherwise the year alone). ' +
+      'If you are NOT certain a question is a real PYQ, write "PYQ-style" in "asked" instead of inventing a year — never guess dates.'
+    : ' Set "asked" to an empty string "" for every question.'
   const prompt =
     `Create a ${opts.count}-question multiple-choice quiz about "${opts.topic}" for a student. Difficulty: ${opts.difficulty}.` +
-    style + src +
+    style + pyq + src +
     ' Respond with ONLY a JSON object, no prose, no markdown: ' +
-    '{"questions":[{"q":"","options":["","","",""],"answer":0,"explain":""}]}. ' +
+    '{"questions":[{"q":"","options":["","","",""],"answer":0,"explain":"","asked":""}]}. ' +
     'Rules: exactly 4 plausible options per question; "answer" = the index (0-3) of the correct option — vary its position across questions; ' +
-    '"explain" = one short sentence on why that answer is correct. Questions must be clear, factual and unambiguous.'
+    '"explain" = one short sentence on why that answer is correct — include the relevant date, month or year when the fact is time-based. ' +
+    'Questions must be clear, factual and unambiguous.'
   const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] })
   const o = parseJson<{ questions?: unknown }>(raw)
   return (Array.isArray(o?.questions) ? o!.questions : [])
@@ -345,6 +353,8 @@ export async function generateQuiz(
         options,
         answer: Math.max(0, Math.min(options.length - 1, Math.round(Number(r.answer) || 0))),
         explain: String(r.explain ?? '').trim(),
+        // only trust the year tag in PYQ mode — otherwise force it empty
+        asked: opts.pyq ? String(r.asked ?? '').trim().slice(0, 60) : '',
       }
     })
     .filter((q) => q.q && q.options.length === 4)
