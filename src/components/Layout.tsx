@@ -266,17 +266,20 @@ export function Layout() {
       </header>
 
       {/* ---- content ---- */}
-      <main className="min-w-0 overflow-x-hidden pb-32 lg:pb-8 lg:pl-68" key={location.pathname}>
+      {/* mobile bottom padding clears the bottom nav AND the floating lion
+          button (bottom-28 + h-14 = 168px) plus any gesture-bar safe area */}
+      <main className="min-w-0 overflow-x-hidden pb-[calc(11.5rem+env(safe-area-inset-bottom))] lg:pb-8 lg:pl-68" key={location.pathname}>
         <div className="min-w-0 lg:pl-4">
           <Outlet />
         </div>
       </main>
 
       {/* ---- mobile bottom nav ---- */}
-      <nav className="fixed bottom-3 left-3 right-3 z-40 lg:hidden">
-        <div className="glass-strong flex items-center justify-around rounded-3xl px-2 py-2">
+      <nav className="fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom))] left-3 right-3 z-40 lg:hidden">
+        {/* items are flex-1 min-w-0 so all six fit even on 320px screens */}
+        <div className="glass-strong flex items-center justify-around rounded-3xl px-1 py-2 sm:px-2">
           {NAV.slice(0, 5).map(({ to, icon: Icon, label }) => (
-            <NavLink key={to} to={to} end={to === '/'} className="flex flex-col items-center gap-0.5 px-2 py-1">
+            <NavLink key={to} to={to} end={to === '/'} className="flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 py-1">
               {({ isActive }) => (
                 <>
                   <div className={cn(
@@ -285,18 +288,18 @@ export function Layout() {
                   )}>
                     <Icon size={19} />
                   </div>
-                  <span className={cn('text-[9px] font-semibold', isActive ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400')}>{label}</span>
+                  <span className={cn('max-w-full truncate text-[9px] font-semibold', isActive ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400')}>{label}</span>
                 </>
               )}
             </NavLink>
           ))}
-          <button onClick={() => setMenuOpen(true)} className="flex flex-col items-center gap-0.5 px-2 py-1">
+          <button onClick={() => setMenuOpen(true)} className="flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 py-1">
             {withRing(
               <div className="flex h-[35px] w-[35px] items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-bold text-white">
                 {avatarNode}
               </div>,
             )}
-            <span className="text-[9px] font-semibold text-slate-400">Profile</span>
+            <span className="max-w-full truncate text-[9px] font-semibold text-slate-400">Profile</span>
           </button>
         </div>
       </nav>

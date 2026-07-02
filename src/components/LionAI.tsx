@@ -94,7 +94,7 @@ export function LionAI() {
         aria-label="Lion AI Assistant"
         // Bottom-LEFT on mobile so it never collides with the app-blocker shield
         // (which lives bottom-right in the Android wrapper); bottom-right on desktop.
-        className="fixed bottom-28 left-4 z-[55] flex h-14 w-14 items-center justify-center rounded-full text-2xl shadow-xl transition active:scale-95 lg:bottom-6 lg:left-auto lg:right-6"
+        className="fixed bottom-[calc(7rem+env(safe-area-inset-bottom))] left-4 z-[55] flex h-14 w-14 items-center justify-center rounded-full text-2xl shadow-xl transition active:scale-95 lg:bottom-6 lg:left-auto lg:right-6"
         style={{ background: 'linear-gradient(135deg,#FFB454,#FF7A1A)', boxShadow: '0 8px 24px rgba(255,140,0,.45)' }}
       >
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-25" />
