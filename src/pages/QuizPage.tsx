@@ -405,7 +405,7 @@ export function QuizPage() {
       {phase === 'setup' && (
         <div className="grid gap-5 lg:grid-cols-3">
           {stage === 'pick' ? (
-            <GlassCard className="lg:col-span-2">
+            <GlassCard className="min-w-0 lg:col-span-2">
               <SectionTitle>Pick your exam</SectionTitle>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                 {EXAMS.map((ex) => (
@@ -444,7 +444,7 @@ export function QuizPage() {
               </div>
             </GlassCard>
           ) : (
-          <GlassCard className="lg:col-span-2">
+          <GlassCard className="min-w-0 lg:col-span-2">
             {/* selected exam header + change */}
             <div className="mb-4 flex items-center gap-3">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-500/15 text-2xl">
@@ -461,7 +461,8 @@ export function QuizPage() {
               {!exam && (
                 <>
                   <Input
-                    placeholder="Topic — e.g. Photosynthesis, World War 2, Python basics…"
+                    className="min-w-0"
+                    placeholder="Topic — e.g. Photosynthesis, Python…"
                     value={topic} onChange={(e) => setTopic(e.target.value)}
                   />
                   {notes.length > 0 && (
@@ -672,7 +673,7 @@ export function QuizPage() {
           </GlassCard>
           )}
 
-          <GlassCard>
+          <GlassCard className="min-w-0">
             <SectionTitle>Your record</SectionTitle>
             {history.length === 0 ? (
               <Empty emoji="⚔️" text={'No quizzes yet.\nYour scores and streaks will show here.'} />
