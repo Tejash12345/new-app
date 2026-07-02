@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Sparkles, Swords, RotateCw, CheckCircle2, XCircle, CalendarDays, Timer } from 'lucide-react'
+import { ArrowLeft, Sparkles, Swords, RotateCw, CheckCircle2, XCircle, CalendarDays, Timer } from 'lucide-react'
 import { useTable } from '../hooks/db'
 import { useAuth } from '../hooks/useAuth'
 import { examStudyPlan, explainQuizQuestion, generateQuiz, type ExamStudyPlan, type QuizQuestion } from '../lib/ai'
@@ -445,8 +445,15 @@ export function QuizPage() {
             </GlassCard>
           ) : (
           <GlassCard className="min-w-0 lg:col-span-2">
-            {/* selected exam header + change */}
+            {/* selected exam header + back arrow to the exam picker */}
             <div className="mb-4 flex items-center gap-3">
+              <button
+                onClick={() => setStage('pick')}
+                aria-label="Back to all exams"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-500/10 text-slate-600 transition hover:bg-slate-500/20 active:scale-95 dark:bg-white/10 dark:text-slate-200"
+              >
+                <ArrowLeft size={19} />
+              </button>
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-500/15 text-2xl">
                 {exam?.emoji ?? '✏️'}
               </div>
@@ -454,7 +461,6 @@ export function QuizPage() {
                 <div className="truncate text-base font-extrabold text-slate-900 dark:text-white">{exam?.name ?? 'My topic'}</div>
                 <div className="truncate text-xs text-slate-500">{exam?.tagline ?? 'Anything you want, or one of your notes'}</div>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => setStage('pick')}>Change</Button>
             </div>
             <div className="space-y-4">
               {/* custom topic mode */}
