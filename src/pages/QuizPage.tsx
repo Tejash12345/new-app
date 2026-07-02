@@ -553,6 +553,13 @@ export function QuizPage() {
     setPhase('playing')
   }
 
+  /** leave a running quiz and return to the setup screen (progress is discarded). */
+  function quitQuiz() {
+    if (!confirm('Leave this quiz? Your progress will not be saved.')) return
+    voice.stop()
+    setPhase('setup')
+  }
+
   /** replay stored questions (Wrong-answers / Bookmarks) with no AI call. */
   function revise(store: SavedQ[], label: string) {
     if (store.length < 1) return
@@ -1176,27 +1183,36 @@ export function QuizPage() {
 
       {phase === 'playing' && q && (
         <div className="mx-auto max-w-2xl">
-          {/* progress */}
-          <div className="mb-4">
-            <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-slate-500">
-              <span>Question {i + 1} of {questions.length}</span>
-              <span className="flex items-center gap-2.5">
-                {wasMock && remaining > 0 && (
-                  <span className={cn(
-                    'flex items-center gap-1 rounded-full px-2 py-0.5',
-                    remaining <= 60 ? 'animate-pulse bg-rose-500/15 text-rose-500' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300',
-                  )}>
-                    <Timer size={12} /> {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}
-                  </span>
-                )}
-                <span className="text-emerald-500">{correct} correct</span>
-              </span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-slate-200/70 dark:bg-white/10">
-              <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-brand-500 to-purple-500"
-                animate={{ width: `${((i + (picked !== null ? 1 : 0)) / questions.length) * 100}%` }}
-              />
+          {/* back to setup + progress */}
+          <div className="mb-4 flex items-center gap-3">
+            <button
+              onClick={quitQuiz}
+              aria-label="Leave quiz and go back"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-500/10 text-slate-600 transition hover:bg-slate-500/20 active:scale-95 dark:bg-white/10 dark:text-slate-200"
+            >
+              <ArrowLeft size={19} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="mb-1.5 flex items-center justify-between text-xs font-bold text-slate-500">
+                <span>Question {i + 1} of {questions.length}</span>
+                <span className="flex items-center gap-2.5">
+                  {wasMock && remaining > 0 && (
+                    <span className={cn(
+                      'flex items-center gap-1 rounded-full px-2 py-0.5',
+                      remaining <= 60 ? 'animate-pulse bg-rose-500/15 text-rose-500' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300',
+                    )}>
+                      <Timer size={12} /> {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}
+                    </span>
+                  )}
+                  <span className="text-emerald-500">{correct} correct</span>
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-slate-200/70 dark:bg-white/10">
+                <motion.div
+                  className="h-full rounded-full bg-gradient-to-r from-brand-500 to-purple-500"
+                  animate={{ width: `${((i + (picked !== null ? 1 : 0)) / questions.length) * 100}%` }}
+                />
+              </div>
             </div>
           </div>
 
