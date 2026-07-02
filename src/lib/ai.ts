@@ -224,29 +224,8 @@ export async function recipeFor(dish: string, ctx?: { diet?: string; region?: st
     ctx?.diet && ctx.diet !== 'Non-vegetarian' ? ctx.diet.toLowerCase() : '',
   ].filter(Boolean).join(', ')
   const lang = (ctx?.language ?? 'English').trim()
-  // Read easily on a phone AND sound natural when spoken aloud by the voice
-  // reader: use simple, modern, everyday words — not old/bookish/literary ones.
-  const simpleLine =
-    'Use very simple, modern, everyday language a school student or first-time cook understands. ' +
-    'Short, clear sentences and common words. '
-  const langLine =
-    lang && lang.toLowerCase() !== 'english'
-      ? `Write ALL values — time, servings, ingredients, steps and the tip — in ${lang} using its native script, ` +
-        `in the simple, casual, spoken style people actually use today — NOT old-fashioned, literary or heavily ` +
-        `Sanskritised ${lang}. Prefer the common everyday word over the formal/pure one, and it's fine to keep ` +
-        `widely-used English kitchen words (oil, pan, mix, stove, minutes) as people normally say them. ` +
-        `Keep the JSON keys in English. `
-      : ''
-  const prompt =
-    `Give a simple home recipe to prepare "${dish}"${extra ? ` (${extra})` : ''}, Indian home-cooking style. ` +
-    simpleLine + langLine +
-    'Respond with ONLY a JSON object, no prose, no markdown: {"time":"","servings":"","ingredients":["",""],"steps":["",""],"tip":""}. ' +
-    // Keep it SHORT: non-Latin scripts (Telugu/Hindi/Tamil…) use ~3-4x more tokens,
-    // and a long recipe overflows the model's output limit mid-JSON → unparseable
-    // → "Could not load the recipe". A concise recipe reliably fits.
-    'Keep it SHORT so the whole reply fits: time like "20 min"; servings like "1 serving"; ' +
-    '5-8 ingredients (a few words each); 4-6 short steps (ONE short sentence each, plain text, no leading numbers); ' +
-    'tip = one short line. Write the native script directly; do NOT use \\u escape codes.'
+  const isEnglish = lang.toLowerCase() === 'english'
+
   const parse = (raw: string): Recipe => {
     const o = parseJson<Record<string, unknown>>(raw)
     return {
@@ -257,12 +236,36 @@ export async function recipeFor(dish: string, ctx?: { diet?: string; region?: st
       tip: String(o?.tip ?? '').trim(),
     }
   }
-  let recipe = parse(await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] }))
-  // the 8B model occasionally returns malformed/truncated JSON — one clean retry
-  if (!recipe.steps.length) {
-    recipe = parse(await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }] }))
+  const ask = async (content: string): Promise<Recipe> => {
+    let r = parse(await askLion({ task: 'chat', messages: [{ role: 'user', content }] }))
+    if (!r.steps.length) r = parse(await askLion({ task: 'chat', messages: [{ role: 'user', content }] })) // one retry
+    return r
   }
-  return recipe
+
+  // Step 1 — get the AUTHENTIC recipe in English. The model knows dishes
+  // correctly in English but drifts to a similar dish (e.g. Pesarattu → urad
+  // instead of green gram) when writing straight into an Indian language.
+  const enPrompt =
+    `Give the AUTHENTIC, traditional home recipe for exactly "${dish}"${extra ? ` (${extra})` : ''}, Indian home-cooking style — ` +
+    `use its real main ingredient(s) and method; do not confuse it with a similar dish. Use simple, everyday words. ` +
+    'Respond with ONLY a JSON object, no prose, no markdown: {"time":"","servings":"","ingredients":["",""],"steps":["",""],"tip":""}. ' +
+    'Keep it SHORT: time like "20 min"; servings like "1 serving"; 5-8 ingredients (a few words each); ' +
+    '4-6 short steps (ONE short sentence each, no leading numbers); tip = one short line.'
+  const recipe = await ask(enPrompt)
+  if (isEnglish || !recipe.steps.length) return recipe
+
+  // Step 2 — translate into the chosen language WITHOUT changing the recipe, so
+  // the (now-correct) ingredients survive; only the wording changes. Much more
+  // reliable than generating directly in a low-resource language.
+  const trPrompt =
+    `Translate this recipe into ${lang}, written in ${lang}'s native script, in simple modern spoken ${lang}. ` +
+    `Keep the SAME ingredients, quantities and steps — do NOT change the recipe, only the language. ` +
+    `Keep the JSON keys in English. Write the native script directly; do NOT use \\u escape codes. ` +
+    `Recipe: ${JSON.stringify({ time: recipe.time, servings: recipe.servings, ingredients: recipe.ingredients, steps: recipe.steps, tip: recipe.tip })}. ` +
+    `Respond with ONLY the translated JSON object, same shape.`
+  const translated = await ask(trPrompt)
+  // if translation fails, fall back to the correct English recipe rather than nothing
+  return translated.steps.length ? translated : recipe
 }
 
 // Robust JSON extraction: handles ```json fences and stray prose around the

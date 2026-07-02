@@ -111,8 +111,8 @@ export function DietPage() {
   async function openRecipe(dish: string) {
     voice.stop() // silence any recipe currently being read
     setRecipeDish(dish); setRecipeErr('')
-    // v2: simpler, modern-language recipes — bust older cached wording
-    const key = `recipe-v2-${language.toLowerCase()}-${dish.toLowerCase().trim()}`
+    // v3: better model (Maverick) + accuracy nudge — bust older wrong/cached recipes
+    const key = `recipe-v3-${language.toLowerCase()}-${dish.toLowerCase().trim()}`
     const cached = load<Recipe | null>(key, null)
     if (cached?.steps?.length) { setRecipe(cached); setRecipeBusy(false); return }
     setRecipe(null); setRecipeBusy(true)
