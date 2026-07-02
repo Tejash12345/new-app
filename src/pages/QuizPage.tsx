@@ -247,27 +247,27 @@ export function QuizPage() {
                       setNoteId('')
                     }}
                     className={cn(
-                      'rounded-2xl border p-3 text-left transition',
+                      'min-w-0 rounded-2xl border p-2.5 sm:p-3 text-left transition',
                       exam?.key === ex.key
                         ? 'border-brand-400/60 bg-brand-500/15 shadow-lg shadow-brand-500/20'
                         : 'glass border-transparent hover:bg-brand-500/10',
                     )}>
-                    <div className="text-2xl">{ex.emoji}</div>
-                    <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">{ex.name}</div>
-                    <div className="text-[10px] text-slate-500">{ex.tagline}</div>
+                    <div className="text-xl sm:text-2xl">{ex.emoji}</div>
+                    <div className="mt-1 truncate text-xs font-bold text-slate-900 dark:text-white sm:text-sm">{ex.name}</div>
+                    <div className="truncate text-[10px] text-slate-500">{ex.tagline}</div>
                   </button>
                 ))}
                 <button
                   onClick={() => setExam(null)}
                   className={cn(
-                    'rounded-2xl border p-3 text-left transition',
+                    'min-w-0 rounded-2xl border p-2.5 sm:p-3 text-left transition',
                     exam === null
                       ? 'border-brand-400/60 bg-brand-500/15 shadow-lg shadow-brand-500/20'
                       : 'glass border-transparent hover:bg-brand-500/10',
                   )}>
-                  <div className="text-2xl">✏️</div>
-                  <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">My topic</div>
-                  <div className="text-[10px] text-slate-500">Anything, or a note</div>
+                  <div className="text-xl sm:text-2xl">✏️</div>
+                  <div className="mt-1 truncate text-xs font-bold text-slate-900 dark:text-white sm:text-sm">My topic</div>
+                  <div className="truncate text-[10px] text-slate-500">Anything, or a note</div>
                 </button>
               </div>
 
@@ -279,7 +279,7 @@ export function QuizPage() {
                     {exam.subjects.map((s) => (
                       <button key={s} onClick={() => setSubject(s)}
                         className={cn(
-                          'rounded-2xl px-3.5 py-2 text-sm font-bold transition',
+                          'rounded-2xl px-3 py-2 text-xs font-bold transition sm:px-3.5 sm:text-sm',
                           subject === s ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg shadow-brand-500/30' : 'glass text-slate-600 dark:text-slate-300',
                         )}>
                         {s}
@@ -302,24 +302,24 @@ export function QuizPage() {
               {exam && (
                 <div>
                   <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Question source</div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button onClick={() => setQsrc('pyq')}
                       className={cn(
-                        'flex-1 whitespace-nowrap rounded-2xl px-3 py-2.5 text-sm font-bold transition',
+                        'rounded-2xl px-2 py-2.5 text-xs font-bold leading-tight transition sm:text-sm',
                         qsrc === 'pyq' ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-white shadow-lg shadow-amber-500/30' : 'glass text-slate-600 dark:text-slate-300',
                       )}>
                       📜 Previous year
                     </button>
                     <button onClick={() => setQsrc('repeated')}
                       className={cn(
-                        'flex-1 whitespace-nowrap rounded-2xl px-3 py-2.5 text-sm font-bold transition',
+                        'rounded-2xl px-2 py-2.5 text-xs font-bold leading-tight transition sm:text-sm',
                         qsrc === 'repeated' ? 'bg-gradient-to-r from-purple-500 to-purple-400 text-white shadow-lg shadow-purple-500/30' : 'glass text-slate-600 dark:text-slate-300',
                       )}>
                       🔁 Most repeated
                     </button>
                     <button onClick={() => setQsrc('fresh')}
                       className={cn(
-                        'flex-1 whitespace-nowrap rounded-2xl px-3 py-2.5 text-sm font-bold transition',
+                        'rounded-2xl px-2 py-2.5 text-xs font-bold leading-tight transition sm:text-sm',
                         qsrc === 'fresh' ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg shadow-brand-500/30' : 'glass text-slate-600 dark:text-slate-300',
                       )}>
                       ✨ Fresh
@@ -462,7 +462,7 @@ export function QuizPage() {
           <GlassCard>
             {q.asked && (
               <div className={cn(
-                'mb-2.5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold',
+                'mb-2.5 inline-block max-w-full rounded-2xl px-3 py-1 text-xs font-bold',
                 qsrc === 'repeated'
                   ? 'bg-purple-400/15 text-purple-600 dark:text-purple-300'
                   : 'bg-amber-400/15 text-amber-600 dark:text-amber-300',
@@ -472,7 +472,7 @@ export function QuizPage() {
                   : q.asked === 'PYQ-style' ? '📜 PYQ-style question' : `📜 Asked in ${q.asked}`}
               </div>
             )}
-            <div className="mb-4 text-lg font-bold text-slate-900 dark:text-white">{q.q}</div>
+            <div className="mb-4 text-base font-bold text-slate-900 dark:text-white sm:text-lg">{q.q}</div>
             <div className="space-y-2.5">
               {q.options.map((opt, idx) => {
                 const isAnswer = idx === q.answer
@@ -480,7 +480,7 @@ export function QuizPage() {
                 return (
                   <button key={idx} onClick={() => pick(idx)}
                     className={cn(
-                      'flex w-full items-center gap-3 rounded-2xl border px-4 py-3.5 text-left text-sm font-semibold transition',
+                      'flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left text-sm font-semibold transition sm:px-4 sm:py-3.5',
                       picked === null
                         ? 'border-slate-200/60 dark:border-white/10 bg-white/50 dark:bg-white/5 text-slate-800 dark:text-slate-100 hover:bg-brand-500/10 hover:border-brand-400/50'
                         : isAnswer
@@ -497,7 +497,7 @@ export function QuizPage() {
                     )}>
                       {picked !== null && isAnswer ? <CheckCircle2 size={15} /> : picked !== null && isPicked ? <XCircle size={15} /> : String.fromCharCode(65 + idx)}
                     </span>
-                    {opt}
+                    <span className="min-w-0 flex-1 break-words">{opt}</span>
                   </button>
                 )
               })}
