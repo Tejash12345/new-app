@@ -337,8 +337,9 @@ export async function generateQuiz(
         'If you are NOT certain a question is a real PYQ, write "PYQ-style" in "asked" instead of inventing a year — never guess dates.'
       : opts.mode === 'repeated'
         ? ' Choose the MOST REPEATED questions — the high-frequency questions that have been asked again and again across different years of this exam (the ones toppers prioritize). ' +
-          'Fill "asked" with the years each appeared in when you genuinely know them, e.g. "NEET 2019, 2021, 2023" or "SSC CGL 2018 & 2022". ' +
-          'If you are not certain of the exact years, write "Frequently asked" in "asked" instead of guessing.'
+          'Every question MUST list in "asked" the exam name and the years it was asked, e.g. "NEET 2019, 2021, 2023" or "SSC CGL 2018 & 2022" — list ALL the years you know of. ' +
+          'If you only remember roughly, give your best estimate marked with ~, e.g. "RRB NTPC ~2016, 2019". ' +
+          'Write "Frequently asked" alone ONLY if you genuinely cannot recall even an approximate year.'
         : ' Set "asked" to an empty string "" for every question.'
   const prompt =
     `Create a ${opts.count}-question multiple-choice quiz about "${opts.topic}" for a student. Difficulty: ${opts.difficulty}.` +

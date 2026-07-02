@@ -453,14 +453,13 @@ export function QuizPage() {
             {q.asked && (
               <div className={cn(
                 'mb-2.5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold',
-                /,|&/.test(q.asked) || q.asked === 'Frequently asked'
+                qsrc === 'repeated'
                   ? 'bg-purple-400/15 text-purple-600 dark:text-purple-300'
                   : 'bg-amber-400/15 text-amber-600 dark:text-amber-300',
               )}>
-                {q.asked === 'PYQ-style' ? '📜 PYQ-style question'
-                  : q.asked === 'Frequently asked' ? '🔁 Frequently asked question'
-                    : /,|&/.test(q.asked) ? `🔁 Repeated: ${q.asked}`
-                      : `📜 Asked in ${q.asked}`}
+                {qsrc === 'repeated'
+                  ? (q.asked === 'Frequently asked' ? '🔁 Frequently asked (years not on record)' : `🔁 Repeated in ${q.asked}`)
+                  : q.asked === 'PYQ-style' ? '📜 PYQ-style question' : `📜 Asked in ${q.asked}`}
               </div>
             )}
             <div className="mb-4 text-lg font-bold text-slate-900 dark:text-white">{q.q}</div>
