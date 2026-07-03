@@ -8,7 +8,7 @@ import { useTable } from '../hooks/db'
 import { useAuth } from '../hooks/useAuth'
 import { weeklyInsights, type WeeklyInsights } from '../lib/ai'
 import type { Habit, JournalEntry, StudySession, Task } from '../lib/types'
-import { AiLion, Button, GlassCard, Page, ProgressRing, SectionTitle } from '../components/ui'
+import { AiLoader, Button, GlassCard, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { addDays, cn, minutesToLabel, todayKey } from '../lib/utils'
 
 // ----------------------------------------------------------------------------
@@ -160,11 +160,7 @@ export function InsightsPage() {
           </SectionTitle>
 
           {loading ? (
-            <div className="flex flex-col items-center py-10 text-center">
-              <AiLion className="h-16 animate-bounce" />
-              <p className="mt-3 font-bold text-slate-900 dark:text-white">Crunching your week…</p>
-              <p className="mt-1 text-sm text-slate-500">Study hours, tasks, habits and moods — all of it.</p>
-            </div>
+            <AiLoader title="Crunching your week…" hint="Study hours, tasks, habits and moods — all of it." />
           ) : report ? (
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-[auto_1fr]">
               <div className="flex flex-col items-center gap-2">

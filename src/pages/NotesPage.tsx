@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react'
-import { Bold, Italic, List, Plus, Sparkles, Trash2, RotateCw, Zap } from 'lucide-react'
+import { Bold, Italic, List, Pencil, Plus, Sparkles, Trash2, RotateCw, Zap } from 'lucide-react'
 import { useTable } from '../hooks/db'
 import { useAuth } from '../hooks/useAuth'
 import { flashcardsFrom } from '../lib/ai'
+import { confirmDialog } from '../store/app'
 import type { Flashcard, Habit, JournalEntry, Note } from '../lib/types'
-import { AiLion, Button, Empty, GlassCard, Input, Modal, Page, TextArea } from '../components/ui'
+import { AiLoader, Button, Empty, GlassCard, Input, Modal, Page, TextArea } from '../components/ui'
 import { SUBJECT_COLORS, addDays, cn, todayKey } from '../lib/utils'
 
 const NOTE_COLORS = ['#FFF59D', '#B2EBF2', '#FFCCBC', '#C8E6C9', '#E1BEE7', '#FFE0E6']
@@ -122,10 +123,13 @@ function FlashcardsTab() {
   const { rows, insert, update, remove } = useTable<Flashcard>('flashcards')
   const { rows: notes } = useTable<Note>('notes', { orderBy: 'updated_at' })
   const { addXp } = useAuth()
-  const [open, setOpen] = useState(false)
+  // one modal handles both adding a new card and editing an existing one
+  const [editing, setEditing] = useState<Flashcard | 'new' | null>(null)
   const [front, setFront] = useState('')
   const [back, setBack] = useState('')
   const [deck, setDeck] = useState('General')
+  // which cards in the grid are showing their answer (tap to flip)
+  const [flipped, setFlipped] = useState<Record<string, boolean>>({})
   // study takes a snapshot of the cards so "weakest first" keeps its order
   const [study, setStudy] = useState<{ cards: Flashcard[]; i: number; flipped: boolean } | null>(null)
 
@@ -143,10 +147,39 @@ function FlashcardsTab() {
   const [activeDeck, setActiveDeck] = useState<string | null>(null)
   const cards = activeDeck ? rows.filter((c) => c.deck === activeDeck) : rows
 
-  async function add() {
+  function openEditor(card: Flashcard | 'new') {
+    setEditing(card)
+    setFront(card === 'new' ? '' : card.front)
+    setBack(card === 'new' ? '' : card.back)
+    setDeck(card === 'new' ? (activeDeck ?? 'General') : card.deck)
+  }
+
+  async function save() {
     if (!front.trim() || !back.trim()) return
-    await insert({ front: front.trim(), back: back.trim(), deck: deck.trim() || 'General' } as Partial<Flashcard>)
-    setFront(''); setBack('')
+    if (editing === 'new') {
+      await insert({ front: front.trim(), back: back.trim(), deck: deck.trim() || 'General' } as Partial<Flashcard>)
+      setFront(''); setBack('') // keep the modal open so several cards can be added in a row
+    } else if (editing) {
+      await update({ id: editing.id, front: front.trim(), back: back.trim(), deck: deck.trim() || 'General' } as Partial<Flashcard> & { id: string })
+      setEditing(null)
+    }
+  }
+
+  async function del(card: Flashcard) {
+    const label = card.front.length > 40 ? `${card.front.slice(0, 40)}…` : card.front
+    if (!(await confirmDialog(`Delete this card? "${label}"`, { yesLabel: 'Delete' }))) return
+    await remove(card.id)
+  }
+
+  async function delDeck() {
+    if (!activeDeck) return
+    const inDeck = rows.filter((c) => c.deck === activeDeck)
+    if (!(await confirmDialog(
+      `Delete the "${activeDeck}" deck and all ${inDeck.length} card${inDeck.length === 1 ? '' : 's'}? This cannot be undone.`,
+      { yesLabel: 'Delete deck' },
+    ))) return
+    for (const c of inDeck) await remove(c.id)
+    setActiveDeck(null)
   }
 
   async function grade(know: boolean) {
@@ -208,8 +241,11 @@ function FlashcardsTab() {
               <Zap size={15} /> Weakest first
             </Button>
           )}
+          {activeDeck && (
+            <Button variant="danger" onClick={delDeck}><Trash2 size={15} /> Delete deck</Button>
+          )}
           <Button variant="soft" onClick={() => { setAiOpen(true); setAiError(''); setPreview(null) }}><Sparkles size={15} /> AI cards</Button>
-          <Button onClick={() => setOpen(true)}><Plus size={16} /> Add card</Button>
+          <Button onClick={() => openEditor('new')}><Plus size={16} /> Add card</Button>
         </div>
       </div>
 
@@ -217,26 +253,49 @@ function FlashcardsTab() {
         <GlassCard><Empty emoji="🃏" text={'No flashcards yet.\nGreat for formulas, vocabulary and definitions!'} /></GlassCard>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {cards.map((c) => (
-            <GlassCard key={c.id} className="group relative !p-4">
-              <div className="text-xs font-bold uppercase tracking-wide text-brand-500">{c.deck}</div>
-              <div className="mt-1 font-semibold text-slate-900 dark:text-white">{c.front}</div>
-              <div className="mt-1 text-sm text-slate-500">{c.back}</div>
-              <div className="mt-2 text-[10px] text-slate-400">mastery {'★'.repeat(c.ease)}{'☆'.repeat(5 - c.ease)}</div>
-              <button onClick={() => remove(c.id)} className="absolute right-3 top-3 rounded-full p-1.5 text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-500">
-                <Trash2 size={14} />
-              </button>
-            </GlassCard>
-          ))}
+          {cards.map((c) => {
+            const showBack = flipped[c.id]
+            return (
+              <GlassCard key={c.id} className="relative flex flex-col !p-4">
+                <button
+                  onClick={() => setFlipped((f) => ({ ...f, [c.id]: !f[c.id] }))}
+                  className="flex-1 text-left"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-bold uppercase tracking-wide text-brand-500">{c.deck}</span>
+                    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{showBack ? 'Answer' : 'Tap to flip'}</span>
+                  </div>
+                  <div className="mt-2 min-h-12 font-semibold text-slate-900 dark:text-white">
+                    {showBack ? c.back : c.front}
+                  </div>
+                </button>
+                <div className="mt-3 flex items-center justify-between border-t border-slate-200/50 dark:border-white/10 pt-2.5">
+                  <span className="text-[10px] text-slate-400">mastery {'★'.repeat(c.ease)}{'☆'.repeat(5 - c.ease)}</span>
+                  <div className="flex gap-1">
+                    <button onClick={() => openEditor(c)} aria-label="Edit card"
+                      className="rounded-full p-2 text-slate-400 transition hover:bg-brand-500/10 hover:text-brand-500">
+                      <Pencil size={15} />
+                    </button>
+                    <button onClick={() => del(c)} aria-label="Delete card"
+                      className="rounded-full p-2 text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-500">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
+              </GlassCard>
+            )
+          })}
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Add flashcard">
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={editing === 'new' ? 'Add flashcard' : 'Edit flashcard'}>
         <div className="space-y-3">
           <Input placeholder="Deck (e.g. Physics)" value={deck} onChange={(e) => setDeck(e.target.value)} />
           <TextArea placeholder="Front — the question" rows={2} value={front} onChange={(e) => setFront(e.target.value)} />
           <TextArea placeholder="Back — the answer" rows={2} value={back} onChange={(e) => setBack(e.target.value)} />
-          <Button className="w-full" onClick={add}>Add (and keep adding)</Button>
+          <Button className="w-full" onClick={save} disabled={!front.trim() || !back.trim()}>
+            {editing === 'new' ? 'Add (and keep adding)' : 'Save changes'}
+          </Button>
         </div>
       </Modal>
 
@@ -265,11 +324,7 @@ function FlashcardsTab() {
       {/* ---- AI flashcard generator ---- */}
       <Modal open={aiOpen} onClose={() => setAiOpen(false)} title="✨ Generate flashcards with AI" wide>
         {aiLoading ? (
-          <div className="flex flex-col items-center py-12 text-center">
-            <AiLion className="h-16 animate-bounce" />
-            <p className="mt-3 font-bold text-slate-900 dark:text-white">Leo is making your cards…</p>
-            <p className="mt-1 text-sm text-slate-500">Pulling out the most important facts.</p>
-          </div>
+          <AiLoader title="Leo is making your cards…" hint="Pulling out the most important facts." />
         ) : preview ? (
           <div className="space-y-3">
             <p className="text-sm text-slate-500">Tap a card to include/exclude it, then add the ones you want.</p>

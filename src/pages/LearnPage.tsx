@@ -4,7 +4,7 @@ import { GraduationCap, Sparkles, Trash2, Check, BookOpen, ExternalLink } from '
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { LearningPath, LearningStep } from '../lib/types'
-import { Button, Empty, GlassCard, Input, Page, ProgressRing, SectionTitle } from '../components/ui'
+import { AiLoader, Button, Empty, GlassCard, Input, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { generateLearningPath } from '../lib/ai'
 import { cn } from '../lib/utils'
 import { confirmDialog } from '../store/app'
@@ -82,6 +82,12 @@ export function LearnPage() {
         </div>
         {error && <p className="mt-2 text-sm font-semibold text-rose-500">{error}</p>}
       </GlassCard>
+
+      {busy && (
+        <GlassCard className="mb-6">
+          <AiLoader title={`Building your ${topic.trim() || 'learning'} roadmap…`} hint="Mapping the steps, milestones and best resources." />
+        </GlassCard>
+      )}
 
       {paths.length === 0 ? (
         <GlassCard>

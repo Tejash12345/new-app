@@ -3,7 +3,7 @@ import { Check, Plus, RotateCw, Sparkles, Trash2 } from 'lucide-react'
 import { useTable } from '../hooks/db'
 import { planMyDay, type DayPlan, type DayPlanBlock } from '../lib/ai'
 import type { Task, TimetableBlock } from '../lib/types'
-import { AiLion, Button, Empty, GlassCard, Input, Modal, Page } from '../components/ui'
+import { AiLoader, Button, Empty, GlassCard, Input, Modal, Page } from '../components/ui'
 import { SUBJECT_COLORS, cn, timeLabel, todayKey } from '../lib/utils'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -219,11 +219,7 @@ export function PlannerPage() {
       {/* ---- AI day plan ---- */}
       <Modal open={aiOpen} onClose={() => setAiOpen(false)} title="🦁 Leo's plan for your day" wide>
         {aiLoading ? (
-          <div className="flex flex-col items-center py-12 text-center">
-            <AiLion className="h-16 animate-bounce" />
-            <p className="mt-3 font-bold text-slate-900 dark:text-white">Reading your tasks, exams and timetable…</p>
-            <p className="mt-1 text-sm text-slate-500">Building the smartest plan for the rest of today.</p>
-          </div>
+          <AiLoader title="Reading your tasks, exams and timetable…" hint="Building the smartest plan for the rest of today." />
         ) : aiError ? (
           <div className="space-y-3">
             <p className="rounded-2xl bg-rose-500/10 px-4 py-3 text-sm font-medium text-rose-500">{aiError}</p>

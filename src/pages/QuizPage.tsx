@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSpeech } from '../hooks/useSpeech'
 import { examStudyPlan, explainQuizQuestion, generateQuiz, teachTopic, type ExamStudyPlan, type QuizQuestion } from '../lib/ai'
 import type { Note, QuizResult } from '../lib/types'
-import { AiLion, Button, Empty, GlassCard, Input, Modal, Page, ProgressRing, SectionTitle } from '../components/ui'
+import { AiLion, AiLoader, Button, Empty, GlassCard, Input, Modal, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { cn, timeAgo, todayKey } from '../lib/utils'
 import { confirmDialog } from '../store/app'
 
@@ -1193,13 +1193,10 @@ export function QuizPage() {
 
       {phase === 'loading' && (
         <GlassCard>
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <AiLion className="h-20 animate-bounce" />
-            <p className="mt-4 font-bold text-slate-900 dark:text-white">Leo is writing your {exam ? `${exam.name} ` : ''}quiz…</p>
-            <p className="mt-1 text-sm text-slate-500">
-              {count} {difficulty.toLowerCase()} questions{exam && subject !== 'Mixed' ? ` on ${subject}` : ''} — real exam pattern.
-            </p>
-          </div>
+          <AiLoader
+            title={`Leo is writing your ${exam ? `${exam.name} ` : ''}quiz…`}
+            hint={`${count} ${difficulty.toLowerCase()} questions${exam && subject !== 'Mixed' ? ` on ${subject}` : ''} — real exam pattern.`}
+          />
         </GlassCard>
       )}
 
@@ -1388,11 +1385,7 @@ export function QuizPage() {
       {/* ---- AI exam study planner ---- */}
       <Modal open={planOpen} onClose={() => setPlanOpen(false)} title={`📅 ${exam?.name ?? ''} study plan`} wide>
         {planLoading ? (
-          <div className="flex flex-col items-center py-12 text-center">
-            <AiLion className="h-16 animate-bounce" />
-            <p className="mt-3 font-bold text-slate-900 dark:text-white">Building your {exam?.name} roadmap…</p>
-            <p className="mt-1 text-sm text-slate-500">Syllabus phases, daily routine, mock calendar.</p>
-          </div>
+          <AiLoader title={`Building your ${exam?.name} roadmap…`} hint="Syllabus phases, daily routine, mock calendar." />
         ) : plan ? (
           <div className="space-y-3">
             {plan.summary && (
@@ -1476,10 +1469,7 @@ export function QuizPage() {
       {/* ---- teach-this-topic lesson ---- */}
       <Modal open={teachOpen} onClose={() => { setTeachOpen(false); voice.stop() }} title="🦁 Leo teaches this topic" wide>
         {teachLoading ? (
-          <div className="flex flex-col items-center py-12 text-center">
-            <AiLion className="h-16 animate-bounce" />
-            <p className="mt-3 font-bold text-slate-900 dark:text-white">Preparing your lesson…</p>
-          </div>
+          <AiLoader title="Preparing your lesson…" hint="Structuring the key ideas into a clear lesson." />
         ) : (
           <div className="space-y-3">
             <div className="flex justify-end">

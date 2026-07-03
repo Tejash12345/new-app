@@ -1,4 +1,4 @@
-import { type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes } from 'react'
+import { useEffect, useState, type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X } from 'lucide-react'
 import { cn } from '../lib/utils'
@@ -161,6 +161,39 @@ export function Stat({
 /** The robotic lion — marks AI-powered features (Leo's replies, AI loaders). */
 export function AiLion({ className }: { className?: string }) {
   return <img src="/lion-ai.png" alt="" className={cn('inline-block w-auto', className)} />
+}
+
+// ---------- AI loader (with progress) ----------
+/**
+ * Full-section loader for AI generation waits. The AI calls are single opaque
+ * requests with no progress events, so we ease a simulated percentage toward
+ * ~92% to reassure the user it's actually working — the parent swaps this out
+ * the moment the real result arrives. Drop it in anywhere Leo is generating.
+ */
+export function AiLoader({ title, hint, className }: { title: string; hint?: string; className?: string }) {
+  const [progress, setProgress] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => {
+      setProgress((p) => (p >= 92 ? p : Math.min(92, p + Math.max(0.5, (92 - p) * 0.05))))
+    }, 130)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <div className={cn('flex flex-col items-center py-10 text-center', className)}>
+      <AiLion className="h-16 animate-bounce" />
+      <p className="mt-3 font-bold text-slate-900 dark:text-white">{title}</p>
+      {hint && <p className="mt-1 text-sm text-slate-500">{progress < 88 ? hint : 'Almost there…'}</p>}
+      <div className="mt-5 w-full max-w-xs">
+        <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-500/15">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-brand-500 to-brand-400 transition-[width] duration-150 ease-out"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="mt-1.5 text-xs font-bold text-brand-500">{Math.round(progress)}%</div>
+      </div>
+    </div>
+  )
 }
 
 // ---------- Empty state ----------
