@@ -23,7 +23,7 @@ export function pushNotification(title: string, body: string, tag?: string, rout
   // browser
   try {
     if ('Notification' in window && Notification.permission === 'granted') {
-      const n = new Notification(title, { body, tag })
+      const n = new Notification(title, { body, tag, icon: '/lion-ai.png' })
       if (route) n.onclick = () => { try { window.focus() } catch { /* ignore */ } window.location.assign(route) }
     }
   } catch { /* ignore */ }

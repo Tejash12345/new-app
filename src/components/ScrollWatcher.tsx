@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 
 function pushNote(title: string, body: string, tag: string) {
   if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification(title, { body, tag })
+    new Notification(title, { body, tag, icon: '/lion-ai.png' })
   }
 }
 

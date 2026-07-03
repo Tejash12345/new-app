@@ -68,7 +68,7 @@ export function FocusPage() {
     await addXp(xp, `${preset.label} session complete`)
     await touchStudyStreak()
     if (Notification.permission === 'granted') {
-      new Notification('🦁 Session complete!', { body: `+${xp} XP earned. Take a 5-minute break.` })
+      new Notification('🦁 Session complete!', { body: `+${xp} XP earned. Take a 5-minute break.`, icon: '/lion-ai.png' })
     }
     setDeepMode(false)
     setSecondsLeft(preset.min * 60)
