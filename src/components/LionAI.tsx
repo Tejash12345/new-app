@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Send, X, Trash2, Sparkles } from 'lucide-react'
+import { AiLion } from './ui'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
 import { askLion, type ChatTurn } from '../lib/ai'
@@ -98,7 +99,7 @@ export function LionAI() {
         style={{ background: 'linear-gradient(135deg,#FFB454,#FF7A1A)', boxShadow: '0 8px 24px rgba(255,140,0,.45)' }}
       >
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-25" />
-        <span className="relative">{open ? '✕' : '🦁'}</span>
+        <span className="relative">{open ? '✕' : <AiLion className="h-9" />}</span>
       </button>
 
       <AnimatePresence>
@@ -115,7 +116,7 @@ export function LionAI() {
             {/* header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-white/10">
               <div className="flex items-center gap-2">
-                <span className="text-xl">🦁</span>
+                <AiLion className="h-7" />
                 <div>
                   <div className="text-sm font-bold text-slate-900 dark:text-white">Lion AI Assistant</div>
                   <div className="flex items-center gap-1 text-[11px] text-emerald-500">
@@ -141,14 +142,14 @@ export function LionAI() {
                   <div className={m.role === 'user'
                     ? 'max-w-[82%] whitespace-pre-line break-words rounded-3xl rounded-br-lg bg-gradient-to-r from-brand-500 to-brand-400 px-3.5 py-2 text-sm text-white'
                     : 'max-w-[88%] whitespace-pre-line break-words rounded-3xl rounded-bl-lg bg-slate-100 px-3.5 py-2 text-sm text-slate-800 dark:bg-white/10 dark:text-slate-100'}>
-                    {m.role === 'assistant' && <span className="mr-1">🦁</span>}{m.content}
+                    {m.role === 'assistant' && <AiLion className="mr-1 h-5 align-text-bottom" />}{m.content}
                   </div>
                 </motion.div>
               ))}
               {typing && (
                 <div className="flex justify-start">
                   <div className="flex items-center gap-1.5 rounded-3xl rounded-bl-lg bg-slate-100 px-4 py-3 dark:bg-white/10">
-                    <span className="mr-1">🦁</span>
+                    <AiLion className="mr-1 h-5" />
                     {[0, 1, 2].map((d) => (
                       <motion.span key={d} animate={{ y: [0, -4, 0] }}
                         transition={{ repeat: Infinity, duration: 0.7, delay: d * 0.15 }}

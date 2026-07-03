@@ -4,7 +4,7 @@ import { useTable } from '../hooks/db'
 import { useAuth } from '../hooks/useAuth'
 import { flashcardsFrom } from '../lib/ai'
 import type { Flashcard, Habit, JournalEntry, Note } from '../lib/types'
-import { Button, Empty, GlassCard, Input, Modal, Page, TextArea } from '../components/ui'
+import { AiLion, Button, Empty, GlassCard, Input, Modal, Page, TextArea } from '../components/ui'
 import { SUBJECT_COLORS, addDays, cn, todayKey } from '../lib/utils'
 
 const NOTE_COLORS = ['#FFF59D', '#B2EBF2', '#FFCCBC', '#C8E6C9', '#E1BEE7', '#FFE0E6']
@@ -266,7 +266,7 @@ function FlashcardsTab() {
       <Modal open={aiOpen} onClose={() => setAiOpen(false)} title="✨ Generate flashcards with AI" wide>
         {aiLoading ? (
           <div className="flex flex-col items-center py-12 text-center">
-            <div className="animate-bounce text-5xl">🦁</div>
+            <AiLion className="h-16 animate-bounce" />
             <p className="mt-3 font-bold text-slate-900 dark:text-white">Leo is making your cards…</p>
             <p className="mt-1 text-sm text-slate-500">Pulling out the most important facts.</p>
           </div>

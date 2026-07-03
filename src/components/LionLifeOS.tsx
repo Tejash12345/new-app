@@ -99,7 +99,7 @@ export function LionLifeOS() {
         {/* greeting + AI briefing */}
         <div className="flex items-start gap-4">
           <div className="hidden h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-400 to-orange-500 p-1 shadow-lg sm:flex">
-            <img src="/lion.png" alt="" className="h-full w-full object-contain" />
+            <img src="/lion-ai.png" alt="" className="h-full w-full object-contain" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">

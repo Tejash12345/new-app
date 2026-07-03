@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSpeech } from '../hooks/useSpeech'
 import { examStudyPlan, explainQuizQuestion, generateQuiz, teachTopic, type ExamStudyPlan, type QuizQuestion } from '../lib/ai'
 import type { Note, QuizResult } from '../lib/types'
-import { Button, Empty, GlassCard, Input, Modal, Page, ProgressRing, SectionTitle } from '../components/ui'
+import { AiLion, Button, Empty, GlassCard, Input, Modal, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { cn, timeAgo, todayKey } from '../lib/utils'
 import { confirmDialog } from '../store/app'
 
@@ -1173,7 +1173,7 @@ export function QuizPage() {
       {phase === 'loading' && (
         <GlassCard>
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="animate-bounce text-6xl">🦁</div>
+            <AiLion className="h-20 animate-bounce" />
             <p className="mt-4 font-bold text-slate-900 dark:text-white">Leo is writing your {exam ? `${exam.name} ` : ''}quiz…</p>
             <p className="mt-1 text-sm text-slate-500">
               {count} {difficulty.toLowerCase()} questions{exam && subject !== 'Mixed' ? ` on ${subject}` : ''} — real exam pattern.
@@ -1287,7 +1287,7 @@ export function QuizPage() {
                 {detail ? (
                   <div className="mt-2.5 rounded-2xl bg-brand-500/10 px-4 py-3">
                     <div className="mb-1 flex items-center justify-between">
-                      <div className="text-xs font-bold uppercase tracking-wide text-brand-500">🦁 Leo explains</div>
+                      <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-brand-500"><AiLion className="h-4" /> Leo explains</div>
                       <button
                         onClick={() => (voice.isPlaying ? voice.pause() : voice.play(detail))}
                         aria-label="Read explanation aloud"
@@ -1368,7 +1368,7 @@ export function QuizPage() {
       <Modal open={planOpen} onClose={() => setPlanOpen(false)} title={`📅 ${exam?.name ?? ''} study plan`} wide>
         {planLoading ? (
           <div className="flex flex-col items-center py-12 text-center">
-            <div className="animate-bounce text-5xl">🦁</div>
+            <AiLion className="h-16 animate-bounce" />
             <p className="mt-3 font-bold text-slate-900 dark:text-white">Building your {exam?.name} roadmap…</p>
             <p className="mt-1 text-sm text-slate-500">Syllabus phases, daily routine, mock calendar.</p>
           </div>
@@ -1456,7 +1456,7 @@ export function QuizPage() {
       <Modal open={teachOpen} onClose={() => { setTeachOpen(false); voice.stop() }} title="🦁 Leo teaches this topic" wide>
         {teachLoading ? (
           <div className="flex flex-col items-center py-12 text-center">
-            <div className="animate-bounce text-5xl">🦁</div>
+            <AiLion className="h-16 animate-bounce" />
             <p className="mt-3 font-bold text-slate-900 dark:text-white">Preparing your lesson…</p>
           </div>
         ) : (

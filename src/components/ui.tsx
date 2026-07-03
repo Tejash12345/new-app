@@ -157,6 +157,12 @@ export function Stat({
   )
 }
 
+// ---------- AI mascot ----------
+/** The robotic lion — marks AI-powered features (Leo's replies, AI loaders). */
+export function AiLion({ className }: { className?: string }) {
+  return <img src="/lion-ai.png" alt="" className={cn('inline-block w-auto', className)} />
+}
+
 // ---------- Empty state ----------
 export function Empty({ emoji, text }: { emoji: string; text: string }) {
   return (

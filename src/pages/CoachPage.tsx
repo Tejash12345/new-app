@@ -4,7 +4,7 @@ import { Send, Sparkles, Trash2 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { SocialSession, StudySession, Task } from '../lib/types'
-import { Button, GlassCard, Input, Page, SectionTitle } from '../components/ui'
+import { AiLion, Button, GlassCard, Input, Page, SectionTitle } from '../components/ui'
 import { askLion } from '../lib/ai'
 import { addDays, minutesToLabel, quoteOfTheDay, todayKey } from '../lib/utils'
 
@@ -176,7 +176,7 @@ export function CoachPage() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
               </span>
-              Leo is online · AI-powered 🦁
+              Leo is online · AI-powered <AiLion className="ml-0.5 h-5" />
             </div>
             <button onClick={clearChat} className="flex items-center gap-1 text-xs text-slate-400 hover:text-rose-500">
               <Trash2 size={13} /> Clear chat
@@ -195,14 +195,14 @@ export function CoachPage() {
                     ? 'max-w-[80%] break-words rounded-3xl rounded-br-lg bg-gradient-to-r from-brand-500 to-brand-400 px-4 py-2.5 text-sm text-white'
                     : 'max-w-[85%] whitespace-pre-line break-words rounded-3xl rounded-bl-lg bg-white/60 dark:bg-white/10 px-4 py-2.5 text-sm text-slate-800 dark:text-slate-100'
                 }>
-                  {m.role === 'coach' && <span className="mr-1">🦁</span>}{m.text}
+                  {m.role === 'coach' && <AiLion className="mr-1 h-5 align-text-bottom" />}{m.text}
                 </div>
               </motion.div>
             ))}
             {typing && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
                 <div className="flex items-center gap-1.5 rounded-3xl rounded-bl-lg bg-white/60 dark:bg-white/10 px-4 py-3">
-                  <span className="mr-1">🦁</span>
+                  <AiLion className="mr-1 h-5" />
                   {[0, 1, 2].map((d) => (
                     <motion.span
                       key={d}
