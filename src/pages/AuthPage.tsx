@@ -79,9 +79,9 @@ export function AuthPage() {
           <motion.div
             initial={{ scale: 0 }} animate={{ scale: 1 }}
             transition={{ type: 'spring', damping: 12, delay: 0.2 }}
-            className="text-6xl"
+            className="flex justify-center"
           >
-            🦁
+            <img src="/lion.png" alt="FocusLion" className="w-40 drop-shadow-[0_8px_24px_rgba(255,170,60,0.4)]" />
           </motion.div>
           <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">FocusLion</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
