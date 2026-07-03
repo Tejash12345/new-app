@@ -200,7 +200,11 @@ Deno.serve(async (req) => {
       messages: chatMessages,
       temperature: task === 'mission' ? 0.9 : 0.7,
       max_tokens:
-        task === 'startup' || task === 'career' || task === 'learnpath' ? 2048
+        // interactive chat (fast path) is meant to be concise — cap it low so a
+        // reply can't run long, which keeps generation quick and reduces load on
+        // the free NIM tier (a big generation is what stalls/queues for ~150s)
+        wantFast && !JSON_TASKS.includes(task) ? 700
+        : task === 'startup' || task === 'career' || task === 'learnpath' ? 2048
         : task === 'mission' ? 1024
         // 'chat' also carries the Diet planner & recipe JSON. Non-English recipes
         // (Telugu/Hindi/Tamil…) tokenize ~3-4x heavier than English, so 1024 tokens

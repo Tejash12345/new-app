@@ -107,8 +107,8 @@ export async function askLionStream(
   // multi-second gap means the reply is complete — stop and cancel.
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
-  const FIRST_TOKEN_MS = 150_000
-  const IDLE_MS = 5_000
+  const FIRST_TOKEN_MS = 60_000 // give up (with a friendly error) if the busy free tier hasn't started in 60s
+  const IDLE_MS = 5_000         // once tokens flow, a 5s gap means the reply is done
   let full = ''
   for (;;) {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -121,7 +121,13 @@ export async function askLionStream(
     } finally {
       clearTimeout(timer)
     }
-    if (result === 'IDLE' || result.done) {
+    if (result === 'IDLE') {
+      try { await reader.cancel() } catch { /* already closed */ }
+      // timed out before ANY token → the service is busy; surface it instead of hanging
+      if (!full) throw new AiError('Leo is busy right now and took too long to respond. Please try again in a moment. 🦁')
+      break
+    }
+    if (result.done) {
       try { await reader.cancel() } catch { /* already closed */ }
       break
     }
