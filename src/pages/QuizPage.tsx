@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Sparkles, Swords, RotateCw, CheckCircle2, XCircle, CalendarDays, Timer, Bookmark, GraduationCap, Volume2, Pause, Target } from 'lucide-react'
+import { ArrowLeft, Check, ChevronDown, Search, Sparkles, Swords, RotateCw, CheckCircle2, XCircle, CalendarDays, Timer, Bookmark, GraduationCap, Volume2, Pause, Target } from 'lucide-react'
 import { useTable } from '../hooks/db'
 import { useAuth } from '../hooks/useAuth'
 import { useSpeech } from '../hooks/useSpeech'
@@ -425,6 +425,10 @@ export function QuizPage() {
   const [stage, setStage] = useState<'pick' | 'config'>('pick')
   const [exam, setExam] = useState<ExamSpec | null>(null)   // null = custom topic mode
   const [subject, setSubject] = useState('Mixed')
+  // subject picker sheet for big syllabi (e.g. NORCET's 34 subjects) — a raw
+  // native <select> looked out of place inside the app
+  const [subjectSheet, setSubjectSheet] = useState(false)
+  const [subjectQuery, setSubjectQuery] = useState('')
   const [qsrc, setQsrc] = useState<'pyq' | 'repeated' | 'fresh'>('pyq')
   const [freshFlavour, setFreshFlavour] = useState('Standard') // Standard | Expected | Clinical | NCLEX | Rapid
   const [pyqYear, setPyqYear] = useState<(typeof PYQ_YEARS)[number]>('Any')
@@ -842,10 +846,27 @@ export function QuizPage() {
                 <div>
                   <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Subject</div>
                   {exam.subjects.length > 8 ? (
-                    <select value={subject} onChange={(e) => { setSubject(e.target.value); setTopic('') }}
-                      className="w-full rounded-2xl border border-slate-200/60 dark:border-white/10 bg-white/70 dark:bg-white/5 px-3 py-2.5 text-sm text-slate-900 dark:text-white dark:[&>option]:bg-slate-800">
-                      {exam.subjects.map((s) => <option key={s} value={s}>{s === 'Mixed' ? 'Mixed — full syllabus' : s}</option>)}
-                    </select>
+                    <>
+                      {/* styled picker button — opens the searchable subject sheet */}
+                      <button
+                        onClick={() => { setSubjectQuery(''); setSubjectSheet(true) }}
+                        className="glass flex w-full items-center justify-between gap-2 rounded-2xl px-3.5 py-2.5 text-left transition hover:bg-brand-500/10 active:scale-[0.99]"
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-brand-500/15 text-sm">📖</span>
+                          <span className="min-w-0 truncate text-sm font-bold text-slate-800 dark:text-slate-100">
+                            {subject === 'Mixed' ? 'Mixed — full syllabus' : subject}
+                          </span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1 text-[11px] font-bold text-brand-500">
+                          {exam.subjects.length} subjects <ChevronDown size={15} />
+                        </span>
+                      </button>
+                      {/* the picker sheet itself renders at page level — a fixed
+                          Modal inside this GlassCard would be positioned relative
+                          to the card (backdrop-filter creates a containing block)
+                          and open below the screen */}
+                    </>
                   ) : (
                     <div className="flex flex-wrap gap-2">
                       {exam.subjects.map((s) => (
@@ -1471,6 +1492,44 @@ export function QuizPage() {
           </div>
         )}
       </Modal>
+
+      {/* subject picker sheet for big syllabi (NORCET etc.) — page level so the
+          fixed overlay covers the real viewport */}
+      {exam && exam.subjects.length > 8 && (
+        <Modal open={subjectSheet} onClose={() => setSubjectSheet(false)} title={`${exam.name} — pick a subject`}>
+          <div className="relative">
+            <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              value={subjectQuery}
+              onChange={(e) => setSubjectQuery(e.target.value)}
+              placeholder="Search subjects…"
+              className="w-full rounded-2xl border border-slate-200/60 bg-white/70 py-2.5 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-brand-400/60 placeholder:text-slate-400 dark:border-white/10 dark:bg-white/5 dark:text-white"
+            />
+          </div>
+          <div className="mt-3 max-h-[52vh] space-y-1 overflow-y-auto pr-1">
+            {exam.subjects
+              .filter((s) => !subjectQuery.trim() || s.toLowerCase().includes(subjectQuery.trim().toLowerCase()))
+              .map((s) => (
+                <button
+                  key={s}
+                  onClick={() => { setSubject(s); setTopic(''); setSubjectSheet(false) }}
+                  className={cn(
+                    'flex w-full items-center justify-between gap-2 rounded-2xl px-3.5 py-2.5 text-left text-sm font-semibold transition active:scale-[0.99]',
+                    subject === s
+                      ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg shadow-brand-500/30'
+                      : 'bg-slate-500/5 text-slate-700 hover:bg-brand-500/10 dark:bg-white/5 dark:text-slate-200',
+                  )}
+                >
+                  <span className="min-w-0 flex-1 break-words">{s === 'Mixed' ? '✨ Mixed — full syllabus' : s}</span>
+                  {subject === s && <Check size={16} className="shrink-0" />}
+                </button>
+              ))}
+            {exam.subjects.filter((s) => !subjectQuery.trim() || s.toLowerCase().includes(subjectQuery.trim().toLowerCase())).length === 0 && (
+              <p className="py-8 text-center text-sm text-slate-400">Nothing matches “{subjectQuery}”</p>
+            )}
+          </div>
+        </Modal>
+      )}
     </Page>
   )
 }
