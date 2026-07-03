@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
+import { useInvalidateTable } from '../hooks/db'
 import { supabase } from '../lib/supabase'
 
 function pushNote(title: string, body: string, tag: string) {
@@ -27,6 +28,7 @@ const PAGE_LOAD_AT = Date.now()
 export function ScrollWatcher() {
   const { activeScroll, stopScroll, showLion } = useApp()
   const { user } = useAuth()
+  const invalidate = useInvalidateTable()
   const warnedSession = useRef<number | null>(null)
 
   useEffect(() => {
@@ -60,6 +62,8 @@ export function ScrollWatcher() {
           app_name: s.appName,
           used_min: usedMin,
         })
+        // direct insert → refresh the cached usage list (Wellbeing "used today")
+        invalidate('social_sessions')
         if (quietIfOver) {
           pushNote('🦁 Session ended',
             `Your ${s.appName} time ran out while you were away — ${usedMin} min saved.`,

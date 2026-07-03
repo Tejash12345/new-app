@@ -93,3 +93,16 @@ export function useTable<T extends { id: string }>(
     remove: remove.mutateAsync,
   }
 }
+
+/**
+ * Invalidate a table's cached rows after a DIRECT supabase write — for the few
+ * writes that can't go through useTable's mutations (upserts, inserts that
+ * need .select()). Without this the change only shows up after leaving and
+ * re-entering the page, because most tables aren't in the realtime publication
+ * so the postgres_changes invalidation never fires.
+ */
+export function useInvalidateTable() {
+  const { user } = useAuth()
+  const qc = useQueryClient()
+  return (table: string) => qc.invalidateQueries({ queryKey: [table, user?.id] })
+}

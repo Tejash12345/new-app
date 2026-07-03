@@ -40,9 +40,12 @@ export function ConfirmDialog() {
               {confirm.message}
             </p>
             <div className="mt-5 flex gap-3">
-              <Button variant="ghost" className="flex-1 !bg-slate-500/10" onClick={() => answerConfirm(false)}>
-                {confirm.noLabel}
-              </Button>
+              {/* an empty noLabel = notice mode (alert replacement): OK only */}
+              {confirm.noLabel && (
+                <Button variant="ghost" className="flex-1 !bg-slate-500/10" onClick={() => answerConfirm(false)}>
+                  {confirm.noLabel}
+                </Button>
+              )}
               <Button
                 className="flex-1 !border-transparent !bg-gradient-to-r !from-amber-400 !to-orange-400 !text-[#241a05] !shadow-lg !shadow-orange-500/30"
                 onClick={() => answerConfirm(true)}

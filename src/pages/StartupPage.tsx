@@ -3,7 +3,6 @@ import { motion } from 'framer-motion'
 import { Rocket, Sparkles, Trash2, TrendingUp, DollarSign, Swords, Layers, Users, Map } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
-import { supabase } from '../lib/supabase'
 import type { StartupPlan, StartupPlanRow } from '../lib/types'
 import { Button, Empty, GlassCard, Page, SectionTitle, TextArea } from '../components/ui'
 import { startupPlan } from '../lib/ai'
@@ -11,7 +10,10 @@ import { confirmDialog } from '../store/app'
 
 export function StartupPage() {
   const { user } = useAuth()
-  const { rows: plans } = useTable<StartupPlanRow>('startup_plans', { orderBy: 'created_at' })
+  // write through the useTable mutations so the cached list refreshes
+  // instantly — direct supabase writes left new/deleted plans invisible
+  // until you left and re-entered the page
+  const { rows: plans, insert: addPlan, remove: removePlan } = useTable<StartupPlanRow>('startup_plans', { orderBy: 'created_at' })
 
   const [idea, setIdea] = useState('')
   const [busy, setBusy] = useState(false)
@@ -22,9 +24,8 @@ export function StartupPage() {
     setBusy(true); setError('')
     try {
       const plan = await startupPlan(idea.trim())
-      const { error: insErr } = await supabase.from('startup_plans').insert({ user_id: user.id, idea: idea.trim(), plan })
-      if (insErr) setError(insErr.message)
-      else setIdea('')
+      await addPlan({ idea: idea.trim(), plan } as Partial<StartupPlanRow>)
+      setIdea('')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reach the AI service.')
     } finally {
@@ -34,7 +35,7 @@ export function StartupPage() {
 
   async function remove(id: string) {
     if (!(await confirmDialog('Delete this plan?', { yesLabel: 'Delete' }))) return
-    await supabase.from('startup_plans').delete().eq('id', id)
+    await removePlan(id)
   }
 
   return (

@@ -4,7 +4,6 @@ import { motion } from 'framer-motion'
 import { Briefcase, Sparkles, Trash2, GraduationCap, MessageSquareText, ThumbsUp, AlertTriangle, Wrench } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
-import { supabase } from '../lib/supabase'
 import type { CareerReport, CareerReportRow } from '../lib/types'
 import { Button, Empty, GlassCard, Input, Page, ProgressRing, SectionTitle, TextArea } from '../components/ui'
 import { careerReport } from '../lib/ai'
@@ -13,7 +12,10 @@ import { confirmDialog } from '../store/app'
 
 export function CareerPage() {
   const { user } = useAuth()
-  const { rows: reports } = useTable<CareerReportRow>('career_reports', { orderBy: 'created_at' })
+  // write through the useTable mutations so the cached list refreshes
+  // instantly — direct supabase writes left new/deleted reports invisible
+  // until you left and re-entered the page
+  const { rows: reports, insert: addReport, remove: removeReport } = useTable<CareerReportRow>('career_reports', { orderBy: 'created_at' })
 
   const [role, setRole] = useState('')
   const [resume, setResume] = useState('')
@@ -25,11 +27,8 @@ export function CareerPage() {
     setBusy(true); setError('')
     try {
       const report = await careerReport(role.trim(), resume.trim())
-      const { error: insErr } = await supabase.from('career_reports').insert({
-        user_id: user.id, role: role.trim(), report,
-      })
-      if (insErr) setError(insErr.message)
-      else { setResume('') }
+      await addReport({ role: role.trim(), report } as Partial<CareerReportRow>)
+      setResume('')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reach the AI service.')
     } finally {
@@ -39,7 +38,7 @@ export function CareerPage() {
 
   async function remove(id: string) {
     if (!(await confirmDialog('Delete this report?', { yesLabel: 'Delete' }))) return
-    await supabase.from('career_reports').delete().eq('id', id)
+    await removeReport(id)
   }
 
   return (

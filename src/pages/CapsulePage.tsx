@@ -4,7 +4,7 @@ import {
   Image as ImageIcon, Film, CalendarClock, Globe, Users, ShieldCheck,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
-import { useTable } from '../hooks/db'
+import { useInvalidateTable, useTable } from '../hooks/db'
 import { supabase } from '../lib/supabase'
 import type {
   Capsule, CapsuleGoal, CapsuleMedia, CapsuleVisibility, FeedPost, GrowthReport,
@@ -19,7 +19,7 @@ import {
   isSealed, isUnlockable, lionGrowthScore, UNLOCK_PRESETS,
 } from '../lib/capsule'
 import { cn, minutesToLabel } from '../lib/utils'
-import { confirmDialog } from '../store/app'
+import { confirmDialog, noticeDialog } from '../store/app'
 
 const VIS: { key: CapsuleVisibility; label: string; icon: typeof Globe }[] = [
   { key: 'private', label: 'Private', icon: Lock },
@@ -32,7 +32,9 @@ const newId = () =>
 
 export function CapsulePage() {
   const { user, profile } = useAuth()
-  const { rows: capsules } = useTable<Capsule>('capsules', { orderBy: 'unlock_at', ascending: true })
+  // read AND write through useTable so every change invalidates the cached
+  // list — direct supabase writes left the page stale until you re-entered it
+  const { rows: capsules, update: updateCapsule, remove: deleteCapsuleRow } = useTable<Capsule>('capsules', { orderBy: 'unlock_at', ascending: true })
   const { rows: media } = useTable<CapsuleMedia>('capsule_media')
   const { rows: tasks } = useTable<Task>('tasks')
   const { rows: sessions } = useTable<StudySession>('study_sessions')
@@ -65,19 +67,17 @@ export function CapsulePage() {
   async function openCapsule(c: Capsule) {
     const report = buildGrowthReport(c, snapshot)
     setCelebrate({ capsule: c, report })
-    await supabase.from('capsules')
-      .update({ opened_at: new Date().toISOString(), growth: report })
-      .eq('id', c.id)
+    await updateCapsule({ id: c.id, opened_at: new Date().toISOString(), growth: report } as Partial<Capsule> & { id: string })
   }
 
   async function toggleGoal(c: Capsule, goalId: string) {
     const goals = (c.goals ?? []).map((g) => (g.id === goalId ? { ...g, done: !g.done } : g))
-    await supabase.from('capsules').update({ goals }).eq('id', c.id)
+    await updateCapsule({ id: c.id, goals } as Partial<Capsule> & { id: string })
   }
 
   async function removeCapsule(c: Capsule) {
     if (!(await confirmDialog('Delete this capsule and everything inside it? This cannot be undone.', { yesLabel: 'Delete' }))) return
-    await supabase.from('capsules').delete().eq('id', c.id)
+    await deleteCapsuleRow(c.id)
   }
 
   const myName = profile?.full_name?.trim() || profile?.email?.split('@')[0] || 'Student'
@@ -101,10 +101,10 @@ export function CapsulePage() {
       tags: ['futureme', 'growth'],
     }).select('id').single()
     if (!error && data) {
-      await supabase.from('capsules').update({ shared_post_id: data.id }).eq('id', c.id)
-      alert('Shared to your FocusLion feed 🎉')
+      await updateCapsule({ id: c.id, shared_post_id: data.id } as Partial<Capsule> & { id: string })
+      void noticeDialog('Shared to your FocusLion feed 🎉')
     } else if (error) {
-      alert(`Could not share: ${error.message}`)
+      void noticeDialog(`Could not share: ${error.message}`)
     }
   }
 
@@ -377,6 +377,10 @@ function CreateCapsuleModal({
   authorName: string
   authorAvatar: string
 }) {
+  // the insert here is direct (it needs .select() for the new id), so the
+  // cached lists must be invalidated by hand or the sealed capsule only
+  // appears after leaving and re-entering the page
+  const invalidate = useInvalidateTable()
   const [title, setTitle] = useState('Letter to future me')
   const [message, setMessage] = useState('')
   const [goals, setGoals] = useState<CapsuleGoal[]>([])
@@ -500,6 +504,8 @@ function CreateCapsuleModal({
           console.error('capsule media upload failed', e)
         }
       }
+      invalidate('capsules')
+      invalidate('capsule_media')
       onClose()
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Something went wrong.'

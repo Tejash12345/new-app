@@ -4,7 +4,7 @@ import { Plus, X, Eye, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { cn } from '../lib/utils'
-import { confirmDialog } from '../store/app'
+import { confirmDialog, noticeDialog } from '../store/app'
 
 const STORY_MS = 5000
 
@@ -185,21 +185,21 @@ export function StoriesBar() {
     e.target.value = ''
     if (!file || !user) return
     if (!file.type.startsWith('image/')) return
-    if (file.size > 10 * 1024 * 1024) { alert('Image too big — 10 MB max.'); return }
+    if (file.size > 10 * 1024 * 1024) { void noticeDialog('Image too big — 10 MB max.'); return }
     setUploading(true)
     try {
       const ext = (file.name.split('.').pop() || 'jpg').replace(/[^\w]+/g, '').slice(0, 5) || 'jpg'
       const path = `${user.id}/${Date.now()}.${ext}`
       const { error: upErr } = await supabase.storage.from('stories').upload(path, file, { contentType: file.type || undefined })
       if (upErr) {
-        alert(/bucket.*not.*found/i.test(upErr.message) ? 'Stories storage missing — run upgrade-14.sql in Supabase first.' : `Upload failed: ${upErr.message}`)
+        void noticeDialog(/bucket.*not.*found/i.test(upErr.message) ? 'Stories storage missing — run upgrade-14.sql in Supabase first.' : `Upload failed: ${upErr.message}`)
         return
       }
       const url = supabase.storage.from('stories').getPublicUrl(path).data.publicUrl
       const { error: insErr } = await supabase.from('stories').insert({
         user_id: user.id, author_name: myName, author_avatar_url: myAvatar, media_url: url, caption: '',
       })
-      if (insErr) { alert(`Could not post story: ${insErr.message}`); return }
+      if (insErr) { void noticeDialog(`Could not post story: ${insErr.message}`); return }
       reload()
     } finally {
       setUploading(false)

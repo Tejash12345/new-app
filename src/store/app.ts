@@ -126,3 +126,7 @@ export const useApp = create<AppState>((set) => ({
  */
 export const confirmDialog = (message: string, opts?: { yesLabel?: string; noLabel?: string }) =>
   useApp.getState().askConfirm(message, opts)
+
+/** In-app replacement for window.alert() — same dialog with a single OK button. */
+export const noticeDialog = (message: string) =>
+  useApp.getState().askConfirm(message, { yesLabel: 'OK', noLabel: '' })

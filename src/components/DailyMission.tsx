@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Check, RefreshCw, Sparkles, Target } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
-import { useTable } from '../hooks/db'
+import { useInvalidateTable, useTable } from '../hooks/db'
 import { supabase } from '../lib/supabase'
 import type { AiMission, StudySession, Task } from '../lib/types'
 import { GlassCard } from './ui'
@@ -16,7 +16,10 @@ import { cn, todayKey } from '../lib/utils'
  */
 export function DailyMissionCard() {
   const { user, profile, addXp } = useAuth()
-  const { rows: missions, isLoading } = useTable<AiMission>('ai_missions')
+  const { rows: missions, isLoading, update: updateMission } = useTable<AiMission>('ai_missions')
+  // the generate() upsert is a direct supabase call (onConflict), so the cache
+  // must be invalidated by hand or the new mission won't show until a reload
+  const invalidate = useInvalidateTable()
   const { rows: tasks } = useTable<Task>('tasks')
   const { rows: sessions } = useTable<StudySession>('study_sessions')
 
@@ -51,6 +54,7 @@ export function DailyMissionCard() {
           { onConflict: 'user_id,mission_date', ignoreDuplicates: !force },
         )
       if (insErr) setError(insErr.message)
+      else invalidate('ai_missions')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reach the AI service.')
     } finally {
@@ -79,14 +83,16 @@ export function DailyMissionCard() {
     const title = (blob.match(/"title"\s*:\s*"([^"]+)"/)?.[1] ?? 'Today’s Lion Mission').slice(0, 80)
     const detail = (blob.match(/"detail"\s*:\s*"([^"]+)"/)?.[1] ?? 'Tackle one focused 25-minute study session today. 🦁').slice(0, 240)
     const xp = Math.max(10, Math.min(50, Number(blob.match(/"xp"\s*:\s*(\d+)/)?.[1]) || mission.xp || 20))
-    supabase.from('ai_missions').update({ title, detail, xp }).eq('id', mission.id).then(() => {}, () => {})
+    supabase.from('ai_missions').update({ title, detail, xp }).eq('id', mission.id).then(() => invalidate('ai_missions'), () => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mission, user])
 
   async function toggleDone() {
     if (!mission) return
     const nowDone = !mission.done
-    await supabase.from('ai_missions').update({ done: nowDone }).eq('id', mission.id)
+    // through the useTable mutation: optimistic, so the checkmark flips
+    // instantly instead of waiting for a page revisit
+    await updateMission({ id: mission.id, done: nowDone } as Partial<AiMission> & { id: string })
     // award (or revoke, on un-check) the mission's XP — symmetric so toggling nets zero
     await addXp(nowDone ? mission.xp : -mission.xp, `Daily mission: ${mission.title}`)
   }
