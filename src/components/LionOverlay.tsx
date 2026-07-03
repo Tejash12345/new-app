@@ -142,14 +142,18 @@ export function LionOverlay() {
           </div>
 
           <div className="relative z-10 mx-4 flex max-w-lg flex-col items-center text-center">
-            {/* lion entrance */}
+            {/* lion entrance — the real roaring lion pouncing in */}
             <motion.div
               initial={{ scale: 0.2, y: 160, opacity: 0 }}
               animate={{ scale: 1, y: 0, opacity: 1 }}
               transition={{ type: 'spring', damping: 14, stiffness: 120, delay: 0.15 }}
-              className="lion-shake select-none text-[9rem] leading-none drop-shadow-[0_0_60px_rgba(255,160,50,0.6)]"
+              className="lion-shake select-none"
             >
-              🦁
+              <img
+                src="/lion.png"
+                alt="Roaring lion"
+                className="w-72 max-w-[80vw] drop-shadow-[0_0_60px_rgba(255,160,50,0.6)] sm:w-80"
+              />
             </motion.div>
 
             <motion.h1

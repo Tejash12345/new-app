@@ -39,7 +39,7 @@ function Gate() {
   if (loading) {
     return (
       <div className="aurora flex min-h-screen items-center justify-center">
-        <div className="animate-pulse text-6xl">🦁</div>
+        <img src="/lion.png" alt="FocusLion" className="w-44 animate-pulse drop-shadow-[0_8px_24px_rgba(255,170,60,0.4)]" />
       </div>
     )
   }
