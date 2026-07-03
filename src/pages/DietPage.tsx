@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { Salad, Sparkles, RefreshCw, Volume2, Play, Pause, Square } from 'lucide-react'
-import { Page, GlassCard, Button, Empty, SectionTitle, Input, Modal } from '../components/ui'
+import { Page, GlassCard, Button, Empty, SectionTitle, Input, Modal, AiLoader } from '../components/ui'
 import { indianDietPlan, recipeFor, AiError, type DietPlan, type DietItem, type Recipe } from '../lib/ai'
 import { useSpeech } from '../hooks/useSpeech'
 import { cn } from '../lib/utils'
@@ -216,9 +216,13 @@ export function DietPage() {
         {error && <p className="mt-2 text-sm font-semibold text-rose-500">{error}</p>}
       </GlassCard>
 
-      {!plan ? (
+      {busy ? (
         <GlassCard>
-          <Empty emoji="🥗" text={busy ? 'Cooking up your plan…' : 'Pick a goal and diet, then generate your plan.'} />
+          <AiLoader title="Cooking up your plan…" hint="Balancing calories, protein and your regional style." />
+        </GlassCard>
+      ) : !plan ? (
+        <GlassCard>
+          <Empty emoji="🥗" text="Pick a goal and diet, then generate your plan." />
         </GlassCard>
       ) : (
         <div className="space-y-4">
@@ -256,13 +260,7 @@ export function DietPage() {
       {/* recipe / preparation sheet — opens when a dish is tapped */}
       <Modal open={!!recipeDish} onClose={() => { voice.stop(); setRecipeDish(null) }} title={recipeDish ?? 'Recipe'}>
         {recipeBusy ? (
-          <div className="animate-pulse space-y-3">
-            <div className="h-4 w-24 rounded bg-slate-500/15" />
-            <div className="h-3 w-full rounded bg-slate-500/10" />
-            <div className="h-3 w-5/6 rounded bg-slate-500/10" />
-            <div className="h-3 w-2/3 rounded bg-slate-500/10" />
-            <div className="h-3 w-4/5 rounded bg-slate-500/10" />
-          </div>
+          <AiLoader title="Writing your recipe…" hint="Ingredients and step-by-step method, in your language." />
         ) : recipeErr ? (
           <div className="py-4 text-center">
             <p className="text-sm font-semibold text-rose-500">{recipeErr}</p>
