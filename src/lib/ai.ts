@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase'
 import type { CareerReport, StartupPlan } from './types'
 
 // ----------------------------------------------------------------------------
@@ -50,6 +50,85 @@ export async function askLion(
   // usage is now counted server-side in the Edge Function (only real model
   // calls, not cache hits), so there's nothing to record here.
   return String(data?.text ?? '').trim()
+}
+
+/**
+ * Streaming variant of askLion for the interactive chat. Calls the lion-ai
+ * function with stream:true and fires onChunk(delta) as tokens arrive, so Leo's
+ * reply shows up immediately instead of after the whole answer is generated.
+ *
+ * Fully backward compatible: if the deployed function doesn't stream (it returns
+ * application/json instead of a text stream), we read its full {text} response
+ * and deliver it in one onChunk call — so this works whether or not the new
+ * edge function is deployed yet. Returns the complete reply text.
+ */
+export async function askLionStream(
+  opts: { task: AiTask; input?: string; messages?: ChatTurn[] },
+  onChunk: (delta: string) => void,
+): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.access_token) throw new AiError('Please sign in to chat with Leo. 🦁')
+
+  let res: Response
+  try {
+    res = await fetch(`${SUPABASE_URL}/functions/v1/lion-ai`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ task: opts.task, input: opts.input ?? '', messages: opts.messages ?? [], stream: true, fast: true }),
+    })
+  } catch {
+    throw new AiError('Could not reach the Lion AI service. Check your connection.')
+  }
+
+  const contentType = res.headers.get('content-type') ?? ''
+  // Not a text stream — an error, or an older (non-streaming) function build.
+  if (!res.body || !contentType.includes('text/plain')) {
+    const body = await res.json().catch(() => ({} as Record<string, unknown>))
+    if (!res.ok || body.error) {
+      const detail = String(body.error ?? `AI request failed (${res.status})`)
+      if (/limit|quota|RESOURCE_EXHAUSTED|429|rate.?limit/i.test(detail)) {
+        throw new AiError("Lion AI has hit today's usage limit 🦁 — it resets daily. Please try again later.")
+      }
+      throw new AiError(detail)
+    }
+    const text = String(body.text ?? '').trim()
+    if (text) onChunk(text) // no stream available — deliver the whole reply at once
+    return text
+  }
+
+  // Streamed plain-text body: forward each delta as it arrives.
+  // Some NIM endpoints hold a short-reply connection open (no prompt terminal
+  // frame), so we guard each read with an idle timeout: wait patiently for the
+  // FIRST token (a cold model can take ~1min), but once tokens are flowing a
+  // multi-second gap means the reply is complete — stop and cancel.
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  const FIRST_TOKEN_MS = 150_000
+  const IDLE_MS = 5_000
+  let full = ''
+  for (;;) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const idle = new Promise<'IDLE'>((resolve) => {
+      timer = setTimeout(() => resolve('IDLE'), full ? IDLE_MS : FIRST_TOKEN_MS)
+    })
+    let result: ReadableStreamReadResult<Uint8Array> | 'IDLE'
+    try {
+      result = await Promise.race([reader.read(), idle])
+    } finally {
+      clearTimeout(timer)
+    }
+    if (result === 'IDLE' || result.done) {
+      try { await reader.cancel() } catch { /* already closed */ }
+      break
+    }
+    const chunk = decoder.decode(result.value, { stream: true })
+    if (chunk) { full += chunk; onChunk(chunk) }
+  }
+  return full.trim()
 }
 
 // ---- feature helpers (the "AI-powered features") ----

@@ -4,7 +4,7 @@ import { Send, X, Trash2, Sparkles } from 'lucide-react'
 import { AiLion } from './ui'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
-import { askLion, type ChatTurn } from '../lib/ai'
+import { askLionStream, type ChatTurn } from '../lib/ai'
 import { cn } from '../lib/utils'
 
 type Msg = ChatTurn
@@ -72,9 +72,31 @@ export function LionAI() {
     setTyping(true)
     persist('user', q)
     try {
-      const reply = await askLion({ task: 'chat', messages: history })
-      setMsgs((m) => [...m, { role: 'assistant', content: reply || '…' }])
-      persist('assistant', reply)
+      // stream the reply in: append a bubble on the first token, then grow it
+      let acc = ''
+      const reply = await askLionStream({ task: 'chat', messages: history }, (delta) => {
+        acc += delta
+        setMsgs((m) => {
+          const last = m[m.length - 1]
+          if (last?.role === 'assistant') {
+            const copy = m.slice()
+            copy[copy.length - 1] = { role: 'assistant', content: acc }
+            return copy
+          }
+          return [...m, { role: 'assistant', content: acc }]
+        })
+      })
+      const finalText = (reply || acc).trim() || '…'
+      setMsgs((m) => {
+        const last = m[m.length - 1]
+        if (last?.role === 'assistant') {
+          const copy = m.slice()
+          copy[copy.length - 1] = { role: 'assistant', content: finalText }
+          return copy
+        }
+        return [...m, { role: 'assistant', content: finalText }]
+      })
+      persist('assistant', finalText)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
@@ -146,7 +168,7 @@ export function LionAI() {
                   </div>
                 </motion.div>
               ))}
-              {typing && (
+              {typing && msgs[msgs.length - 1]?.role === 'user' && (
                 <div className="flex justify-start">
                   <div className="flex items-center gap-1.5 rounded-3xl rounded-bl-lg bg-slate-100 px-4 py-3 dark:bg-white/10">
                     <AiLion className="mr-1 h-5" />

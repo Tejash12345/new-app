@@ -25,6 +25,12 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 // DeepSeek/MiniMax *reasoning* model (long hidden <think> chains take 2-3 min →
 // 546 WORKER_RESOURCE_LIMIT), and NOT a dense 70B (too slow on free tier → 546).
 const MODEL = Deno.env.get('NVIDIA_MODEL') ?? 'meta/llama-4-maverick-17b-128e-instruct'
+// A lighter model for the INTERACTIVE chat (Lion AI assistant / Coach), where
+// snappy replies matter more than Maverick's multilingual recipe quality. The
+// big MoE Maverick queues for tens of seconds on the free NIM tier; a small
+// dense 8B model responds in a few seconds. Content tasks (recipes, quiz,
+// roadmaps) still use MODEL. Requests opt in with { fast: true }.
+const FAST_MODEL = Deno.env.get('NVIDIA_FAST_MODEL') ?? 'meta/llama-3.1-8b-instruct'
 // Prefer NVIDIA_API_KEY; fall back to GEMINI_API_KEY so an already-set secret
 // keeps working if you only swapped its value to the nvapi-… key.
 const AI_API_KEY = Deno.env.get('NVIDIA_API_KEY') ?? Deno.env.get('GEMINI_API_KEY') ?? ''
@@ -141,8 +147,8 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authErr } = await userClient.auth.getUser()
     if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
-    const { task = 'chat', input = '', messages = [] } =
-      (await req.json().catch(() => ({}))) as { task?: string; input?: string; messages?: InMsg[] }
+    const { task = 'chat', input = '', messages = [], stream: wantStreamRaw = false, fast: wantFast = false } =
+      (await req.json().catch(() => ({}))) as { task?: string; input?: string; messages?: InMsg[]; stream?: boolean; fast?: boolean }
 
     // service-role client for cache + usage (bypasses RLS)
     const admin = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
@@ -150,25 +156,28 @@ Deno.serve(async (req) => {
     })
     const today = new Date().toISOString().slice(0, 10)
 
-    // ---- per-user daily rate limit ----
-    const { data: usageRow } = await admin
-      .from('ai_usage').select('calls').eq('user_id', user.id).eq('used_on', today).maybeSingle()
-    const used = (usageRow?.calls as number) ?? 0
+    // ---- rate-limit row + cached answer, fetched together ----
+    // They're independent, so run them in one round-trip instead of two.
+    const cacheable = CACHEABLE.includes(task) && !!input
+    const cacheKey = cacheable ? await sha256(`${MODEL}::${PROMPT_VERSION}::${task}::${input}`) : ''
+
+    const [usageResult, cacheResult] = await Promise.all([
+      admin.from('ai_usage').select('calls').eq('user_id', user.id).eq('used_on', today).maybeSingle(),
+      cacheable
+        ? admin.from('ai_cache').select('response').eq('cache_key', cacheKey).maybeSingle()
+        : Promise.resolve({ data: null } as any),
+    ])
+
+    const used = ((usageResult as any)?.data?.calls as number) ?? 0
     if (used >= DAILY_USER_CAP) {
       console.warn(`[RATELIMIT] user=${user.id} used=${used}/${DAILY_USER_CAP} task=${task}`)
       return json({ error: `You've reached today's AI limit of ${DAILY_USER_CAP} requests. It resets tomorrow. 🦁`, limited: true }, 429)
     }
 
-    // ---- response cache (idempotent tasks only) ----
-    const cacheable = CACHEABLE.includes(task) && !!input
-    let cacheKey = ''
-    if (cacheable) {
-      cacheKey = await sha256(`${MODEL}::${PROMPT_VERSION}::${task}::${input}`)
-      const { data: hit } = await admin.from('ai_cache').select('response').eq('cache_key', cacheKey).maybeSingle()
-      if (hit?.response) {
-        console.log(`[CACHE_HIT] task=${task} user=${user.id}`)
-        return json({ text: String(hit.response), task, cached: true })
-      }
+    const cachedResponse = (cacheResult as any)?.data?.response
+    if (cachedResponse) {
+      console.log(`[CACHE_HIT] task=${task} user=${user.id}`)
+      return json({ text: String(cachedResponse), task, cached: true })
     }
 
     // ---- build NVIDIA (OpenAI-compatible) request ----
@@ -183,8 +192,11 @@ Deno.serve(async (req) => {
         : [{ role: 'user', content: String(input ?? '') }]),
     ]
 
+    // interactive chat opts into the lighter, faster model; content/JSON tasks
+    // keep the higher-quality MODEL
+    const activeModel = wantFast && !JSON_TASKS.includes(task) ? FAST_MODEL : MODEL
     const payload = {
-      model: MODEL,
+      model: activeModel,
       messages: chatMessages,
       temperature: task === 'mission' ? 0.9 : 0.7,
       max_tokens:
@@ -199,6 +211,109 @@ Deno.serve(async (req) => {
         : 512,
       stream: false,
       ...(JSON_TASKS.includes(task) ? { response_format: { type: 'json_object' } } : {}),
+    }
+
+    // ---- streaming path (interactive chat) ----
+    // JSON tasks can't stream usefully (the client parses the whole object), so
+    // only free-text tasks stream. The reply is forwarded token-by-token as
+    // plain text, so Leo starts "typing" within ~1s instead of after the full
+    // answer is generated.
+    const wantStream = wantStreamRaw === true && !JSON_TASKS.includes(task)
+    if (wantStream) {
+      const callUpstream = (model: string) => fetch(AI_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_API_KEY}` },
+        body: JSON.stringify({ ...payload, model, stream: true }),
+      })
+      let upstream: Response
+      try {
+        upstream = await callUpstream(activeModel)
+        // if the lighter fast model isn't available on this account, transparently
+        // fall back to the main model so chat never breaks — just slower
+        if (!upstream.ok && upstream.status !== 429 && activeModel !== MODEL) {
+          console.warn(`[FALLBACK] fast model ${activeModel} unavailable (status ${upstream.status}) -> ${MODEL}`)
+          upstream = await callUpstream(MODEL)
+        }
+      } catch (e) {
+        return json({ error: 'Could not reach the AI provider', detail: String(e) }, 502)
+      }
+      if (upstream.status === 429) {
+        const b = await upstream.text().catch(() => '')
+        console.error(`[QUOTA] 429 stream user=${user.id} task=${task} :: ${b.slice(0, 240)}`)
+        return json({ error: QUOTA_MSG, quota: true }, 429)
+      }
+      if (!upstream.ok || !upstream.body) {
+        const detail = await upstream.text().catch(() => '')
+        console.error(`[AI_ERR] ${upstream.status} stream task=${task} :: ${detail.slice(0, 240)}`)
+        return json({ error: 'AI request failed', status: upstream.status, detail }, 502)
+      }
+
+      // Count this call now (optimistic): the body streams out and we can't
+      // reliably run code after it closes.
+      admin.from('ai_usage').upsert(
+        { user_id: user.id, used_on: today, calls: used + 1, last_task: task, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,used_on' },
+      ).then(() => {}, () => {})
+
+      const reader = upstream.body.getReader()
+      const decoder = new TextDecoder()
+      const encoder = new TextEncoder()
+      let sseBuf = ''
+      let startedContent = false
+      // Process one SSE line. When emit=true we forward its content delta; the
+      // trailing (still-partial) buffer is peeked with emit=false so we can spot
+      // a completion signal without double-emitting when the frame completes.
+      // Returns true when the stream should close.
+      const handleLine = (raw: string, emit: boolean, controller: ReadableStreamDefaultController): boolean => {
+        const t = raw.trim()
+        if (!t.startsWith('data:')) return false
+        const p = t.slice(5).trim()
+        if (p === '[DONE]') return true
+        try {
+          const j = JSON.parse(p)
+          const choice = j?.choices?.[0]
+          if (emit) {
+            // strip any reasoning-model <think> markers if a model emits them
+            const delta = String(choice?.delta?.content ?? '').replace(/<\/?think>/gi, '')
+            if (delta) { controller.enqueue(encoder.encode(delta)); startedContent = true }
+          }
+          // close as soon as the model signals completion — some NIM endpoints
+          // never send [DONE] and hold the connection open until the worker limit
+          if (choice?.finish_reason) return true
+        } catch { /* keepalive ping or a frame split across reads */ }
+        return false
+      }
+      const out = new ReadableStream({
+        async pull(controller) {
+          try {
+            // Wait patiently for the FIRST token (a cold model can take ~1min),
+            // but once tokens are flowing a multi-second gap means the endpoint
+            // finished and just isn't closing — so we close it ourselves.
+            const idleMs = startedContent ? 6000 : 140000
+            let timer: number | undefined
+            const idle = new Promise((res) => { timer = setTimeout(() => res('IDLE'), idleMs) })
+            const result: any = await Promise.race([reader.read(), idle])
+            clearTimeout(timer)
+            if (result === 'IDLE') { controller.close(); try { await reader.cancel() } catch { /* noop */ } return }
+            if (result.done) { controller.close(); return }
+            sseBuf += decoder.decode(result.value, { stream: true })
+            const lines = sseBuf.split('\n')
+            sseBuf = lines.pop() ?? '' // keep the trailing partial line for next read
+            for (const line of lines) {
+              if (handleLine(line, true, controller)) { controller.close(); return }
+            }
+            // terminal frame may arrive without its trailing newline (stuck in
+            // sseBuf) — peek for a completion signal so we don't hang waiting
+            if (handleLine(sseBuf, false, controller)) { controller.close(); return }
+          } catch (e) {
+            controller.error(e)
+          }
+        },
+        cancel() { try { reader.cancel() } catch { /* noop */ } },
+      })
+      return new Response(out, {
+        headers: { ...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' },
+      })
     }
 
     let res: Response

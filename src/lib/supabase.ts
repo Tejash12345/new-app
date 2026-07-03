@@ -7,6 +7,11 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL ?? '').trim()
 const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim()
 
+// exported for the streaming AI client, which calls the edge function via raw
+// fetch (supabase.functions.invoke buffers the whole body and can't stream)
+export const SUPABASE_URL = supabaseUrl
+export const SUPABASE_ANON_KEY = supabaseAnonKey
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 // Single sign-on bridge to the Android wrapper. The native side mirrors this

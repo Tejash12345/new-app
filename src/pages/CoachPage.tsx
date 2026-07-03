@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { SocialSession, StudySession, Task } from '../lib/types'
 import { AiLion, Button, GlassCard, Input, Page, SectionTitle } from '../components/ui'
-import { askLion } from '../lib/ai'
+import { askLionStream } from '../lib/ai'
 import { addDays, minutesToLabel, quoteOfTheDay, todayKey } from '../lib/utils'
 
 type Msg = { role: 'user' | 'coach'; text: string }
@@ -142,18 +142,51 @@ export function CoachPage() {
         role: (m.role === 'coach' ? 'assistant' : 'user') as 'assistant' | 'user',
         content: m.text,
       }))
-      const reply = await askLion({
-        task: 'chat',
-        messages: [
-          { role: 'user', content: `My FocusLion stats — use these to personalize, don't just list them back: ${buildContext()}` },
-          { role: 'assistant', content: 'Got it — I have your latest progress in mind.' },
-          ...convo,
-          { role: 'user', content: q },
-        ],
+      let acc = ''
+      const reply = await askLionStream(
+        {
+          task: 'chat',
+          messages: [
+            { role: 'user', content: `My FocusLion stats — use these to personalize, don't just list them back: ${buildContext()}` },
+            { role: 'assistant', content: 'Got it — I have your latest progress in mind.' },
+            ...convo,
+            { role: 'user', content: q },
+          ],
+        },
+        (delta) => {
+          acc += delta
+          setMsgs((m) => {
+            const last = m[m.length - 1]
+            if (last?.role === 'coach') {
+              const copy = m.slice()
+              copy[copy.length - 1] = { role: 'coach', text: acc }
+              return copy
+            }
+            return [...m, { role: 'coach', text: acc }]
+          })
+        },
+      )
+      const finalText = (reply || acc).trim() || coachReply(q)
+      setMsgs((m) => {
+        const last = m[m.length - 1]
+        if (last?.role === 'coach') {
+          const copy = m.slice()
+          copy[copy.length - 1] = { role: 'coach', text: finalText }
+          return copy
+        }
+        return [...m, { role: 'coach', text: finalText }]
       })
-      setMsgs((m) => [...m, { role: 'coach', text: reply || coachReply(q) }])
     } catch {
-      setMsgs((m) => [...m, { role: 'coach', text: coachReply(q) }])
+      const fallback = coachReply(q)
+      setMsgs((m) => {
+        const last = m[m.length - 1]
+        if (last?.role === 'coach') {
+          const copy = m.slice()
+          copy[copy.length - 1] = { role: 'coach', text: fallback }
+          return copy
+        }
+        return [...m, { role: 'coach', text: fallback }]
+      })
     } finally {
       setTyping(false)
     }
@@ -199,7 +232,7 @@ export function CoachPage() {
                 </div>
               </motion.div>
             ))}
-            {typing && (
+            {typing && msgs[msgs.length - 1]?.role === 'user' && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
                 <div className="flex items-center gap-1.5 rounded-3xl rounded-bl-lg bg-white/60 dark:bg-white/10 px-4 py-3">
                   <AiLion className="mr-1 h-5" />
