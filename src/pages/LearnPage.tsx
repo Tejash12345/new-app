@@ -7,6 +7,7 @@ import type { LearningPath, LearningStep } from '../lib/types'
 import { Button, Empty, GlassCard, Input, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { generateLearningPath } from '../lib/ai'
 import { cn } from '../lib/utils'
+import { confirmDialog } from '../store/app'
 
 const TOPICS = ['Flutter', 'React', 'Java', 'AI & ML', 'Python', 'Cybersecurity', 'Anatomy', 'Pharmacology']
 const LEVELS = ['Beginner', 'Intermediate', 'Advanced']
@@ -50,7 +51,7 @@ export function LearnPage() {
   }
 
   async function removePath(id: string) {
-    if (!confirm('Delete this learning path?')) return
+    if (!(await confirmDialog('Delete this learning path?', { yesLabel: 'Delete' }))) return
     await remove(id)
   }
 

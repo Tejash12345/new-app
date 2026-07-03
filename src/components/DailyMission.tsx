@@ -95,8 +95,8 @@ export function DailyMissionCard() {
     <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mb-5">
       <GlassCard className="overflow-hidden !border-amber-400/30 bg-gradient-to-br from-amber-400/15 via-transparent to-orange-500/10">
         <div className="flex items-start gap-3 sm:gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-400 to-orange-500 text-2xl shadow-lg sm:h-14 sm:w-14 sm:text-3xl">
-            🦁
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-400 to-orange-500 p-1 shadow-lg sm:h-14 sm:w-14">
+            <img src="/lion.png" alt="" className="h-full w-full object-contain" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-amber-500">

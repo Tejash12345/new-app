@@ -57,7 +57,9 @@ export function Onboarding() {
                 initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }}
                 transition={{ duration: 0.25 }}
               >
-                <div className="text-6xl">{STEPS[step].emoji}</div>
+                {STEPS[step].emoji === '🦁'
+                  ? <img src="/lion.png" alt="" className="mx-auto w-32 drop-shadow-[0_6px_18px_rgba(255,170,60,0.4)]" />
+                  : <div className="text-6xl">{STEPS[step].emoji}</div>}
                 <h2 className="mt-4 text-xl font-extrabold text-slate-900 dark:text-white">{STEPS[step].title}</h2>
                 <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">{STEPS[step].body}</p>
               </motion.div>

@@ -16,12 +16,23 @@ type ActiveScroll = {
   windowLabel?: string
 } | null
 
+type ConfirmState = {
+  open: boolean
+  message: string
+  yesLabel: string
+  noLabel: string
+  resolve: ((v: boolean) => void) | null
+}
+
 type AppState = {
   dark: boolean
   toggleDark: () => void
   lion: LionState
   showLion: (appName: string, reason?: 'limit' | 'schedule', windowLabel?: string) => void
   hideLion: () => void
+  confirm: ConfirmState
+  askConfirm: (message: string, opts?: { yesLabel?: string; noLabel?: string }) => Promise<boolean>
+  answerConfirm: (v: boolean) => void
   activeScroll: ActiveScroll
   startScroll: (s: NonNullable<ActiveScroll>) => void
   stopScroll: () => void
@@ -74,6 +85,24 @@ export const useApp = create<AppState>((set) => ({
   showLion: (appName, reason = 'limit', windowLabel) =>
     set({ lion: { open: true, appName, reason, windowLabel } }),
   hideLion: () => set({ lion: { open: false, appName: '', reason: 'limit' } }),
+  confirm: { open: false, message: '', yesLabel: 'Yes', noLabel: 'No', resolve: null },
+  askConfirm: (message, opts) =>
+    new Promise<boolean>((resolve) => {
+      set({
+        confirm: {
+          open: true,
+          message,
+          yesLabel: opts?.yesLabel ?? 'Yes',
+          noLabel: opts?.noLabel ?? 'No',
+          resolve,
+        },
+      })
+    }),
+  answerConfirm: (v) =>
+    set((s) => {
+      s.confirm.resolve?.(v)
+      return { confirm: { ...s.confirm, open: false, resolve: null } }
+    }),
   activeScroll: loadActiveScroll(),
   startScroll: (s) => {
     try { localStorage.setItem(SCROLL_KEY, JSON.stringify(s)) } catch { /* ignore */ }
@@ -88,3 +117,12 @@ export const useApp = create<AppState>((set) => ({
   activeChatPeer: null,
   setActiveChatPeer: (id) => set({ activeChatPeer: id }),
 }))
+
+/**
+ * In-app replacement for window.confirm(). The native browser dialog inside
+ * the Android WebView shows the raw site URL ("…vercel.app says") and ignores
+ * the app's design — this renders the branded ConfirmDialog instead and
+ * resolves true (yes) / false (no).
+ */
+export const confirmDialog = (message: string, opts?: { yesLabel?: string; noLabel?: string }) =>
+  useApp.getState().askConfirm(message, opts)

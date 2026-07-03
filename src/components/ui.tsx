@@ -161,7 +161,10 @@ export function Stat({
 export function Empty({ emoji, text }: { emoji: string; text: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-12 text-center">
-      <div className="text-5xl">{emoji}</div>
+      {/* the lion mascot renders as the real image; other emojis stay as-is */}
+      {emoji === '🦁'
+        ? <img src="/lion.png" alt="" className="w-28 drop-shadow-[0_6px_18px_rgba(255,170,60,0.35)]" />
+        : <div className="text-5xl">{emoji}</div>}
       <p className="mt-3 text-sm text-slate-500 dark:text-slate-400 whitespace-pre-line">{text}</p>
     </div>
   )

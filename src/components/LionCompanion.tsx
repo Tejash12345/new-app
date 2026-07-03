@@ -8,10 +8,10 @@ import { levelForXp, levelProgress, levelTitle, todayKey } from '../lib/utils'
 
 type Stage = { name: string; minLevel: number; size: string; crown: boolean }
 const STAGES: Stage[] = [
-  { name: 'Lion Cub', minLevel: 1, size: 'text-6xl', crown: false },
-  { name: 'Young Lion', minLevel: 3, size: 'text-7xl', crown: false },
-  { name: 'Mighty Lion', minLevel: 5, size: 'text-8xl', crown: false },
-  { name: 'Lion King', minLevel: 8, size: 'text-8xl', crown: true },
+  { name: 'Lion Cub', minLevel: 1, size: 'w-24', crown: false },
+  { name: 'Young Lion', minLevel: 3, size: 'w-28', crown: false },
+  { name: 'Mighty Lion', minLevel: 5, size: 'w-32', crown: false },
+  { name: 'Lion King', minLevel: 8, size: 'w-32', crown: true },
 ]
 
 export function LionCompanion() {
@@ -90,9 +90,9 @@ export function LionCompanion() {
                   : { y: [0, -3, 0] }
             }
             transition={{ repeat: Infinity, duration: mood === 'grumpy' ? 0.8 : 2.6, ease: 'easeInOut' }}
-            className={`${stage.size} select-none drop-shadow-[0_8px_24px_rgba(255,170,60,0.35)]`}
+            className="select-none"
           >
-            {mood === 'grumpy' ? '🦁' : '🦁'}
+            <img src="/lion.png" alt="" className={`${stage.size} drop-shadow-[0_8px_24px_rgba(255,170,60,0.35)]`} />
           </motion.div>
           <div className="mt-1 text-center text-[10px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-300">
             {stage.name}
@@ -185,9 +185,9 @@ export function LevelUpCelebration() {
             <motion.div
               animate={{ rotate: [0, -8, 8, 0], scale: [1, 1.15, 1] }}
               transition={{ repeat: 2, duration: 0.6 }}
-              className="text-7xl"
+              className="flex justify-center"
             >
-              🦁
+              <img src="/lion.png" alt="" className="w-36 drop-shadow-[0_8px_24px_rgba(255,170,60,0.4)]" />
             </motion.div>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 dark:text-white">LEVEL UP!</h2>
             <p className="mt-1 text-slate-600 dark:text-slate-300">

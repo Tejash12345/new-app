@@ -130,7 +130,7 @@ export function FocusPage() {
           <X size={22} />
         </button>
         <div className="mb-8 text-center">
-          <div className="text-4xl">🦁</div>
+          <img src="/lion.png" alt="" className="mx-auto w-24 drop-shadow-[0_6px_18px_rgba(255,170,60,0.4)]" />
           <h2 className="mt-2 text-xl font-bold text-white">Deep Focus Mode</h2>
           <p className="text-sm text-slate-400">{subject ? `Studying: ${subject}` : 'The lion guards your focus. Stay here.'}</p>
         </div>

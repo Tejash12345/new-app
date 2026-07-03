@@ -8,6 +8,7 @@ import {
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
 import { LionOverlay } from './LionOverlay'
+import { ConfirmDialog } from './ConfirmDialog'
 import { ScrollWatcher } from './ScrollWatcher'
 import { CommandPalette } from './CommandPalette'
 import { openSearch } from '../lib/search'
@@ -72,6 +73,7 @@ export function Layout() {
     <div className="aurora min-h-screen overflow-x-hidden">
       <ScrollWatcher />
       <LionOverlay />
+      <ConfirmDialog />
       <CommandPalette />
       <Onboarding />
       <PresenceTracker />
@@ -81,7 +83,7 @@ export function Layout() {
       <aside className="fixed left-4 top-4 bottom-4 z-40 hidden w-60 flex-col lg:flex">
         <div className="glass flex h-full flex-col rounded-3xl p-4">
           <div className="mb-6 flex items-center gap-2.5 px-2 pt-1">
-            <span className="text-2xl">🦁</span>
+            <img src="/lion.png" alt="" className="h-9 w-auto" />
             <div>
               <div className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white">FocusLion</div>
               <div className="text-[10px] font-medium uppercase tracking-widest text-slate-400">Study · Focus · Roar</div>
@@ -150,7 +152,7 @@ export function Layout() {
       <header className="sticky top-0 z-30 px-4 pt-4 lg:pl-72 sm:px-8 lg:pr-8">
         <div className="glass flex items-center justify-between rounded-3xl px-5 py-3">
           <div className="flex items-center gap-2 lg:hidden">
-            <span className="text-xl">🦁</span>
+            <img src="/lion.png" alt="" className="h-8 w-auto" />
             <span className="font-extrabold text-slate-900 dark:text-white">FocusLion</span>
           </div>
           <div className="hidden lg:block text-sm font-medium text-slate-500 dark:text-slate-400">

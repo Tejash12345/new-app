@@ -19,6 +19,7 @@ import {
   isSealed, isUnlockable, lionGrowthScore, UNLOCK_PRESETS,
 } from '../lib/capsule'
 import { cn, minutesToLabel } from '../lib/utils'
+import { confirmDialog } from '../store/app'
 
 const VIS: { key: CapsuleVisibility; label: string; icon: typeof Globe }[] = [
   { key: 'private', label: 'Private', icon: Lock },
@@ -75,7 +76,7 @@ export function CapsulePage() {
   }
 
   async function removeCapsule(c: Capsule) {
-    if (!confirm('Delete this capsule and everything inside it? This cannot be undone.')) return
+    if (!(await confirmDialog('Delete this capsule and everything inside it? This cannot be undone.', { yesLabel: 'Delete' }))) return
     await supabase.from('capsules').delete().eq('id', c.id)
   }
 

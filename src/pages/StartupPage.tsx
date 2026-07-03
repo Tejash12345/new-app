@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase'
 import type { StartupPlan, StartupPlanRow } from '../lib/types'
 import { Button, Empty, GlassCard, Page, SectionTitle, TextArea } from '../components/ui'
 import { startupPlan } from '../lib/ai'
+import { confirmDialog } from '../store/app'
 
 export function StartupPage() {
   const { user } = useAuth()
@@ -32,7 +33,7 @@ export function StartupPage() {
   }
 
   async function remove(id: string) {
-    if (!confirm('Delete this plan?')) return
+    if (!(await confirmDialog('Delete this plan?', { yesLabel: 'Delete' }))) return
     await supabase.from('startup_plans').delete().eq('id', id)
   }
 

@@ -9,6 +9,7 @@ import type { CareerReport, CareerReportRow } from '../lib/types'
 import { Button, Empty, GlassCard, Input, Page, ProgressRing, SectionTitle, TextArea } from '../components/ui'
 import { careerReport } from '../lib/ai'
 import { cn } from '../lib/utils'
+import { confirmDialog } from '../store/app'
 
 export function CareerPage() {
   const { user } = useAuth()
@@ -37,7 +38,7 @@ export function CareerPage() {
   }
 
   async function remove(id: string) {
-    if (!confirm('Delete this report?')) return
+    if (!(await confirmDialog('Delete this report?', { yesLabel: 'Delete' }))) return
     await supabase.from('career_reports').delete().eq('id', id)
   }
 

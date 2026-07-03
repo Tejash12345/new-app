@@ -8,6 +8,7 @@ import { examStudyPlan, explainQuizQuestion, generateQuiz, teachTopic, type Exam
 import type { Note, QuizResult } from '../lib/types'
 import { Button, Empty, GlassCard, Input, Modal, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { cn, timeAgo, todayKey } from '../lib/utils'
+import { confirmDialog } from '../store/app'
 
 // ----------------------------------------------------------------------------
 // AI Quiz Arena — Leo builds a multiple-choice quiz on any topic (or on one of
@@ -554,8 +555,8 @@ export function QuizPage() {
   }
 
   /** leave a running quiz and return to the setup screen (progress is discarded). */
-  function quitQuiz() {
-    if (!confirm('Leave this quiz? Your progress will not be saved.')) return
+  async function quitQuiz() {
+    if (!(await confirmDialog('Leave this quiz? Your progress will not be saved.', { yesLabel: 'Leave', noLabel: 'Keep playing' }))) return
     voice.stop()
     setPhase('setup')
   }

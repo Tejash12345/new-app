@@ -4,6 +4,7 @@ import { Plus, X, Eye, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { cn } from '../lib/utils'
+import { confirmDialog } from '../store/app'
 
 const STORY_MS = 5000
 
@@ -303,7 +304,7 @@ function StoryViewer({
   }
   async function del() {
     if (!story) return
-    if (!confirm('Delete this story?')) return
+    if (!(await confirmDialog('Delete this story?', { yesLabel: 'Delete' }))) return
     await supabase.from('stories').delete().eq('id', story.id)
     onDeleted()
   }
