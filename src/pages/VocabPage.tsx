@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sparkles, Volume2, RefreshCw, Bookmark, BookmarkCheck, BookMarked, Trash2 } from 'lucide-react'
-import { Page, GlassCard, Button, Empty, SectionTitle } from '../components/ui'
+import { Page, GlassCard, Button, Empty, SectionTitle, AiLoader } from '../components/ui'
 import { wordOfTheDay, AiError, type VocabWord } from '../lib/ai'
 import { speak } from '../lib/speak'
 import { todayKey } from '../lib/utils'
@@ -20,13 +20,7 @@ function save(key: string, val: unknown) {
 function LoadingCard() {
   return (
     <GlassCard className="!border-brand-400/20">
-      <div className="animate-pulse space-y-3">
-        <div className="h-4 w-28 rounded-full bg-slate-500/15" />
-        <div className="h-10 w-44 rounded-xl bg-slate-500/20" />
-        <div className="h-4 w-full rounded bg-slate-500/10" />
-        <div className="h-4 w-3/4 rounded bg-slate-500/10" />
-        <div className="h-16 w-full rounded-2xl bg-slate-500/10" />
-      </div>
+      <AiLoader title="Finding your word…" hint="A useful word with meaning, examples and synonyms." />
     </GlassCard>
   )
 }
