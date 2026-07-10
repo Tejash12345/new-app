@@ -16,12 +16,14 @@ export type ChatTurn = { role: 'user' | 'assistant'; content: string }
 
 export class AiError extends Error {}
 
-/** Low-level call to the Lion AI proxy. Returns the model's text. */
+/** Low-level call to the Lion AI proxy. Returns the model's text.
+ *  `fast: true` routes to the lighter fast model — for interactive helpers
+ *  (smart replies) where a snappy answer beats maximum quality. */
 export async function askLion(
-  opts: { task: AiTask; input?: string; messages?: ChatTurn[] },
+  opts: { task: AiTask; input?: string; messages?: ChatTurn[]; fast?: boolean },
 ): Promise<string> {
   const { data, error } = await supabase.functions.invoke('lion-ai', {
-    body: { task: opts.task, input: opts.input ?? '', messages: opts.messages ?? [] },
+    body: { task: opts.task, input: opts.input ?? '', messages: opts.messages ?? [], fast: opts.fast === true },
   })
   if (error) {
     // FunctionsHttpError carries the function's Response in `context` — read its
@@ -634,6 +636,26 @@ export async function flashcardsFrom(text: string, count: number): Promise<{ fro
     })
     .filter((c) => c.front && c.back)
     .slice(0, Math.max(count, 20))
+}
+
+/**
+ * AI smart replies for the chat — three short, natural suggestions for what
+ * to send next, based on the recent conversation. Uses the fast model so the
+ * chips appear in a couple of seconds.
+ */
+export async function smartReplies(conversation: string): Promise<string[]> {
+  const prompt =
+    'You are suggesting quick replies for "Me" in a chat between two student friends. ' +
+    'Read the conversation and suggest 3 different short replies "Me" could send next — ' +
+    'natural, casual and friendly (an emoji is fine), each under 12 words, in the same language the friends are using. ' +
+    'Respond with ONLY a JSON object, no prose: {"replies":["","",""]}.\n\nConversation:\n' +
+    conversation.slice(0, 2000)
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }], fast: true })
+  const o = parseJson<{ replies?: unknown }>(raw)
+  return arr(o?.replies)
+    .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean)
+    .slice(0, 3)
 }
 
 /** Generate today's personalized mission. Returns parsed {title, detail, xp}. */

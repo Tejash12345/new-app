@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
+import { smartReplies } from '../lib/ai'
+import { Lightbox } from '../components/Lightbox'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
 import { useAvatars } from '../hooks/useAvatars'
@@ -182,6 +184,9 @@ function FriendsChat() {
   const [uploading, setUploading] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recSeconds, setRecSeconds] = useState(0)
+  const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null)
+  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [suggestBusy, setSuggestBusy] = useState(false)
   const [, setTick] = useState(0)
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -345,10 +350,11 @@ function FriendsChat() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
-  async function send() {
-    const body = input.trim()
+  async function send(textOverride?: string) {
+    const body = (textOverride ?? input).trim()
     if (!body || !user || !active) return
     setInput('')
+    setSuggestions([])
     setSendError(null)
     const optimistic: DMessage = {
       id: `tmp-${Date.now()}`, sender_id: user.id, recipient_id: active.friend_id,
@@ -433,21 +439,36 @@ function FriendsChat() {
 
   async function startRecording() {
     if (recording) return
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setSendError('Voice recording is not supported here — please update the FocusLion app / your browser.')
+      return
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mr = new MediaRecorder(stream)
+      // Android WebViews are picky about the container: probe for a supported
+      // mime type instead of trusting the default (an unsupported default
+      // throws NotSupportedError on some devices → "mic doesn't work")
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+        .find((t) => { try { return MediaRecorder.isTypeSupported(t) } catch { return false } })
+      const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
       recChunksRef.current = []
       recDiscardRef.current = false
       mr.ondataavailable = (e) => { if (e.data.size > 0) recChunksRef.current.push(e.data) }
       mr.onstop = () => {
         stream.getTracks().forEach((t) => t.stop())
         if (recDiscardRef.current) return
-        const blob = new Blob(recChunksRef.current, { type: mr.mimeType || 'audio/webm' })
-        if (blob.size < 200) return
-        const ext = (mr.mimeType || 'audio/webm').includes('mp4') ? 'm4a' : 'webm'
+        const type = mr.mimeType || mime || 'audio/webm'
+        const blob = new Blob(recChunksRef.current, { type })
+        if (blob.size < 200) {
+          setSendError('That recording was too short — hold on a moment before sending.')
+          return
+        }
+        const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm'
         sendMedia(new File([blob], `voice-message.${ext}`, { type: blob.type }), 'audio')
       }
-      mr.start()
+      // 1s timeslice: chunks flush as we go, so a hiccup at stop can't lose
+      // the whole recording on flaky Android MediaRecorder builds
+      mr.start(1000)
       mediaRecorderRef.current = mr
       setRecording(true)
       setRecSeconds(0)
@@ -461,6 +482,8 @@ function FriendsChat() {
           ? 'Microphone blocked. Enable it: Android Settings → Apps → FocusLion → Permissions → Microphone → Allow.'
           : name === 'NotFoundError'
           ? 'No microphone found on this device.'
+          : name === 'NotReadableError' || name === 'AbortError'
+          ? 'The microphone is busy or unavailable — close other apps using it, or update the FocusLion app and try again.'
           : 'Could not start recording — check the microphone is free and permission is allowed.',
       )
     }
@@ -472,6 +495,35 @@ function FriendsChat() {
     mediaRecorderRef.current = null
     if (recTimerRef.current) clearInterval(recTimerRef.current)
     setRecording(false)
+  }
+
+  // ---- AI smart replies (Leo suggests what to say next) ----
+
+  // suggestions belong to one conversation — drop them when switching threads
+  useEffect(() => { setSuggestions([]) }, [active?.friend_id])
+
+  async function suggestReplies() {
+    if (!user || !active || suggestBusy || messages.length === 0) return
+    setSuggestBusy(true)
+    setSendError(null)
+    try {
+      const meName = 'Me'
+      const friendName = fname(active).split(' ')[0] || 'Friend'
+      const convo = messages.slice(-10).map((m) => {
+        const who = m.sender_id === user.id ? meName : friendName
+        const what = m.kind && m.kind !== 'text'
+          ? (m.kind === 'image' ? '[sent a photo]' : m.kind === 'audio' ? '[sent a voice message]' : m.kind === 'post' ? '[shared a post]' : `[sent ${m.file_name ?? 'a file'}]`)
+          : m.body
+        return `${who}: ${what}`
+      }).join('\n')
+      const replies = await smartReplies(convo)
+      if (replies.length === 0) setSendError('Leo could not think of a reply — try again.')
+      setSuggestions(replies)
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : 'Could not get suggestions.')
+    } finally {
+      setSuggestBusy(false)
+    }
   }
 
   // mobile: show list OR thread
@@ -617,10 +669,12 @@ function FriendsChat() {
                         mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
                              : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
                         {m.kind === 'image' && m.file_url ? (
-                          <a href={m.file_url} target="_blank" rel="noreferrer">
+                          // in-app viewer — a plain link navigates the whole
+                          // WebView to the raw file (zoomed wrong, no way back)
+                          <button type="button" onClick={() => setLightbox({ src: m.file_url!, name: m.file_name ?? undefined })}>
                             <img src={m.file_url} alt={m.file_name ?? 'photo'} loading="lazy"
                               className="max-h-64 rounded-xl object-contain" />
-                          </a>
+                          </button>
                         ) : m.kind === 'audio' && m.file_url ? (
                           <audio controls preload="metadata" src={m.file_url} className="h-10 w-56 max-w-full" />
                         ) : m.kind === 'file' && m.file_url ? (
@@ -648,6 +702,17 @@ function FriendsChat() {
             )}
             {uploading && (
               <div className="mt-2 animate-pulse text-xs font-semibold text-slate-400">Uploading…</div>
+            )}
+            {suggestions.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Sparkles size={14} className="shrink-0 text-brand-500" />
+                {suggestions.map((s) => (
+                  <button key={s} type="button" onClick={() => send(s)}
+                    className="max-w-full truncate rounded-full border border-brand-400/40 bg-brand-500/10 px-3 py-1.5 text-xs font-semibold text-brand-600 transition hover:bg-brand-500/20 dark:text-brand-300">
+                    {s}
+                  </button>
+                ))}
+              </div>
             )}
             {recording ? (
               <div className="mt-3 flex items-center gap-3 rounded-2xl bg-rose-500/10 px-4 py-2.5">
@@ -679,6 +744,11 @@ function FriendsChat() {
                   className="rounded-full p-2.5 text-slate-400 transition hover:bg-slate-500/10 hover:text-rose-500">
                   <Mic size={19} />
                 </button>
+                <button onClick={suggestReplies} title="Leo suggests replies" disabled={suggestBusy || messages.length === 0}
+                  className={cn('rounded-full p-2.5 text-slate-400 transition hover:bg-slate-500/10 hover:text-brand-500 disabled:opacity-40',
+                    suggestBusy && 'animate-pulse text-brand-500')}>
+                  <Sparkles size={19} />
+                </button>
                 <Input placeholder={`Message ${fname(active).split(' ')[0]}…`} value={input}
                   onChange={(e) => {
                     setInput(e.target.value)
@@ -690,12 +760,13 @@ function FriendsChat() {
                     }
                   }}
                   onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
-                <Button onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
+                <Button onClick={() => send()} disabled={!input.trim()}><Send size={16} /></Button>
               </div>
             )}
           </>
         )}
       </GlassCard>
+      {lightbox && <Lightbox src={lightbox.src} name={lightbox.name} onClose={() => setLightbox(null)} />}
     </div>
   )
 }
