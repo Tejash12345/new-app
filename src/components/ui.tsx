@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode, type ButtonHTMLAttributes, type In
 import { motion, AnimatePresence } from 'framer-motion'
 import { X } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { useMascot, type MascotKind } from '../lib/mascot'
 
 // ---------- GlassCard ----------
 export function GlassCard({
@@ -157,10 +158,22 @@ export function Stat({
   )
 }
 
+// ---------- Mascot image ----------
+/**
+ * Every lion in the app renders through this so the user's custom image (set
+ * in Settings → Customize your lion) shows up everywhere at once. Custom
+ * pictures are framed as a circle — unlike the built-in transparent lion art,
+ * user photos are usually rectangular and would look pasted-on otherwise.
+ */
+export function MascotImg({ kind = 'lion', className, alt = '' }: { kind?: MascotKind; className?: string; alt?: string }) {
+  const { src, isCustom } = useMascot(kind)
+  return <img src={src} alt={alt} className={cn(isCustom && 'aspect-square rounded-full object-cover', className)} />
+}
+
 // ---------- AI mascot ----------
 /** The robotic lion — marks AI-powered features (Leo's replies, AI loaders). */
 export function AiLion({ className }: { className?: string }) {
-  return <img src="/lion-ai.png" alt="" className={cn('inline-block w-auto', className)} />
+  return <MascotImg kind="ai" className={cn('inline-block w-auto', className)} />
 }
 
 // ---------- AI loader (with progress) ----------
@@ -202,7 +215,7 @@ export function Empty({ emoji, text }: { emoji: string; text: string }) {
     <div className="flex flex-col items-center justify-center py-12 text-center">
       {/* the lion mascot renders as the real image; other emojis stay as-is */}
       {emoji === '🦁'
-        ? <img src="/lion.png" alt="" className="w-28 drop-shadow-[0_6px_18px_rgba(255,170,60,0.35)]" />
+        ? <MascotImg className="w-28 drop-shadow-[0_6px_18px_rgba(255,170,60,0.35)]" />
         : <div className="text-5xl">{emoji}</div>}
       <p className="mt-3 text-sm text-slate-500 dark:text-slate-400 whitespace-pre-line">{text}</p>
     </div>

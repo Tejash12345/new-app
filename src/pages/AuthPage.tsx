@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { supabase } from '../lib/supabase'
-import { Button, Input } from '../components/ui'
+import { Button, Input, MascotImg } from '../components/ui'
 
 export function AuthPage() {
   // Auth screens always render in light mode; restore the user's theme on unmount.
@@ -81,7 +81,7 @@ export function AuthPage() {
             transition={{ type: 'spring', damping: 12, delay: 0.2 }}
             className="flex justify-center"
           >
-            <img src="/lion.png" alt="FocusLion" className="w-40 drop-shadow-[0_8px_24px_rgba(255,170,60,0.4)]" />
+            <MascotImg alt="FocusLion" className="w-40 drop-shadow-[0_8px_24px_rgba(255,170,60,0.4)]" />
           </motion.div>
           <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">FocusLion</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">

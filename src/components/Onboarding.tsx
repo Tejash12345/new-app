@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Button } from './ui'
+import { Button, MascotImg } from './ui'
 import { cn } from '../lib/utils'
 
 const STEPS = [
@@ -58,7 +58,7 @@ export function Onboarding() {
                 transition={{ duration: 0.25 }}
               >
                 {STEPS[step].emoji === '🦁'
-                  ? <img src="/lion.png" alt="" className="mx-auto w-32 drop-shadow-[0_6px_18px_rgba(255,170,60,0.4)]" />
+                  ? <MascotImg className="mx-auto w-32 drop-shadow-[0_6px_18px_rgba(255,170,60,0.4)]" />
                   : <div className="text-6xl">{STEPS[step].emoji}</div>}
                 <h2 className="mt-4 text-xl font-extrabold text-slate-900 dark:text-white">{STEPS[step].title}</h2>
                 <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">{STEPS[step].body}</p>

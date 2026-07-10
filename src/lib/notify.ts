@@ -6,6 +6,8 @@
  * injects a `FLNotify` JavaScript channel — when present, we hand the
  * notification to it and Flutter shows a real Android notification.
  */
+import { mascotSrc } from './mascot'
+
 type AppBridge = { postMessage: (msg: string) => void }
 
 export function pushNotification(title: string, body: string, tag?: string, route?: string) {
@@ -23,7 +25,7 @@ export function pushNotification(title: string, body: string, tag?: string, rout
   // browser
   try {
     if ('Notification' in window && Notification.permission === 'granted') {
-      const n = new Notification(title, { body, tag, icon: '/lion-ai.png' })
+      const n = new Notification(title, { body, tag, icon: mascotSrc('ai') })
       if (route) n.onclick = () => { try { window.focus() } catch { /* ignore */ } window.location.assign(route) }
     }
   } catch { /* ignore */ }

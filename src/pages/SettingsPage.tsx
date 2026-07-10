@@ -2,9 +2,53 @@ import { useRef, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { requestNotifPermission } from '../hooks/useNotifications'
-import { Button, GlassCard, Input, Modal, Page, SectionTitle } from '../components/ui'
+import { Button, GlassCard, Input, MascotImg, Modal, Page, SectionTitle } from '../components/ui'
 import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
+import { prepareMascotImage, setMascotLocal, useMascot, type MascotKind } from '../lib/mascot'
+
+function MascotRow({ kind, title, desc, busy, onPick, onReset }: {
+  kind: MascotKind; title: string; desc: string
+  busy: boolean; onPick: (kind: MascotKind) => void; onReset: (kind: MascotKind) => void
+}) {
+  const { isCustom } = useMascot(kind)
+  return (
+    <div className="flex items-center gap-4 rounded-2xl bg-white/40 dark:bg-white/5 px-4 py-3">
+      <button
+        type="button"
+        onClick={() => onPick(kind)}
+        disabled={busy}
+        className="flex h-14 w-14 shrink-0 items-center justify-center"
+        aria-label={`Change ${title} image`}
+      >
+        <MascotImg kind={kind} className="max-h-14 w-14" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-slate-900 dark:text-white">{title}</div>
+        <div className="text-xs text-slate-500">{desc}</div>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        <button
+          type="button"
+          onClick={() => onPick(kind)}
+          disabled={busy}
+          className="text-xs font-semibold text-brand-500 disabled:opacity-50"
+        >
+          {busy ? 'Uploading…' : isCustom ? 'Change' : 'Use my image'}
+        </button>
+        {isCustom && !busy && (
+          <button
+            type="button"
+            onClick={() => onReset(kind)}
+            className="text-xs font-semibold text-slate-400 transition hover:text-rose-500"
+          >
+            Back to lion
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -83,6 +127,58 @@ export function SettingsPage() {
   async function patchSettings(patch: Partial<typeof settings>) {
     await updateProfile({ settings: { ...settings, ...patch } })
   }
+
+  const [mascotBusy, setMascotBusy] = useState<MascotKind | null>(null)
+  const [mascotErr, setMascotErr] = useState<string | null>(null)
+  const mascotFileRef = useRef<HTMLInputElement>(null)
+  const mascotPickKind = useRef<MascotKind>('lion')
+
+  function pickMascot(kind: MascotKind) {
+    mascotPickKind.current = kind
+    mascotFileRef.current?.click()
+  }
+
+  async function onPickMascot(e: React.ChangeEvent<HTMLInputElement>) {
+    const kind = mascotPickKind.current
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !user) return
+    if (!file.type.startsWith('image/')) { setMascotErr('Please choose an image file.'); return }
+    if (file.size > 8 * 1024 * 1024) { setMascotErr('Image too big — 8 MB max.'); return }
+    setMascotErr(null)
+    setMascotBusy(kind)
+    try {
+      // downscaled client-side, so uploads are tiny and render instantly
+      const blob = await prepareMascotImage(file)
+      const ext = blob.type.includes('webp') ? 'webp' : 'png'
+      const path = `${user.id}/mascot-${kind}-${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from('avatars').upload(path, blob, { contentType: blob.type })
+      if (upErr) {
+        setMascotErr(/bucket.*not.*found/i.test(upErr.message)
+          ? 'Image storage missing — run upgrade-11.sql in Supabase first.'
+          : `Upload failed: ${upErr.message}`)
+        return
+      }
+      const url = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
+      setMascotLocal(kind, url) // instant everywhere in the UI
+      await patchSettings(kind === 'lion' ? { mascotLion: url } : { mascotAi: url }) // follows the account
+    } catch {
+      setMascotErr('Upload failed. Check your connection and try again.')
+    } finally {
+      setMascotBusy(null)
+    }
+  }
+
+  async function resetMascot(kind: MascotKind) {
+    setMascotErr(null)
+    setMascotLocal(kind, null)
+    const next = { ...settings }
+    if (kind === 'lion') delete next.mascotLion
+    else delete next.mascotAi
+    await updateProfile({ settings: next })
+  }
+
   async function setPrivate(v: boolean) {
     if (!user) return
     setPrivacyErr(null)
@@ -162,6 +258,29 @@ export function SettingsPage() {
               setSaved(true); setTimeout(() => setSaved(false), 1500)
             }}>{saved ? '✓' : 'Save'}</Button>
           </div>
+        </GlassCard>
+
+        <GlassCard>
+          <SectionTitle>🦁 Customize your lion</SectionTitle>
+          <p className="mb-4 text-xs leading-relaxed text-slate-500">
+            Make FocusLion yours — replace the lion mascot or Leo the AI with any picture you love
+            (your pet, your idol, anything that motivates you). It appears everywhere the lions do,
+            on all your devices.
+          </p>
+          <div className="space-y-3">
+            <MascotRow
+              kind="lion" title="Lion mascot" busy={mascotBusy === 'lion'}
+              desc="Splash screen, focus mode, level-ups & celebrations"
+              onPick={pickMascot} onReset={resetMascot}
+            />
+            <MascotRow
+              kind="ai" title="Leo — AI assistant" busy={mascotBusy === 'ai'}
+              desc="AI chat button, daily missions, briefings & AI loaders"
+              onPick={pickMascot} onReset={resetMascot}
+            />
+          </div>
+          {mascotErr && <p className="mt-3 text-xs font-semibold text-rose-500">{mascotErr}</p>}
+          <input ref={mascotFileRef} type="file" accept="image/*" className="hidden" onChange={onPickMascot} />
         </GlassCard>
 
         <GlassCard>

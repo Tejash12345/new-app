@@ -3,10 +3,11 @@ import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
 import { useInvalidateTable } from '../hooks/db'
 import { supabase } from '../lib/supabase'
+import { mascotSrc } from '../lib/mascot'
 
 function pushNote(title: string, body: string, tag: string) {
   if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification(title, { body, tag, icon: '/lion-ai.png' })
+    new Notification(title, { body, tag, icon: mascotSrc('ai') })
   }
 }
 

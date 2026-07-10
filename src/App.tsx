@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './hooks/useAuth'
+import { MascotImg } from './components/ui'
 import { OnlineProvider } from './hooks/useOnline'
 import { StoriesProvider } from './components/Stories'
 import { Layout } from './components/Layout'
@@ -39,7 +40,7 @@ function Gate() {
   if (loading) {
     return (
       <div className="aurora flex min-h-screen items-center justify-center">
-        <img src="/lion.png" alt="FocusLion" className="w-44 animate-pulse drop-shadow-[0_8px_24px_rgba(255,170,60,0.4)]" />
+        <MascotImg alt="FocusLion" className="w-44 animate-pulse drop-shadow-[0_8px_24px_rgba(255,170,60,0.4)]" />
       </div>
     )
   }

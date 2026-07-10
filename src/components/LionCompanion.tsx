@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { SocialLimit, SocialSession, StudySession, Task } from '../lib/types'
-import { GlassCard } from './ui'
+import { GlassCard, MascotImg } from './ui'
 import { levelForXp, levelProgress, levelTitle, todayKey } from '../lib/utils'
 
 type Stage = { name: string; minLevel: number; size: string; crown: boolean }
@@ -92,7 +92,7 @@ export function LionCompanion() {
             transition={{ repeat: Infinity, duration: mood === 'grumpy' ? 0.8 : 2.6, ease: 'easeInOut' }}
             className="select-none"
           >
-            <img src="/lion.png" alt="" className={`${stage.size} drop-shadow-[0_8px_24px_rgba(255,170,60,0.35)]`} />
+            <MascotImg className={`${stage.size} drop-shadow-[0_8px_24px_rgba(255,170,60,0.35)]`} />
           </motion.div>
           <div className="mt-1 text-center text-[10px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-300">
             {stage.name}
@@ -187,7 +187,7 @@ export function LevelUpCelebration() {
               transition={{ repeat: 2, duration: 0.6 }}
               className="flex justify-center"
             >
-              <img src="/lion.png" alt="" className="w-36 drop-shadow-[0_8px_24px_rgba(255,170,60,0.4)]" />
+              <MascotImg className="w-36 drop-shadow-[0_8px_24px_rgba(255,170,60,0.4)]" />
             </motion.div>
             <h2 className="mt-3 text-2xl font-extrabold text-slate-900 dark:text-white">LEVEL UP!</h2>
             <p className="mt-1 text-slate-600 dark:text-slate-300">

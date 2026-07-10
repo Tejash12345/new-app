@@ -23,6 +23,9 @@ export type Settings = {
     sleep?: boolean
   }
   sleepReminderHour?: number // 22 = 10pm
+  /** custom mascot images (public storage URLs) replacing the built-in lions */
+  mascotLion?: string
+  mascotAi?: string
 }
 
 export type TaskKind = 'task' | 'assignment' | 'exam' | 'goal'

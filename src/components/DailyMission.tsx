@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useInvalidateTable, useTable } from '../hooks/db'
 import { supabase } from '../lib/supabase'
 import type { AiMission, StudySession, Task } from '../lib/types'
-import { GlassCard } from './ui'
+import { GlassCard, MascotImg } from './ui'
 import { generateMission } from '../lib/ai'
 import { cn, todayKey } from '../lib/utils'
 
@@ -102,7 +102,7 @@ export function DailyMissionCard() {
       <GlassCard className="overflow-hidden !border-amber-400/30 bg-gradient-to-br from-amber-400/15 via-transparent to-orange-500/10">
         <div className="flex items-start gap-3 sm:gap-4">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-400 to-orange-500 p-1 shadow-lg sm:h-14 sm:w-14">
-            <img src="/lion-ai.png" alt="" className="h-full w-full object-contain" />
+            <MascotImg kind="ai" className="h-full w-full object-contain" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-amber-500">

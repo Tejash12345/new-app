@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { useApp } from '../store/app'
-import { Button } from './ui'
+import { Button, MascotImg } from './ui'
 
 /**
  * The app's own yes/no dialog, used instead of window.confirm() — the native
@@ -31,11 +31,7 @@ export function ConfirmDialog() {
             aria-modal="true"
             aria-label={confirm.message}
           >
-            <img
-              src="/lion.png"
-              alt=""
-              className="mx-auto w-24 drop-shadow-[0_6px_18px_rgba(255,170,60,0.4)]"
-            />
+            <MascotImg className="mx-auto w-24 drop-shadow-[0_6px_18px_rgba(255,170,60,0.4)]" />
             <p className="mt-3 text-[15px] font-semibold leading-relaxed text-slate-800 dark:text-slate-100">
               {confirm.message}
             </p>

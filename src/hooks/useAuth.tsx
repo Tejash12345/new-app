@@ -3,6 +3,7 @@ import {
 } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { syncMascotsFromSettings } from '../lib/mascot'
 import type { Profile, Settings } from '../lib/types'
 
 type AuthCtx = {
@@ -37,7 +38,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function loadProfile(userId: string) {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
-    if (data) setProfile(data as Profile)
+    if (data) {
+      setProfile(data as Profile)
+      // custom mascot chosen on another device follows the account
+      syncMascotsFromSettings((data as Profile).settings)
+    }
   }
 
   useEffect(() => {

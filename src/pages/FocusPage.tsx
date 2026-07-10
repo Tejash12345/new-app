@@ -4,8 +4,9 @@ import { Play, Pause, RotateCcw, Maximize2, X } from 'lucide-react'
 import { useTable } from '../hooks/db'
 import { useAuth } from '../hooks/useAuth'
 import type { StudySession } from '../lib/types'
-import { Button, GlassCard, Input, Page, ProgressRing, SectionTitle } from '../components/ui'
+import { Button, GlassCard, Input, MascotImg, Page, ProgressRing, SectionTitle } from '../components/ui'
 import { cn, minutesToLabel, todayKey } from '../lib/utils'
+import { mascotSrc } from '../lib/mascot'
 
 const PRESETS = [
   { label: 'Pomodoro', min: 25, mode: 'pomodoro' as const },
@@ -68,7 +69,7 @@ export function FocusPage() {
     await addXp(xp, `${preset.label} session complete`)
     await touchStudyStreak()
     if (Notification.permission === 'granted') {
-      new Notification('🦁 Session complete!', { body: `+${xp} XP earned. Take a 5-minute break.`, icon: '/lion-ai.png' })
+      new Notification('🦁 Session complete!', { body: `+${xp} XP earned. Take a 5-minute break.`, icon: mascotSrc('ai') })
     }
     setDeepMode(false)
     setSecondsLeft(preset.min * 60)
@@ -130,7 +131,7 @@ export function FocusPage() {
           <X size={22} />
         </button>
         <div className="mb-8 text-center">
-          <img src="/lion.png" alt="" className="mx-auto w-24 drop-shadow-[0_6px_18px_rgba(255,170,60,0.4)]" />
+          <MascotImg className="mx-auto w-24 drop-shadow-[0_6px_18px_rgba(255,170,60,0.4)]" />
           <h2 className="mt-2 text-xl font-bold text-white">Deep Focus Mode</h2>
           <p className="text-sm text-slate-400">{subject ? `Studying: ${subject}` : 'The lion guards your focus. Stay here.'}</p>
         </div>

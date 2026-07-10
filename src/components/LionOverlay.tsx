@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { BookOpen, Timer } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
-import { Button } from './ui'
+import { Button, MascotImg } from './ui'
 
 /**
  * Real lion roar recording: Growcott et al., CC BY 4.0, via Wikimedia Commons
@@ -149,8 +149,7 @@ export function LionOverlay() {
               transition={{ type: 'spring', damping: 14, stiffness: 120, delay: 0.15 }}
               className="lion-shake select-none"
             >
-              <img
-                src="/lion.png"
+              <MascotImg
                 alt="Roaring lion"
                 className="w-72 max-w-[80vw] drop-shadow-[0_0_60px_rgba(255,160,50,0.6)] sm:w-80"
               />
