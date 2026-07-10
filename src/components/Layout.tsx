@@ -160,15 +160,17 @@ export function Layout() {
 
       {/* ---- topbar ---- */}
       <header className="sticky top-0 z-30 px-4 pt-4 lg:pl-72 sm:px-8 lg:pr-8">
-        <div className="glass flex items-center justify-between rounded-3xl px-5 py-3">
-          <div className="flex items-center gap-2 lg:hidden">
-            <MascotImg className="h-8 w-auto" />
-            <span className="font-extrabold text-slate-900 dark:text-white">FocusLion</span>
+        {/* tighter paddings/gaps below sm — with the Messages button added, the
+            p-2.5/gap-2 cluster overflowed a 360px screen and clipped the icons */}
+        <div className="glass flex items-center justify-between gap-2 rounded-3xl px-3 py-3 sm:px-5">
+          <div className="flex min-w-0 items-center gap-2 lg:hidden">
+            <MascotImg className="h-8 w-auto shrink-0" />
+            <span className="truncate font-extrabold text-slate-900 dark:text-white">FocusLion</span>
           </div>
           <div className="hidden lg:block text-sm font-medium text-slate-500 dark:text-slate-400">
             {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-2">
             {/* universal search — labelled pill on desktop, icon on mobile (the
                 Android WebView has no ⌘K, so a tappable button is essential) */}
             <button
@@ -182,14 +184,14 @@ export function Layout() {
             <button
               onClick={openSearch}
               aria-label="Search"
-              className="rounded-full p-2.5 text-slate-500 hover:bg-slate-500/10 lg:hidden dark:text-slate-300"
+              className="rounded-full p-2 text-slate-500 hover:bg-slate-500/10 sm:p-2.5 lg:hidden dark:text-slate-300"
             >
               <Search size={18} />
             </button>
             <button
               onClick={() => navigate('/chat')}
               aria-label={unreadTotal > 0 ? `Messages — ${unreadTotal} unread` : 'Messages'}
-              className="relative rounded-full p-2.5 text-slate-500 hover:bg-slate-500/10 dark:text-slate-300"
+              className="relative rounded-full p-2 text-slate-500 hover:bg-slate-500/10 sm:p-2.5 dark:text-slate-300"
             >
               <MessageCircle size={18} />
               {unreadTotal > 0 && (
@@ -203,7 +205,7 @@ export function Layout() {
             </div>
             <button
               onClick={toggleDark}
-              className="rounded-full p-2.5 text-slate-500 hover:bg-slate-500/10 dark:text-slate-300"
+              className="rounded-full p-2 text-slate-500 hover:bg-slate-500/10 sm:p-2.5 dark:text-slate-300"
               aria-label="Toggle theme"
             >
               {dark ? <Sun size={18} /> : <Moon size={18} />}
