@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { smartReplies } from '../lib/ai'
 import { Lightbox } from '../components/Lightbox'
-import { useApp } from '../store/app'
+import { confirmDialog, useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
 import { useAvatars } from '../hooks/useAvatars'
 import { StoryRing } from '../components/Stories'
@@ -414,6 +414,18 @@ function FriendsChat() {
     channelRef.current?.send({ type: 'broadcast', event: 'del', payload: { id } })
   }
 
+  async function confirmRemove(m: DMessage) {
+    const what =
+      m.kind === 'image' ? 'this photo'
+      : m.kind === 'audio' ? 'this voice message'
+      : m.kind === 'file' ? 'this file'
+      : m.kind === 'post' ? 'this shared post'
+      : 'this message'
+    if (await confirmDialog(`Delete ${what}? It disappears for both of you.`, { yesLabel: 'Delete', noLabel: 'Cancel' })) {
+      remove(m.id)
+    }
+  }
+
   // ---- photos, documents, voice notes ----
 
   async function sendMedia(file: File, kind: 'image' | 'audio' | 'file') {
@@ -691,8 +703,11 @@ function FriendsChat() {
                     {!mine && <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} size={7} />}
                     <div className="flex items-center gap-1.5">
                       {mine && (
-                        <button onClick={() => remove(m.id)} className="opacity-0 transition group-hover:opacity-100 text-slate-400 hover:text-rose-500">
-                          <Trash2 size={13} />
+                        // always visible on touch — hover-reveal only works on
+                        // desktop, so a hidden control is unreachable on Android
+                        <button onClick={() => confirmRemove(m)} aria-label="Delete message"
+                          className="shrink-0 p-1.5 text-slate-400 transition hover:text-rose-500 lg:opacity-0 lg:group-hover:opacity-100">
+                          <Trash2 size={14} />
                         </button>
                       )}
                       {m.kind === 'post' ? (
