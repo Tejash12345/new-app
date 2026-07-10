@@ -643,7 +643,7 @@ export async function flashcardsFrom(text: string, count: number): Promise<{ fro
 
 // ---------- Leo Lens (photo doubt-solver) ----------
 
-export type LensMode = 'solve' | 'explain' | 'notes'
+export type LensMode = 'solve' | 'explain' | 'notes' | 'grade'
 export const LENS_MODES: { key: LensMode; label: string; emoji: string; prompt: string }[] = [
   {
     key: 'solve', label: 'Solve it', emoji: '🧮',
@@ -657,7 +657,22 @@ export const LENS_MODES: { key: LensMode; label: string; emoji: string; prompt: 
     key: 'notes', label: 'Key points', emoji: '📝',
     prompt: 'These are study notes or a textbook page. Summarize the MOST important points as a short numbered list a student can revise from, then one line on what to remember for exams.',
   },
+  {
+    key: 'grade', label: 'Grade my answer', emoji: '✍️',
+    prompt: 'This photo shows a student\'s written answer (possibly handwritten, possibly with the question). Act as a fair, encouraging examiner. ' +
+      'Start your reply with exactly "Score: X/10" on its own first line. Then, each on their own lines: ' +
+      '"✅ What you got right" with 1-3 short points; "❌ Mistakes or missing" with the specific errors or gaps; ' +
+      '"📈 To score full marks" with concrete fixes; and "⭐ Model answer" with a brief ideal answer. Keep it under 250 words, simple language.',
+  },
 ]
+
+/** Pulls the "Score: X/10" an examiner reply starts with, if present. */
+export function parseLensScore(answer: string): number | null {
+  const m = answer.match(/score[:\s]*(\d+(?:\.\d+)?)\s*\/\s*10/i)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : null
+}
 
 /**
  * Downscale a Lens photo to ≤1024px JPEG — small enough to send in the request

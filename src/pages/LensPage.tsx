@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Camera, Copy, Check, Image as ImageIcon, RotateCcw, Send, Volume2 } from 'lucide-react'
-import { AiError, LENS_MODES, lensAsk, prepareLensImage, type LensMode } from '../lib/ai'
+import { AiError, LENS_MODES, lensAsk, parseLensScore, prepareLensImage, type LensMode } from '../lib/ai'
 import { speak } from '../lib/speak'
 import { AiLion, AiLoader, Button, GlassCard, Input, Page } from '../components/ui'
 import { cn } from '../lib/utils'
@@ -141,6 +141,17 @@ export function LensPage() {
             <AiLoader title="Leo is reading your photo…" hint="Working out the answer step by step" />
           ) : answer ? (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+              {(() => {
+                const score = parseLensScore(answer)
+                return score === null ? null : (
+                  <div className="mb-3 flex items-center gap-3 rounded-2xl bg-gradient-to-r from-amber-400/20 to-orange-400/10 px-4 py-3">
+                    <div className="text-3xl font-extrabold text-amber-500">{score}<span className="text-base text-amber-500/70">/10</span></div>
+                    <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      {score >= 9 ? 'Outstanding — exam ready! 🏆' : score >= 7 ? 'Strong answer — a few marks left on the table. 💪' : score >= 5 ? 'Good base — the fixes below get you to full marks. 📈' : 'Keep going — Leo shows exactly what to fix. 🦁'}
+                    </div>
+                  </div>
+                )
+              })()}
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-brand-500">
                   <AiLion className="h-6" /> Leo&rsquo;s answer
