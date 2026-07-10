@@ -46,6 +46,19 @@ export function useDMNotifications() {
       }
     })
 
+    // seed the Chat nav badge with messages that arrived while the app was
+    // closed (read state lives server-side — upgrade-28.sql)
+    supabase.rpc('dm_unread_counts').then(({ data }) => {
+      const map: Record<string, number> = {}
+      for (const r of (data as { sender_id: string; unread: number }[]) ?? []) {
+        if (r.unread > 0) map[r.sender_id] = Number(r.unread)
+      }
+      // don't count the thread the user is looking at right now
+      const peer = useApp.getState().activeChatPeer
+      if (peer) delete map[peer]
+      if (Object.keys(map).length) useApp.getState().setChatUnread(map)
+    })
+
     // single place that turns an incoming DM into a notification. Both transports
     // below feed into it; the per-message-id `notified` set means whichever
     // arrives first wins and the other is ignored — so we never double-notify.
@@ -53,9 +66,15 @@ export function useDMNotifications() {
       if (!m || m.recipient_id !== user.id || m.sender_id === user.id) return
       if (notified.current.has(m.id)) return
       notified.current.add(m.id)
-      // don't notify for the conversation you're actively looking at
+      // don't notify for the conversation you're actively looking at — but do
+      // mark it read server-side so the badge stays truthful across devices
       const visible = typeof document !== 'undefined' && document.visibilityState === 'visible'
-      if (visible && useApp.getState().activeChatPeer === m.sender_id) return
+      if (visible && useApp.getState().activeChatPeer === m.sender_id) {
+        supabase.rpc('mark_dms_read', { peer: m.sender_id }).then(() => {}, () => {})
+        return
+      }
+      // badge on the Chat nav item — the in-app signal on every other page
+      useApp.getState().addChatUnread(m.sender_id)
       const name = names.current[m.sender_id] ?? 'New message'
       const preview =
         m.kind === 'image' ? '📷 Photo'

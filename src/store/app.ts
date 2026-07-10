@@ -42,6 +42,13 @@ type AppState = {
   // notifier skips notifying for this one (you're already looking at it)
   activeChatPeer: string | null
   setActiveChatPeer: (id: string | null) => void
+  // unread DMs per sender — drives the badge on the Chat nav item so a message
+  // is visible in-app no matter which page you're on. Seeded from the server
+  // (dm_unread_counts) and updated live by the app-wide DM subscription.
+  chatUnread: Record<string, number>
+  setChatUnread: (m: Record<string, number>) => void
+  addChatUnread: (senderId: string) => void
+  clearChatUnread: (senderId: string) => void
 }
 
 const prefersDark =
@@ -116,6 +123,17 @@ export const useApp = create<AppState>((set) => ({
   setOnlineIds: (ids) => set({ onlineIds: ids }),
   activeChatPeer: null,
   setActiveChatPeer: (id) => set({ activeChatPeer: id }),
+  chatUnread: {},
+  setChatUnread: (m) => set({ chatUnread: m }),
+  addChatUnread: (senderId) =>
+    set((s) => ({ chatUnread: { ...s.chatUnread, [senderId]: (s.chatUnread[senderId] ?? 0) + 1 } })),
+  clearChatUnread: (senderId) =>
+    set((s) => {
+      if (!(senderId in s.chatUnread)) return s
+      const next = { ...s.chatUnread }
+      delete next[senderId]
+      return { chatUnread: next }
+    }),
 }))
 
 /**

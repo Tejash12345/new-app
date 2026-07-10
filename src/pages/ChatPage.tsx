@@ -214,6 +214,12 @@ function FriendsChat() {
   useEffect(() => {
     activeIdRef.current = active?.friend_id ?? null
     useApp.getState().setActiveChatPeer(active?.friend_id ?? null)
+    // opening a thread reads it: clear the Chat nav badge and persist read_at
+    // server-side (upgrade-28) so the badge stays correct across reloads/devices
+    if (active?.friend_id) {
+      useApp.getState().clearChatUnread(active.friend_id)
+      supabase.rpc('mark_dms_read', { peer: active.friend_id }).then(() => {}, () => {})
+    }
   }, [active?.friend_id])
   useEffect(() => () => { useApp.getState().setActiveChatPeer(null) }, [])
 

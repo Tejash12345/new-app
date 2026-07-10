@@ -47,8 +47,12 @@ const NAV = [
 ]
 
 export function Layout() {
-  const { dark, toggleDark } = useApp()
+  const { dark, toggleDark, chatUnread } = useApp()
   const { profile, signOut } = useAuth()
+  // unread DMs across all senders → badge on every Messages entry point, so a
+  // message that arrives while you're on any other page is visible in-app
+  const unreadTotal = Object.values(chatUnread).reduce((a, b) => a + b, 0)
+  const unreadLabel = unreadTotal > 9 ? '9+' : String(unreadTotal)
   const location = useLocation()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -110,6 +114,11 @@ export function Layout() {
                     )}
                     <Icon size={18} className="relative z-10" />
                     <span className="relative z-10">{label}</span>
+                    {to === '/chat' && unreadTotal > 0 && (
+                      <span className="relative z-10 ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                        {unreadLabel}
+                      </span>
+                    )}
                   </div>
                 )}
               </NavLink>
@@ -176,6 +185,18 @@ export function Layout() {
               className="rounded-full p-2.5 text-slate-500 hover:bg-slate-500/10 lg:hidden dark:text-slate-300"
             >
               <Search size={18} />
+            </button>
+            <button
+              onClick={() => navigate('/chat')}
+              aria-label={unreadTotal > 0 ? `Messages — ${unreadTotal} unread` : 'Messages'}
+              className="relative rounded-full p-2.5 text-slate-500 hover:bg-slate-500/10 dark:text-slate-300"
+            >
+              <MessageCircle size={18} />
+              {unreadTotal > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white ring-2 ring-white dark:ring-slate-900">
+                  {unreadLabel}
+                </span>
+              )}
             </button>
             <div className="hidden sm:flex items-center gap-1.5 rounded-full bg-amber-400/15 px-3 py-1.5 text-xs font-bold text-amber-600 dark:text-amber-300">
               ⭐ {profile?.xp ?? 0} XP · Lv {level}
@@ -351,13 +372,18 @@ export function Layout() {
                   <button key={to}
                     onClick={() => { setMenuOpen(false); navigate(to) }}
                     className={cn(
-                      'flex flex-col items-center gap-1 rounded-2xl py-2.5 text-[10px] font-semibold transition',
+                      'relative flex flex-col items-center gap-1 rounded-2xl py-2.5 text-[10px] font-semibold transition',
                       location.pathname === to
                         ? 'bg-gradient-to-br from-brand-500 to-purple-500 text-white'
                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-500/10',
                     )}>
                     <Icon size={18} />
                     {label}
+                    {to === '/chat' && unreadTotal > 0 && (
+                      <span className="absolute right-1.5 top-1 flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">
+                        {unreadLabel}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
