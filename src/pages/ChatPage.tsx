@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles } from 'lucide-react'
@@ -39,6 +39,25 @@ function fname(f: Friend) {
   const n = (f.full_name || '').trim()
   if (n) return n
   return f.email ? f.email.split('@')[0] : 'Student'
+}
+
+// WhatsApp-style timestamps: a small time on every bubble, and a centered
+// Today / Yesterday / weekday / date chip whenever the day changes.
+function msgTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+function dayLabel(iso: string) {
+  const d = new Date(iso)
+  const now = new Date()
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000)
+  if (days <= 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: 'long' })
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+}
+function isNewDay(prev: string | undefined, cur: string) {
+  return !prev || new Date(prev).toDateString() !== new Date(cur).toDateString()
 }
 
 const ROOMS = [
@@ -656,10 +675,19 @@ function FriendsChat() {
                 <div className="flex h-full items-center justify-center text-center text-sm text-slate-400">
                   Say hi to {fname(active).split(' ')[0]}! 👋
                 </div>
-              ) : messages.map((m) => {
+              ) : messages.map((m, i) => {
                 const mine = m.sender_id === user?.id
+                const time = msgTime(m.created_at)
                 return (
-                  <div key={m.id} className={cn('group flex items-end gap-1.5', mine ? 'justify-end' : 'justify-start')}>
+                  <Fragment key={m.id}>
+                    {isNewDay(messages[i - 1]?.created_at, m.created_at) && (
+                      <div className="flex justify-center py-1.5">
+                        <span className="rounded-full bg-slate-500/10 px-3 py-1 text-[11px] font-semibold text-slate-500 dark:bg-white/10 dark:text-slate-300">
+                          {dayLabel(m.created_at)}
+                        </span>
+                      </div>
+                    )}
+                    <div className={cn('group flex items-end gap-1.5', mine ? 'justify-end' : 'justify-start')}>
                     {!mine && <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} size={7} />}
                     <div className="flex items-center gap-1.5">
                       {mine && (
@@ -668,34 +696,51 @@ function FriendsChat() {
                         </button>
                       )}
                       {m.kind === 'post' ? (
-                        <SharedPostBubble m={m} mine={mine} onOpen={(id) => navigate(`/feed?post=${id}`)} />
+                        <div className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
+                          <SharedPostBubble m={m} mine={mine} onOpen={(id) => navigate(`/feed?post=${id}`)} />
+                          <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}</span>
+                        </div>
                       ) : (
                       <div className={cn('max-w-[78vw] sm:max-w-md rounded-2xl text-sm',
                         m.kind === 'image' && m.file_url ? 'overflow-hidden p-1' : 'px-3.5 py-2',
                         mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
                              : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
                         {m.kind === 'image' && m.file_url ? (
-                          // in-app viewer — a plain link navigates the whole
-                          // WebView to the raw file (zoomed wrong, no way back)
-                          <button type="button" onClick={() => setLightbox({ src: m.file_url!, name: m.file_name ?? undefined })}>
-                            <img src={m.file_url} alt={m.file_name ?? 'photo'} loading="lazy"
-                              className="max-h-64 rounded-xl object-contain" />
-                          </button>
+                          <>
+                            {/* in-app viewer — a plain link navigates the whole
+                                WebView to the raw file (zoomed wrong, no way back) */}
+                            <button type="button" onClick={() => setLightbox({ src: m.file_url!, name: m.file_name ?? undefined })}>
+                              <img src={m.file_url} alt={m.file_name ?? 'photo'} loading="lazy"
+                                className="max-h-64 rounded-xl object-contain" />
+                            </button>
+                            <div className={cn('px-1.5 pb-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
+                          </>
                         ) : m.kind === 'audio' && m.file_url ? (
-                          <audio controls preload="metadata" src={m.file_url} className="h-10 w-56 max-w-full" />
+                          <>
+                            <audio controls preload="metadata" src={m.file_url} className="h-10 w-56 max-w-full" />
+                            <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
+                          </>
                         ) : m.kind === 'file' && m.file_url ? (
-                          <a href={m.file_url} target="_blank" rel="noreferrer" download={m.file_name ?? true}
-                            className="flex items-center gap-2 font-semibold underline underline-offset-2">
-                            <FileText size={17} className="shrink-0" />
-                            <span className="truncate">{m.file_name ?? 'Document'}</span>
-                          </a>
+                          <>
+                            <a href={m.file_url} target="_blank" rel="noreferrer" download={m.file_name ?? true}
+                              className="flex items-center gap-2 font-semibold underline underline-offset-2">
+                              <FileText size={17} className="shrink-0" />
+                              <span className="truncate">{m.file_name ?? 'Document'}</span>
+                            </a>
+                            <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
+                          </>
                         ) : (
-                          m.body
+                          <>
+                            {m.body}
+                            {/* WhatsApp-style inline time, bottom-right of the bubble */}
+                            <span className={cn('float-right ml-2 mt-1.5 text-[10px] leading-none', mine ? 'text-white/70' : 'text-slate-400')}>{time}</span>
+                          </>
                         )}
                       </div>
                       )}
                     </div>
-                  </div>
+                    </div>
+                  </Fragment>
                 )
               })}
               <div ref={bottomRef} />
@@ -733,40 +778,50 @@ function FriendsChat() {
                 <Button onClick={() => stopRecording(true)}><Send size={16} /></Button>
               </div>
             ) : (
-              <div className="mt-3 flex items-center gap-1">
+              // WhatsApp-style composer: one big pill with the actions visible
+              // inside it, and a round button that is Mic when empty / Send
+              // once you start typing
+              <div className="mt-3 flex items-center gap-2">
                 <input ref={imageInputRef} type="file" accept="image/*" hidden
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) sendMedia(f, 'image'); e.target.value = '' }} />
                 <input ref={fileInputRef} type="file" hidden
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) sendMedia(f, 'file'); e.target.value = '' }} />
-                <button onClick={() => imageInputRef.current?.click()} title="Send a photo" disabled={uploading}
-                  className="rounded-full p-2.5 text-slate-400 transition hover:bg-slate-500/10 hover:text-brand-500">
-                  <ImageIcon size={19} />
+                <div className="flex min-w-0 flex-1 items-center rounded-full border border-slate-200/60 bg-white/70 px-1.5 dark:border-white/10 dark:bg-white/10">
+                  <button onClick={suggestReplies} title="Leo suggests replies" disabled={suggestBusy || messages.length === 0}
+                    className={cn('shrink-0 rounded-full p-2 text-slate-400 transition hover:text-brand-500 disabled:opacity-40',
+                      suggestBusy && 'animate-pulse text-brand-500')}>
+                    <Sparkles size={21} />
+                  </button>
+                  <input
+                    className="min-w-0 flex-1 bg-transparent px-1.5 py-3 text-[15px] text-slate-900 outline-none placeholder:text-slate-400 dark:text-white"
+                    placeholder="Message…" value={input} maxLength={500}
+                    onChange={(e) => {
+                      setInput(e.target.value)
+                      const now = Date.now()
+                      if (user && active && now - lastTypingSent.current > 1200) {
+                        lastTypingSent.current = now
+                        getSocket()?.emit('typing', { to: active.friend_id })
+                        channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { from: user.id } })
+                      }
+                    }}
+                    onKeyDown={(e) => e.key === 'Enter' && send()} />
+                  <button onClick={() => fileInputRef.current?.click()} title="Send a document" disabled={uploading}
+                    className="shrink-0 rounded-full p-2 text-slate-400 transition hover:text-brand-500 disabled:opacity-40">
+                    <Paperclip size={21} />
+                  </button>
+                  <button onClick={() => imageInputRef.current?.click()} title="Send a photo" disabled={uploading}
+                    className="shrink-0 rounded-full p-2 text-slate-400 transition hover:text-brand-500 disabled:opacity-40">
+                    <ImageIcon size={21} />
+                  </button>
+                </div>
+                <button
+                  onClick={() => (input.trim() ? send() : startRecording())}
+                  disabled={uploading}
+                  aria-label={input.trim() ? 'Send message' : 'Record a voice message'}
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg shadow-brand-500/30 transition active:scale-95 disabled:opacity-50"
+                >
+                  {input.trim() ? <Send size={20} /> : <Mic size={22} />}
                 </button>
-                <button onClick={() => fileInputRef.current?.click()} title="Send a document" disabled={uploading}
-                  className="rounded-full p-2.5 text-slate-400 transition hover:bg-slate-500/10 hover:text-brand-500">
-                  <Paperclip size={19} />
-                </button>
-                <button onClick={startRecording} title="Record a voice message" disabled={uploading}
-                  className="rounded-full p-2.5 text-slate-400 transition hover:bg-slate-500/10 hover:text-rose-500">
-                  <Mic size={19} />
-                </button>
-                <button onClick={suggestReplies} title="Leo suggests replies" disabled={suggestBusy || messages.length === 0}
-                  className={cn('rounded-full p-2.5 text-slate-400 transition hover:bg-slate-500/10 hover:text-brand-500 disabled:opacity-40',
-                    suggestBusy && 'animate-pulse text-brand-500')}>
-                  <Sparkles size={19} />
-                </button>
-                <Input placeholder={`Message ${fname(active).split(' ')[0]}…`} value={input}
-                  onChange={(e) => {
-                    setInput(e.target.value)
-                    const now = Date.now()
-                    if (user && active && now - lastTypingSent.current > 1200) {
-                      lastTypingSent.current = now
-                      getSocket()?.emit('typing', { to: active.friend_id })
-                      channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { from: user.id } })
-                    }
-                  }}
-                  onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
-                <Button onClick={() => send()} disabled={!input.trim()}><Send size={16} /></Button>
               </div>
             )}
           </>
