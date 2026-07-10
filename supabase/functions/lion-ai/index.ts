@@ -34,6 +34,10 @@ const MODEL = Deno.env.get('NVIDIA_MODEL') ?? 'meta/llama-3.1-70b-instruct'
 // dense 8B model responds in a few seconds. Content tasks (recipes, quiz,
 // roadmaps) still use MODEL. Requests opt in with { fast: true }.
 const FAST_MODEL = Deno.env.get('NVIDIA_FAST_MODEL') ?? 'meta/llama-3.1-8b-instruct'
+// Vision model for "Leo Lens" (photo doubt-solver). llama-3.2-11b-vision is
+// fast on the free tier; the 90b is the quality fallback if 11b errors out.
+const VISION_MODEL = Deno.env.get('NVIDIA_VISION_MODEL') ?? 'meta/llama-3.2-11b-vision-instruct'
+const VISION_FALLBACK = Deno.env.get('NVIDIA_VISION_FALLBACK') ?? 'meta/llama-3.2-90b-vision-instruct'
 // Prefer NVIDIA_API_KEY; fall back to GEMINI_API_KEY so an already-set secret
 // keeps working if you only swapped its value to the nvapi-… key.
 const AI_API_KEY = Deno.env.get('NVIDIA_API_KEY') ?? Deno.env.get('GEMINI_API_KEY') ?? ''
@@ -124,6 +128,13 @@ function systemFor(task: string): string {
         `{"summary": string, "market": string, "revenueModel": [string], "competitors": [string], ` +
         `"mvpFeatures": [string], "team": [string], "roadmap": [{"phase": string, "detail": string}]}. ` +
         `Each list 3-6 items, concise and concrete. Roadmap 3-5 phases from MVP to launch.`
+    case 'vision':
+      return `${BASE_PERSONA} You are Leo Lens, a patient tutor who reads photos of study material — ` +
+        `textbook questions, equations, diagrams, handwritten notes. First read the photo carefully and ` +
+        `state what the question/content is, then follow the user's instruction. Show working step by step ` +
+        `in simple language, and end with the key takeaway or final answer on its own line. ` +
+        `Plain text only — no markdown symbols like ** or #. If the photo is unreadable, say what you can ` +
+        `see and ask for a clearer shot.`
     default: // chat
       return `${BASE_PERSONA} You help with tech learning, educational medical knowledge, ` +
         `startup ideas, productivity, motivation and goal tracking. For medical topics, add a ` +
@@ -150,8 +161,15 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authErr } = await userClient.auth.getUser()
     if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
-    const { task = 'chat', input = '', messages = [], stream: wantStreamRaw = false, fast: wantFast = false } =
-      (await req.json().catch(() => ({}))) as { task?: string; input?: string; messages?: InMsg[]; stream?: boolean; fast?: boolean }
+    const { task = 'chat', input = '', messages = [], stream: wantStreamRaw = false, fast: wantFast = false, image = '' } =
+      (await req.json().catch(() => ({}))) as { task?: string; input?: string; messages?: InMsg[]; stream?: boolean; fast?: boolean; image?: string }
+
+    // Leo Lens photo input — a data URL, downscaled client-side. Reject
+    // oversized payloads before they reach the model API.
+    if (task === 'vision') {
+      if (!/^data:image\/(jpeg|png|webp);base64,/.test(image)) return json({ error: 'A photo is required.' }, 400)
+      if (image.length > 2_500_000) return json({ error: 'Photo too large — please retake it.' }, 413)
+    }
 
     // service-role client for cache + usage (bypasses RLS)
     const admin = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
@@ -185,7 +203,18 @@ Deno.serve(async (req) => {
 
     // ---- build NVIDIA (OpenAI-compatible) request ----
     const history = Array.isArray(messages) ? messages.slice(-16) : []
-    const chatMessages = [
+    const chatMessages = task === 'vision'
+      ? [
+          { role: 'system', content: systemFor('vision') },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: String(input || 'Read this photo and solve or explain it for a student.') },
+              { type: 'image_url', image_url: { url: image } },
+            ],
+          },
+        ]
+      : [
       { role: 'system', content: systemFor(task) },
       ...(history.length
         ? history.map((m) => ({
@@ -196,12 +225,15 @@ Deno.serve(async (req) => {
     ]
 
     // interactive chat opts into the lighter, faster model; content/JSON tasks
-    // keep the higher-quality MODEL
-    const activeModel = wantFast && !JSON_TASKS.includes(task) ? FAST_MODEL : MODEL
+    // keep the higher-quality MODEL; photo questions need the vision model
+    const activeModel =
+      task === 'vision' ? VISION_MODEL
+      : wantFast && !JSON_TASKS.includes(task) ? FAST_MODEL
+      : MODEL
     const payload = {
       model: activeModel,
       messages: chatMessages,
-      temperature: task === 'mission' ? 0.9 : 0.7,
+      temperature: task === 'mission' ? 0.9 : task === 'vision' ? 0.4 : 0.7,
       max_tokens:
         // interactive chat (fast path) is meant to be concise — cap it low so a
         // reply can't run long, which keeps generation quick and reduces load on
@@ -215,6 +247,7 @@ Deno.serve(async (req) => {
         // 3072 leaves room for Indic-script output while staying well under the
         // ~150s Edge Function worker limit on a fast instruct model.
         : task === 'chat' ? 3072
+        : task === 'vision' ? 1400
         : 512,
       stream: false,
       ...(JSON_TASKS.includes(task) ? { response_format: { type: 'json_object' } } : {}),
@@ -339,10 +372,12 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Hard-timeout the upstream call and fall back to FAST_MODEL on timeout or
-    // a non-quota error. The free NIM tier retires models (404/410) and queues
+    // Hard-timeout the upstream call and fall back to a second model on timeout
+    // or a non-quota error. The free NIM tier retires models (404/410) and queues
     // big ones indefinitely — without this, one dead model choice hangs the
-    // worker past its limit and EVERY AI feature dies with a 546.
+    // worker past its limit and EVERY AI feature dies with a 546. Vision falls
+    // back to the other vision model (a text model can't take image parts).
+    const fallbackModel = task === 'vision' ? VISION_FALLBACK : FAST_MODEL
     const callModel = (model: string, timeoutMs: number) =>
       fetch(AI_URL, {
         method: 'POST',
@@ -353,17 +388,17 @@ Deno.serve(async (req) => {
     let res: Response
     try {
       res = await callModel(activeModel, 45_000)
-      if (!res.ok && res.status !== 429 && activeModel !== FAST_MODEL) {
-        console.warn(`[FALLBACK] ${activeModel} failed (status ${res.status}) -> ${FAST_MODEL}`)
-        res = await callModel(FAST_MODEL, 60_000)
+      if (!res.ok && res.status !== 429 && activeModel !== fallbackModel) {
+        console.warn(`[FALLBACK] ${activeModel} failed (status ${res.status}) -> ${fallbackModel}`)
+        res = await callModel(fallbackModel, 60_000)
       }
     } catch (e) {
-      if (activeModel === FAST_MODEL) {
+      if (activeModel === fallbackModel) {
         return json({ error: 'Could not reach the AI provider', detail: String(e) }, 502)
       }
-      console.warn(`[FALLBACK] ${activeModel} timed out/unreachable -> ${FAST_MODEL} :: ${String(e).slice(0, 120)}`)
+      console.warn(`[FALLBACK] ${activeModel} timed out/unreachable -> ${fallbackModel} :: ${String(e).slice(0, 120)}`)
       try {
-        res = await callModel(FAST_MODEL, 60_000)
+        res = await callModel(fallbackModel, 60_000)
       } catch (e2) {
         return json({ error: 'Could not reach the AI provider', detail: String(e2) }, 502)
       }

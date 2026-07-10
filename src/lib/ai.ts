@@ -10,7 +10,7 @@ import type { CareerReport, StartupPlan } from './types'
 export type AiTask =
   | 'chat' | 'summarize' | 'hashtags' | 'caption'
   | 'startup' | 'explain' | 'medical' | 'tip' | 'mission'
-  | 'briefing' | 'learnpath' | 'career'
+  | 'briefing' | 'learnpath' | 'career' | 'vision'
 
 export type ChatTurn = { role: 'user' | 'assistant'; content: string }
 
@@ -20,10 +20,13 @@ export class AiError extends Error {}
  *  `fast: true` routes to the lighter fast model — for interactive helpers
  *  (smart replies) where a snappy answer beats maximum quality. */
 export async function askLion(
-  opts: { task: AiTask; input?: string; messages?: ChatTurn[]; fast?: boolean },
+  opts: { task: AiTask; input?: string; messages?: ChatTurn[]; fast?: boolean; image?: string },
 ): Promise<string> {
   const { data, error } = await supabase.functions.invoke('lion-ai', {
-    body: { task: opts.task, input: opts.input ?? '', messages: opts.messages ?? [], fast: opts.fast === true },
+    body: {
+      task: opts.task, input: opts.input ?? '', messages: opts.messages ?? [],
+      fast: opts.fast === true, ...(opts.image ? { image: opts.image } : {}),
+    },
   })
   if (error) {
     // FunctionsHttpError carries the function's Response in `context` — read its
@@ -637,6 +640,59 @@ export async function flashcardsFrom(text: string, count: number): Promise<{ fro
     .filter((c) => c.front && c.back)
     .slice(0, Math.max(count, 20))
 }
+
+// ---------- Leo Lens (photo doubt-solver) ----------
+
+export type LensMode = 'solve' | 'explain' | 'notes'
+export const LENS_MODES: { key: LensMode; label: string; emoji: string; prompt: string }[] = [
+  {
+    key: 'solve', label: 'Solve it', emoji: '🧮',
+    prompt: 'Solve the question in this photo step by step for a student. Show each step of the working simply, then give the final answer clearly on its own line.',
+  },
+  {
+    key: 'explain', label: 'Explain it', emoji: '💡',
+    prompt: 'Explain the concept, diagram or text in this photo in simple words a student understands. Cover what it is, how it works, and one everyday example.',
+  },
+  {
+    key: 'notes', label: 'Key points', emoji: '📝',
+    prompt: 'These are study notes or a textbook page. Summarize the MOST important points as a short numbered list a student can revise from, then one line on what to remember for exams.',
+  },
+]
+
+/**
+ * Downscale a Lens photo to ≤1024px JPEG — small enough to send in the request
+ * body, sharp enough that printed/handwritten text stays readable. Drawn over
+ * white so transparent PNGs don't turn black in JPEG.
+ */
+export async function prepareLensImage(file: File): Promise<string> {
+  const objectUrl = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image()
+      i.onload = () => resolve(i)
+      i.onerror = () => reject(new Error('Could not read the photo'))
+      i.src = objectUrl
+    })
+    const max = 1024
+    const scale = Math.min(1, max / Math.max(img.width, img.height))
+    const w = Math.max(1, Math.round(img.width * scale))
+    const h = Math.max(1, Math.round(img.height * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const g = canvas.getContext('2d')!
+    g.fillStyle = '#fff'
+    g.fillRect(0, 0, w, h)
+    g.drawImage(img, 0, 0, w, h)
+    return canvas.toDataURL('image/jpeg', 0.82)
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+/** Ask Leo about a photo (data URL) — solve/explain/summarize + free questions. */
+export const lensAsk = (image: string, instruction: string) =>
+  askLion({ task: 'vision', input: instruction, image })
 
 /**
  * AI smart replies for the chat — three short, natural suggestions for what
