@@ -19,12 +19,15 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// Fast, multilingual NVIDIA NIM model. Llama 4 Maverick is a MoE model: quick
-// like a small model (~4-7s) but strong at Indic languages (Telugu/Hindi/Tamil…)
-// so recipes come out correct + in good native script. Do NOT use a
-// DeepSeek/MiniMax *reasoning* model (long hidden <think> chains take 2-3 min →
-// 546 WORKER_RESOURCE_LIMIT), and NOT a dense 70B (too slow on free tier → 546).
-const MODEL = Deno.env.get('NVIDIA_MODEL') ?? 'meta/llama-4-maverick-17b-128e-instruct'
+// Main NVIDIA NIM model — strongest *currently served* instruct model with good
+// Indic languages (Telugu/Hindi/Tamil…) and json_object support. NVIDIA retires
+// free-tier models without notice (Maverick, Llama-3.3-70B, Gemma 3, Kimi K2 all
+// went 404/410/queue-forever in mid-2026), so every non-streaming call below is
+// wrapped in a hard timeout that falls back to FAST_MODEL — a retired or queued
+// main model degrades quality for a while instead of 546-ing every AI feature.
+// Do NOT use a *reasoning* model (hidden <think> chains leak into output and
+// take minutes). Check candidates with the /models endpoint before switching.
+const MODEL = Deno.env.get('NVIDIA_MODEL') ?? 'meta/llama-3.1-70b-instruct'
 // A lighter model for the INTERACTIVE chat (Lion AI assistant / Coach), where
 // snappy replies matter more than Maverick's multilingual recipe quality. The
 // big MoE Maverick queues for tens of seconds on the free NIM tier; a small
@@ -224,22 +227,38 @@ Deno.serve(async (req) => {
     // answer is generated.
     const wantStream = wantStreamRaw === true && !JSON_TASKS.includes(task)
     if (wantStream) {
-      const callUpstream = (model: string) => fetch(AI_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_API_KEY}` },
-        body: JSON.stringify({ ...payload, model, stream: true }),
-      })
+      // abort if response HEADERS don't arrive in 30s (model queued/retired) —
+      // the timer is cleared once they do, so an active stream is never cut off
+      const callUpstream = (model: string) => {
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(new DOMException('headers timeout', 'TimeoutError')), 30_000)
+        return fetch(AI_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_API_KEY}` },
+          body: JSON.stringify({ ...payload, model, stream: true }),
+          signal: ctrl.signal,
+        }).finally(() => clearTimeout(timer))
+      }
+      // if one model is unavailable (error status or headers timeout),
+      // transparently retry once with the other so chat never breaks
+      const altModel = activeModel === MODEL ? FAST_MODEL : MODEL
       let upstream: Response
       try {
         upstream = await callUpstream(activeModel)
-        // if the lighter fast model isn't available on this account, transparently
-        // fall back to the main model so chat never breaks — just slower
-        if (!upstream.ok && upstream.status !== 429 && activeModel !== MODEL) {
-          console.warn(`[FALLBACK] fast model ${activeModel} unavailable (status ${upstream.status}) -> ${MODEL}`)
-          upstream = await callUpstream(MODEL)
+        if (!upstream.ok && upstream.status !== 429 && altModel !== activeModel) {
+          console.warn(`[FALLBACK] stream ${activeModel} unavailable (status ${upstream.status}) -> ${altModel}`)
+          upstream = await callUpstream(altModel)
         }
       } catch (e) {
-        return json({ error: 'Could not reach the AI provider', detail: String(e) }, 502)
+        if (altModel === activeModel) {
+          return json({ error: 'Could not reach the AI provider', detail: String(e) }, 502)
+        }
+        console.warn(`[FALLBACK] stream ${activeModel} timed out -> ${altModel} :: ${String(e).slice(0, 120)}`)
+        try {
+          upstream = await callUpstream(altModel)
+        } catch (e2) {
+          return json({ error: 'Could not reach the AI provider', detail: String(e2) }, 502)
+        }
       }
       if (upstream.status === 429) {
         const b = await upstream.text().catch(() => '')
@@ -320,15 +339,34 @@ Deno.serve(async (req) => {
       })
     }
 
-    let res: Response
-    try {
-      res = await fetch(AI_URL, {
+    // Hard-timeout the upstream call and fall back to FAST_MODEL on timeout or
+    // a non-quota error. The free NIM tier retires models (404/410) and queues
+    // big ones indefinitely — without this, one dead model choice hangs the
+    // worker past its limit and EVERY AI feature dies with a 546.
+    const callModel = (model: string, timeoutMs: number) =>
+      fetch(AI_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_API_KEY}` },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, model }),
+        signal: AbortSignal.timeout(timeoutMs),
       })
+    let res: Response
+    try {
+      res = await callModel(activeModel, 45_000)
+      if (!res.ok && res.status !== 429 && activeModel !== FAST_MODEL) {
+        console.warn(`[FALLBACK] ${activeModel} failed (status ${res.status}) -> ${FAST_MODEL}`)
+        res = await callModel(FAST_MODEL, 60_000)
+      }
     } catch (e) {
-      return json({ error: 'Could not reach the AI provider', detail: String(e) }, 502)
+      if (activeModel === FAST_MODEL) {
+        return json({ error: 'Could not reach the AI provider', detail: String(e) }, 502)
+      }
+      console.warn(`[FALLBACK] ${activeModel} timed out/unreachable -> ${FAST_MODEL} :: ${String(e).slice(0, 120)}`)
+      try {
+        res = await callModel(FAST_MODEL, 60_000)
+      } catch (e2) {
+        return json({ error: 'Could not reach the AI provider', detail: String(e2) }, 502)
+      }
     }
 
     // ---- graceful quota handling ----
