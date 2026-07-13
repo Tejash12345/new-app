@@ -67,10 +67,16 @@ type YTPlayer = {
   pauseVideo: () => void
   seekTo: (s: number, allow: boolean) => void
   getCurrentTime: () => number
+  getDuration: () => number
   getPlayerState: () => number
   mute: () => void
   unMute: () => void
   destroy: () => void
+}
+
+function fmtTime(s: number) {
+  const m = Math.floor(s / 60)
+  return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 }
 let ytReady: Promise<void> | null = null
 function loadYouTubeApi(): Promise<void> {
@@ -130,6 +136,12 @@ export function TogetherOverlay({
   // follower autoplay: playback starts MUTED automatically (YouTube-style);
   // one tap turns the sound on — browsers only allow silent autoplay
   const [soundGate, setSoundGate] = useState(false)
+  // our own YouTube transport (native controls are hidden): phones' players
+  // pause/resume by themselves, and taps inside the iframe are invisible to
+  // us — with our controls, ONLY real button presses ever broadcast
+  const [uiPlaying, setUiPlaying] = useState(false)
+  const [cur, setCur] = useState(0)
+  const [dur, setDur] = useState(0)
   // how long this hangout has been running
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
@@ -271,13 +283,14 @@ export function TogetherOverlay({
         videoId: session.videoId,
         width: '100%',
         height: '100%',
-        playerVars: { playsinline: 1, rel: 0, origin: window.location.origin },
+        // controls: 0 — the iframe swallows taps and phone players stop and
+        // start on their own; with YouTube's UI hidden, the only events that
+        // sync are the ones from OUR transport bar below
+        playerVars: { playsinline: 1, rel: 0, controls: 0, disablekb: 1, origin: window.location.origin },
         events: {
           onStateChange: (e: { data: number }) => {
-            const yt = ytRef.current
-            if (!yt || !window.YT) return
-            if (e.data === window.YT.PlayerState.PLAYING) broadcastState(true, yt.getCurrentTime())
-            if (e.data === window.YT.PlayerState.PAUSED) broadcastState(false, yt.getCurrentTime())
+            if (!window.YT) return
+            setUiPlaying(e.data === window.YT.PlayerState.PLAYING)
           },
         },
       })
@@ -341,6 +354,50 @@ export function TogetherOverlay({
       if (expected > 1) el.currentTime = expected
       void el.play().catch(() => {})
     }
+    // the starter's kick-off is a real user action — tell the partner
+    // (player events no longer broadcast, so this must be explicit)
+    if (!pend) userAction(true, expected)
+  }
+
+  // transport-bar position poll (UI only)
+  useEffect(() => {
+    if (session.kind !== 'youtube') return
+    const iv = setInterval(() => {
+      const yt = ytRef.current
+      if (!yt) return
+      try {
+        setCur(yt.getCurrentTime() || 0)
+        setDur(yt.getDuration() || 0)
+      } catch { /* player still booting */ }
+    }, 500)
+    return () => clearInterval(iv)
+  }, [session.kind])
+
+  /** A REAL user action on our transport — always broadcasts, no echo guards. */
+  function userAction(playing: boolean, t: number) {
+    expectedEcho.current = null
+    applyingRemote.current = 0
+    iDrive.current = true
+    sendTg({ a: 'state', playing, t, at: Date.now() })
+  }
+  function togglePlay() {
+    const yt = ytRef.current
+    if (!yt) return
+    const t = yt.getCurrentTime()
+    if (uiPlaying) {
+      yt.pauseVideo()
+      userAction(false, t)
+    } else {
+      yt.playVideo()
+      userAction(true, t)
+    }
+  }
+  function seekYt(v: number) {
+    const yt = ytRef.current
+    if (!yt) return
+    yt.seekTo(v, true)
+    setCur(v)
+    userAction(uiPlaying, v)
   }
 
   /** The tap that turns sound on after a muted autoplay start. */
@@ -383,7 +440,30 @@ export function TogetherOverlay({
       </div>
 
       <div className={cn('relative mx-3 shrink-0 overflow-hidden rounded-3xl ring-1 ring-white/15', isVideo ? 'aspect-video' : 'p-3 sm:p-4')}>
-        {session.kind === 'youtube' && <div id="tg-yt" className="h-full w-full" />}
+        {session.kind === 'youtube' && (
+          <>
+            <div id="tg-yt" className="h-full w-full" />
+            {/* tap shield: the iframe eats taps — this makes tap = play/pause */}
+            {!needsTap && <div className="absolute inset-0 z-[5]" onClick={togglePlay} />}
+            {/* our transport bar — the ONLY thing that syncs */}
+            {!needsTap && (
+              <div className="absolute inset-x-0 bottom-0 z-[8] flex items-center gap-2 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pb-2 pt-7">
+                <button onClick={togglePlay} aria-label={uiPlaying ? 'Pause for both' : 'Play for both'}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-slate-900 shadow active:scale-90">
+                  {uiPlaying ? '❚❚' : '▶'}
+                </button>
+                <span className="shrink-0 font-mono text-[10px] font-bold text-white/85">{fmtTime(cur)}</span>
+                <input
+                  type="range" min={0} max={Math.max(1, dur)} step={1} value={Math.min(cur, dur || cur)}
+                  onChange={(e) => seekYt(Number(e.target.value))}
+                  aria-label="Seek for both"
+                  className="h-1.5 min-w-0 flex-1 cursor-pointer accent-amber-400"
+                />
+                <span className="shrink-0 font-mono text-[10px] font-bold text-white/60">{fmtTime(dur)}</span>
+              </div>
+            )}
+          </>
+        )}
         {session.kind === 'drive' && (
           driveFallback ? (
             // Drive refused direct playback — its own player still works for
