@@ -107,7 +107,15 @@ export function TogetherOverlay({
   // state silently (never re-broadcasts it) and only heartbeats when driving.
   const applyingRemote = useRef(0)
   const iDrive = useRef(false)
-  const ECHO_MS = 2500 // > mobile buffering delay, so buffer-induced events stay quiet
+  const ECHO_MS = 4000
+  // content-based echo detection: after applying the partner's play/pause we
+  // EXPECT our own player to emit that same event — swallow it whenever it
+  // arrives (mobile buffering can delay it 5s+, far past any time window)
+  const expectedEcho = useRef<{ playing: boolean; until: number } | null>(null)
+  const expectEcho = (playing: boolean) => {
+    expectedEcho.current = { playing, until: Date.now() + 8000 }
+  }
+  const DRIFT_S = 5 // mobile buffering makes small gaps normal — don't chase them
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [mediaGone, setMediaGone] = useState(false)
   const [partnerHere, setPartnerHere] = useState(false)
@@ -153,7 +161,14 @@ export function TogetherOverlay({
   }, [])
 
   const broadcastState = useCallback((playing: boolean, t: number) => {
+    const exp = expectedEcho.current
+    if (exp && Date.now() < exp.until && exp.playing === playing) {
+      // that's our player confirming the state we applied — not the user
+      expectedEcho.current = null
+      return
+    }
     if (Date.now() < applyingRemote.current) return
+    expectedEcho.current = null
     iDrive.current = true
     sendTg({ a: 'state', playing, t, at: Date.now() })
   }, [sendTg])
@@ -198,6 +213,7 @@ export function TogetherOverlay({
         if (p.playing && (yt2 || el2)) {
           iDrive.current = false
           applyingRemote.current = Date.now() + ECHO_MS
+          expectEcho(true)
           const exp = p.t + (Date.now() - p.at) / 1000
           if (yt2) {
             yt2.mute()
@@ -225,15 +241,19 @@ export function TogetherOverlay({
         : el ? !el.paused : false
       // already aligned → touch nothing (re-applying is what caused the
       // stop/resume stutter: every apply kicked off buffering + echo events)
-      if (localPlaying === !!p.playing && Math.abs(localT - expected) < 3) return
+      if (localPlaying === !!p.playing && Math.abs(localT - expected) < DRIFT_S) return
       applyingRemote.current = Date.now() + ECHO_MS
+      if (localPlaying !== !!p.playing) expectEcho(!!p.playing)
+      // when catching up mid-playback, land slightly AHEAD so our own
+      // buffering doesn't leave us behind again (the "chasing" stutter)
+      const target = expected + (p.playing ? 1 : 0)
       if (yt) {
-        if (Math.abs(localT - expected) >= 3) yt.seekTo(expected, true)
+        if (Math.abs(localT - expected) >= DRIFT_S) yt.seekTo(target, true)
         if (p.playing) yt.playVideo()
         else yt.pauseVideo()
       }
       if (el) {
-        if (Math.abs(localT - expected) >= 3) el.currentTime = expected
+        if (Math.abs(localT - expected) >= DRIFT_S) el.currentTime = target
         if (p.playing) void el.play().catch(() => {})
         else el.pause()
       }
@@ -309,6 +329,7 @@ export function TogetherOverlay({
       // catching up to the partner — we're the follower, stay quiet
       iDrive.current = false
       applyingRemote.current = Date.now() + ECHO_MS
+      expectEcho(pend.playing)
     }
     const yt = ytRef.current
     if (yt) {
