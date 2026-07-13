@@ -14,6 +14,7 @@ import { StoryRing } from '../components/Stories'
 import { useOnlineCheck } from '../hooks/useOnline'
 import { GlassCard, Page, Input, Button, Empty } from '../components/ui'
 import { cn } from '../lib/utils'
+import { chatMediaPath, deleteMediaBlob, getMediaBlob, objectUrlFor, putMediaBlob } from '../lib/mediaStore'
 
 type DMessage = {
   id: string
@@ -29,6 +30,9 @@ type DMessage = {
   reply_to?: string | null
   reply_snippet?: string | null
   reply_name?: string | null
+  // device-first media handover: stored (on server) → delivered (recipient
+  // vaulted it) → purged (server copy deleted; blobs live on the 2 devices)
+  media_state?: 'stored' | 'delivered' | 'purged'
 }
 
 /** One-line preview of a message for reply quotes (media become icons). */
@@ -102,6 +106,63 @@ function Avatar({ id, name, url, online, size = 11 }: { id: string; name: string
         </div>
       </StoryRing>
       {online && <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />}
+    </div>
+  )
+}
+
+/**
+ * Resolves a media message to a displayable URL, device-vault first.
+ * Cached blob → object URL. Not cached → download from the bucket, vault it,
+ * and tell the parent (so the recipient can flag delivery). Server copy gone
+ * and nothing vaulted → expired: this media only exists on the original
+ * devices now.
+ */
+function WithLocalMedia({ m, onCached, children }: {
+  m: DMessage
+  onCached: () => void
+  children: (url: string | null, expired: boolean) => ReactNode
+}) {
+  const [res, setRes] = useState<{ url: string | null; expired: boolean } | null>(null)
+  const onCachedRef = useRef(onCached)
+  useEffect(() => {
+    onCachedRef.current = onCached
+  })
+  useEffect(() => {
+    let dead = false
+    ;(async () => {
+      const cached = await getMediaBlob(m.id)
+      if (cached) {
+        if (!dead) setRes({ url: objectUrlFor(m.id, cached), expired: false })
+        return
+      }
+      if (!m.file_url || m.media_state === 'purged') {
+        if (!dead) setRes({ url: null, expired: true })
+        return
+      }
+      try {
+        const r = await fetch(m.file_url)
+        if (!r.ok) throw new Error(String(r.status))
+        const blob = await r.blob()
+        await putMediaBlob(m.id, blob)
+        if (!dead) setRes({ url: objectUrlFor(m.id, blob), expired: false })
+        onCachedRef.current()
+      } catch {
+        // offline or the file vanished — let the element try streaming it
+        if (!dead) setRes({ url: m.file_url!, expired: false })
+      }
+    })()
+    return () => { dead = true }
+  }, [m.id, m.file_url, m.media_state])
+  if (!res) return <div className="h-10 w-44 max-w-full animate-pulse rounded-xl bg-slate-500/15" />
+  return <>{children(res.url, res.expired)}</>
+}
+
+/** What an expired attachment shows instead of the media. */
+function ExpiredMedia({ kind }: { kind?: string }) {
+  return (
+    <div className="flex items-center gap-2 py-1 text-xs italic opacity-70">
+      {kind === 'audio' ? '🎤' : kind === 'file' ? '📄' : '📷'}
+      <span>No longer available — media stays on the devices that exchanged it.</span>
     </div>
   )
 }
@@ -486,6 +547,46 @@ function FriendsChat() {
     channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
   }
 
+  /** Recipient vaulted a file — flag it so the sender's device can purge the server copy. */
+  function markDelivered(m: DMessage) {
+    if (!user || m.sender_id === user.id || m.media_state !== 'stored') return
+    supabase.from('direct_messages').update({ media_state: 'delivered' }).eq('id', m.id)
+      .then(() => {}, () => { /* pre-migration DB — ignore */ })
+  }
+
+  // sender-side postman cleanup: once the recipient has vaulted a file, make
+  // sure OUR copy is vaulted too, then delete the server copy — after this the
+  // media exists only on the two devices, WhatsApp-style
+  const sweptRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!user || !active) return
+    const ready = messages.filter((m) => m.sender_id === user.id && m.file_url && m.media_state === 'delivered')
+    if (!ready.length || sweptRef.current === pairKey) return
+    sweptRef.current = pairKey
+    ;(async () => {
+      for (const m of ready) {
+        const path = chatMediaPath(m.file_url!)
+        if (!path) continue
+        let blob = await getMediaBlob(m.id)
+        if (!blob) {
+          try {
+            const r = await fetch(m.file_url!)
+            if (r.ok) {
+              blob = await r.blob()
+              await putMediaBlob(m.id, blob)
+            }
+          } catch { /* try again next visit */ }
+        }
+        if (!blob) continue
+        const { error } = await supabase.storage.from('chat-media').remove([path])
+        if (!error) {
+          await supabase.from('direct_messages').update({ media_state: 'purged' }).eq('id', m.id)
+            .then(() => {}, () => {})
+        }
+      }
+    })()
+  }, [messages, pairKey, user?.id, active?.friend_id])
+
   /** Jump to the quoted original and flash it, WhatsApp style. */
   function jumpTo(id?: string | null) {
     if (!id) return
@@ -497,10 +598,19 @@ function FriendsChat() {
   }
 
   async function remove(id: string) {
+    const gone = messages.find((x) => x.id === id)
     setMessages((m) => m.filter((x) => x.id !== id))
     await supabase.from('direct_messages').delete().eq('id', id)
     if (active) getSocket()?.emit('dm:del', { id, to: active.friend_id })
     channelRef.current?.send({ type: 'broadcast', event: 'del', payload: { id } })
+    // deleting a message also deletes its media — server file (ours to
+    // delete) and the local vault copy; before this the bucket leaked
+    // orphaned files forever
+    if (gone?.file_url && gone.sender_id === user?.id) {
+      const path = chatMediaPath(gone.file_url)
+      if (path) supabase.storage.from('chat-media').remove([path]).then(() => {}, () => {})
+    }
+    void deleteMediaBlob(id)
   }
 
   async function confirmRemove(m: DMessage) {
@@ -564,6 +674,9 @@ function FriendsChat() {
       return
     }
     const real = data as DMessage
+    // vault our own copy right away — the sweep can then purge the server
+    // file without this device ever needing to re-download it
+    void putMediaBlob(real.id, file)
     setMessages((m) => [...m, real])
     getSocket()?.emit('dm', real)
     channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
@@ -844,30 +957,42 @@ function FriendsChat() {
                         mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
                              : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
                         {quoteBlock}
-                        {m.kind === 'image' && m.file_url ? (
-                          <>
-                            {/* in-app viewer — a plain link navigates the whole
-                                WebView to the raw file (zoomed wrong, no way back) */}
-                            <button type="button" onClick={() => setLightbox({ src: m.file_url!, name: m.file_name ?? undefined })}>
-                              <img src={m.file_url} alt={m.file_name ?? 'photo'} loading="lazy"
-                                className="max-h-64 rounded-xl object-contain" />
-                            </button>
-                            <div className={cn('px-1.5 pb-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
-                          </>
-                        ) : m.kind === 'audio' && m.file_url ? (
-                          <>
-                            <audio controls preload="metadata" src={m.file_url} className="h-10 w-56 max-w-full" />
-                            <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
-                          </>
-                        ) : m.kind === 'file' && m.file_url ? (
-                          <>
-                            <a href={m.file_url} target="_blank" rel="noreferrer" download={m.file_name ?? true}
-                              className="flex items-center gap-2 font-semibold underline underline-offset-2">
-                              <FileText size={17} className="shrink-0" />
-                              <span className="truncate">{m.file_name ?? 'Document'}</span>
-                            </a>
-                            <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
-                          </>
+                        {m.kind === 'image' ? (
+                          <WithLocalMedia m={m} onCached={() => markDelivered(m)}>
+                            {(url, expired) => expired || !url ? <ExpiredMedia kind="image" /> : (
+                              <>
+                                {/* in-app viewer — a plain link navigates the whole
+                                    WebView to the raw file (zoomed wrong, no way back) */}
+                                <button type="button" onClick={() => setLightbox({ src: url, name: m.file_name ?? undefined })}>
+                                  <img src={url} alt={m.file_name ?? 'photo'} loading="lazy"
+                                    className="max-h-64 rounded-xl object-contain" />
+                                </button>
+                                <div className={cn('px-1.5 pb-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
+                              </>
+                            )}
+                          </WithLocalMedia>
+                        ) : m.kind === 'audio' ? (
+                          <WithLocalMedia m={m} onCached={() => markDelivered(m)}>
+                            {(url, expired) => expired || !url ? <ExpiredMedia kind="audio" /> : (
+                              <>
+                                <audio controls preload="metadata" src={url} className="h-10 w-56 max-w-full" />
+                                <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
+                              </>
+                            )}
+                          </WithLocalMedia>
+                        ) : m.kind === 'file' ? (
+                          <WithLocalMedia m={m} onCached={() => markDelivered(m)}>
+                            {(url, expired) => expired || !url ? <ExpiredMedia kind="file" /> : (
+                              <>
+                                <a href={url} target="_blank" rel="noreferrer" download={m.file_name ?? true}
+                                  className="flex items-center gap-2 font-semibold underline underline-offset-2">
+                                  <FileText size={17} className="shrink-0" />
+                                  <span className="truncate">{m.file_name ?? 'Document'}</span>
+                                </a>
+                                <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
+                              </>
+                            )}
+                          </WithLocalMedia>
                         ) : (
                           <>
                             {m.body}
