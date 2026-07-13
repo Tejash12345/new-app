@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { smartReplies } from '../lib/ai'
@@ -12,7 +12,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useAvatars } from '../hooks/useAvatars'
 import { StoryRing } from '../components/Stories'
 import { useOnlineCheck } from '../hooks/useOnline'
-import { GlassCard, Page, Input, Button, Empty } from '../components/ui'
+import { GlassCard, Page, Input, Button, Empty, ProgressRing } from '../components/ui'
 import { cn } from '../lib/utils'
 import { chatMediaPath, deleteMediaBlob, getMediaBlob, objectUrlFor, putMediaBlob } from '../lib/mediaStore'
 
@@ -22,7 +22,7 @@ type DMessage = {
   recipient_id: string
   body: string
   created_at: string
-  kind?: 'text' | 'image' | 'audio' | 'file' | 'post'
+  kind?: 'text' | 'image' | 'audio' | 'file' | 'post' | 'focus'
   file_url?: string | null
   file_name?: string | null
   // WhatsApp-style reply: id of the quoted message + a snapshot of its
@@ -75,7 +75,22 @@ function snippetOf(m: DMessage) {
   if (m.kind === 'audio') return '🎤 Voice message'
   if (m.kind === 'file') return `📄 ${m.file_name ?? 'Document'}`
   if (m.kind === 'post') return '📰 Shared post'
+  if (m.kind === 'focus') return '⚡ Focus Together invite'
   return (m.body || '').slice(0, 90)
+}
+
+// Focus Together — a live focus session both friends run in lockstep
+const DUO_MINS = [15, 25, 50]
+type DuoState = {
+  start: number
+  min: number
+  partnerOk: boolean
+  done: boolean
+  partnerLeft: boolean
+  partnerDone: boolean
+}
+function duoMin(m: DMessage) {
+  try { return Math.max(5, Math.min(120, Number(JSON.parse(m.file_name ?? '{}').min) || 25)) } catch { return 25 }
 }
 type RoomMessage = {
   id: string
@@ -333,7 +348,7 @@ function lastSeenLabel(lastSeen?: string | null) {
 }
 
 function FriendsChat() {
-  const { user } = useAuth()
+  const { user, addXp, touchStudyStreak } = useAuth()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const isOnline = useOnlineCheck()
@@ -358,6 +373,11 @@ function FriendsChat() {
   const [peerReadAt, setPeerReadAt] = useState<string | null>(null)
   const [ttl, setTtl] = useState(0)
   const [ttlMenuOpen, setTtlMenuOpen] = useState(false)
+  const [duo, setDuo] = useState<DuoState | null>(null)
+  const [duoMenuOpen, setDuoMenuOpen] = useState(false)
+  const [, setDuoTick] = useState(0)
+  const duoRef = useRef<DuoState | null>(null)
+  useEffect(() => { duoRef.current = duo })
   const press = useRef<{ t: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null)
   const lastReadSent = useRef(0)
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -555,6 +575,17 @@ function FriendsChat() {
       .on('broadcast', { event: 'ttl' }, ({ payload }) => {
         setTtl((payload as { seconds: number }).seconds)
       })
+      .on('broadcast', { event: 'focus' }, ({ payload }) => {
+        const p = payload as { a: 'start' | 'quit' | 'done'; from: string; start?: number; min?: number }
+        if (p.from === user.id) return
+        if (p.a === 'start' && p.start && p.min) {
+          // partner hit Start — the session opens for both, in lockstep
+          setDuo((cur) => cur ?? { start: p.start!, min: p.min!, partnerOk: true, done: false, partnerLeft: false, partnerDone: false })
+          setDuo((cur) => cur && { ...cur, partnerOk: true })
+        }
+        if (p.a === 'quit') setDuo((cur) => cur && { ...cur, partnerLeft: true })
+        if (p.a === 'done') setDuo((cur) => cur && { ...cur, partnerDone: true })
+      })
       .subscribe()
     channelRef.current = channel
     markRead()
@@ -616,6 +647,76 @@ function FriendsChat() {
     // instant push to the other side — socket.io first, channel broadcast too
     getSocket()?.emit('dm', real)
     channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
+  }
+
+  // ---- Focus Together: a live synced focus session for both friends ----
+
+  /** Post the ⚡ invite card into the chat. */
+  async function sendFocusInvite(min: number) {
+    if (!user || !active) return
+    setDuoMenuOpen(false)
+    const row: Record<string, unknown> = {
+      sender_id: user.id, recipient_id: active.friend_id,
+      body: `⚡ Focus Together — ${min} minutes`,
+      kind: 'focus', file_name: JSON.stringify({ min }), ...expiryFields(),
+    }
+    const { data, error } = await supabase.from('direct_messages').insert(row).select().single()
+    if (error) {
+      setSendError(`Not sent: ${error.message}`)
+      return
+    }
+    const real = data as DMessage
+    setMessages((m) => [...m, real])
+    getSocket()?.emit('dm', real)
+    channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
+  }
+
+  /** Start the synced session — the broadcast opens it on the friend's screen too. */
+  function startDuo(min: number) {
+    if (!user) return
+    const start = Date.now()
+    setDuo({ start, min, partnerOk: false, done: false, partnerLeft: false, partnerDone: false })
+    channelRef.current?.send({ type: 'broadcast', event: 'focus', payload: { a: 'start', from: user.id, start, min } })
+    navigator.vibrate?.(20)
+  }
+
+  async function quitDuo() {
+    if (!(await confirmDialog('Leave the Focus Together session? No XP for quitters. 🦁', { yesLabel: 'Leave', noLabel: 'Keep going' }))) return
+    channelRef.current?.send({ type: 'broadcast', event: 'focus', payload: { a: 'quit', from: user?.id } })
+    setDuo(null)
+  }
+
+  // tick once a second while a session runs; award exactly once at zero
+  useEffect(() => {
+    if (!duo || duo.done) return
+    const iv = setInterval(() => {
+      setDuoTick((n) => n + 1)
+      const d = duoRef.current
+      if (!d || d.done) return
+      if (d.start + d.min * 60_000 <= Date.now()) {
+        setDuo((cur) => cur && { ...cur, done: true })
+        void completeDuo(d)
+      }
+    }, 1000)
+    return () => clearInterval(iv)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [duo?.start, duo?.done])
+
+  /** Session finished — real study session + XP with a duo bonus, once. */
+  async function completeDuo(d: DuoState) {
+    if (!user || !active) return
+    const key = `fl-duo-${d.start}`
+    if (localStorage.getItem(key)) return
+    localStorage.setItem(key, '1')
+    const base = d.min >= 50 ? 40 : 20
+    await supabase.from('study_sessions').insert({
+      user_id: user.id, started_at: new Date(d.start).toISOString(),
+      duration_min: d.min, subject: 'Focus Together', mode: d.min >= 50 ? 'focus' : 'pomodoro',
+    }).then(() => {}, () => {})
+    await addXp(base + 5, `Focus Together with ${fname(active)}`)
+    await touchStudyStreak()
+    channelRef.current?.send({ type: 'broadcast', event: 'focus', payload: { a: 'done', from: user.id } })
+    navigator.vibrate?.([40, 40, 80])
   }
 
   /** Change the shared disappearing-messages timer — both sides see it instantly. */
@@ -1048,8 +1149,34 @@ function FriendsChat() {
                   </>
                 )
               })()}
-              {/* disappearing-messages timer — shared by both sides of the chat */}
+              {/* Focus Together — invite this friend into a live synced session */}
               <div className="relative ml-auto">
+                <button onClick={() => setDuoMenuOpen((o) => !o)} aria-label="Focus together"
+                  className="rounded-full p-2 text-amber-500 transition hover:bg-amber-400/15">
+                  <Zap size={18} />
+                </button>
+                {duoMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setDuoMenuOpen(false)} />
+                    <div className="glass-strong absolute right-0 z-50 mt-1 w-52 rounded-2xl p-1.5">
+                      <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        ⚡ Focus together
+                      </div>
+                      {DUO_MINS.map((min) => (
+                        <button key={min} onClick={() => sendFocusInvite(min)}
+                          className="flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
+                          {min} minutes <span className="text-xs font-bold text-amber-500">+{(min >= 50 ? 40 : 20) + 5} XP</span>
+                        </button>
+                      ))}
+                      <div className="px-2.5 pb-1 pt-0.5 text-[10px] text-slate-400">
+                        Same timer, both phones — XP for both when it ends.
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              {/* disappearing-messages timer — shared by both sides of the chat */}
+              <div className="relative">
                 <button onClick={() => setTtlMenuOpen((o) => !o)} aria-label="Disappearing messages"
                   className={cn('rounded-full p-2 transition hover:bg-slate-500/10', ttl > 0 ? 'text-brand-500' : 'text-slate-400')}>
                   <Timer size={18} />
@@ -1190,7 +1317,26 @@ function FriendsChat() {
                           <Reply size={14} />
                         </button>
                       )}
-                      {m.kind === 'post' ? (
+                      {m.kind === 'focus' ? (
+                        <div className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
+                          <div className="max-w-[78vw] rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-400/15 to-orange-500/10 p-3.5 sm:max-w-md">
+                            <div className="flex items-center gap-2.5">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow">
+                                <Zap size={19} />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-sm font-extrabold text-slate-900 dark:text-white">Focus Together</div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">{duoMin(m)} minutes · +{(duoMin(m) >= 50 ? 40 : 20) + 5} XP each</div>
+                              </div>
+                            </div>
+                            <button onClick={() => startDuo(duoMin(m))} disabled={!!duo}
+                              className="mt-2.5 w-full rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 py-2 text-sm font-black uppercase tracking-wide text-white shadow transition active:scale-95 disabled:opacity-50">
+                              {mine ? 'Start now' : `Focus with ${fname(active).split(' ')[0]}`}
+                            </button>
+                          </div>
+                          <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}{tick}</span>
+                        </div>
+                      ) : m.kind === 'post' ? (
                         <div className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
                           <SharedPostBubble m={m} mine={mine} onOpen={(id) => navigate(`/feed?post=${id}`)} />
                           <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}{tick}</span>
@@ -1381,6 +1527,58 @@ function FriendsChat() {
         )}
       </GlassCard>
       {lightbox && <Lightbox src={lightbox.src} name={lightbox.name} onClose={() => setLightbox(null)} />}
+
+      {/* ---- Focus Together: live synced session overlay ---- */}
+      {duo && active && (() => {
+        const totalMs = duo.min * 60_000
+        const leftMs = Math.max(0, duo.start + totalMs - Date.now())
+        const mm = Math.floor(leftMs / 60_000)
+        const ss = Math.floor((leftMs % 60_000) / 1000)
+        const base = duo.min >= 50 ? 40 : 20
+        return (
+          <div className="aurora fixed inset-0 z-[80] flex flex-col items-center justify-center px-6">
+            <div className="glass-strong w-full max-w-sm rounded-3xl p-6 text-center">
+              <div className="mb-4 flex items-center justify-center gap-4">
+                <Avatar id={user?.id ?? 'me'} name="You" url={avatarFor(user?.id ?? '')} size={12} />
+                <Zap size={22} className={cn('text-amber-500', !duo.done && 'animate-pulse')} />
+                <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} size={12} />
+              </div>
+              {duo.done ? (
+                <>
+                  <div className="text-4xl">🎉</div>
+                  <div className="mt-2 text-xl font-extrabold text-slate-900 dark:text-white">Session complete!</div>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    +{base + 5} XP earned (duo bonus included){duo.partnerDone && ` — ${fname(active).split(' ')[0]} finished too! 🦁`}
+                  </p>
+                  <Button className="mt-5 w-full" onClick={() => setDuo(null)}>Back to chat</Button>
+                </>
+              ) : (
+                <>
+                  <ProgressRing size={150} stroke={11} color="#FFB454"
+                    progress={1 - leftMs / totalMs}
+                    label={`${mm}:${String(ss).padStart(2, '0')}`}
+                    sub={`of ${duo.min} min`} />
+                  <div className="mt-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    Focusing with {fname(active).split(' ')[0]} ⚡
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    {duo.partnerLeft
+                      ? `${fname(active).split(' ')[0]} left — finish anyway, the XP is yours.`
+                      : duo.partnerOk
+                        ? 'Both timers are running in sync. Stay strong!'
+                        : 'Waiting for their timer to sync… keep focusing.'}
+                  </p>
+                  <div className="mt-2 text-xs font-bold text-amber-500">+{base + 5} XP each at the finish line</div>
+                  <button onClick={quitDuo}
+                    className="mt-5 rounded-2xl bg-slate-500/10 px-5 py-2.5 text-sm font-bold text-slate-500 transition hover:bg-rose-500/15 hover:text-rose-500 dark:text-slate-300">
+                    Leave session
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
