@@ -19,23 +19,32 @@ import { cn } from '../lib/utils'
 export type TogetherSession =
   | { kind: 'youtube'; videoId: string }
   | { kind: 'media'; msgId: string; name?: string; isVideo?: boolean }
+  | { kind: 'drive'; fileId: string; name?: string }
 
 export type TgPayload = {
-  a: 'open' | 'state' | 'close'
+  a: 'open' | 'state' | 'close' | 'emote'
   from: string
   kind?: TogetherSession['kind']
   videoId?: string
   msgId?: string
+  fileId?: string
   name?: string
   isVideo?: boolean
   playing?: boolean
   t?: number
   at?: number
+  e?: string
 }
 
 export function ytIdFrom(text?: string | null): string | null {
   if (!text) return null
   const m = text.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/)
+  return m ? m[1] : null
+}
+
+export function driveIdFrom(text?: string | null): string | null {
+  if (!text) return null
+  const m = text.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:[\w=&]*id=)?)([\w-]{10,})/)
   return m ? m[1] : null
 }
 
@@ -94,6 +103,16 @@ export function TogetherOverlay({
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [mediaGone, setMediaGone] = useState(false)
   const [partnerHere, setPartnerHere] = useState(false)
+  // Drive files that refuse direct playback drop to Drive's own player iframe
+  const [driveFallback, setDriveFallback] = useState(false)
+  // floating emoji reactions, mirrored on both screens
+  const [emotes, setEmotes] = useState<{ id: number; e: string; x: number }[]>([])
+  const emoteSeq = useRef(0)
+  const pushEmote = useCallback((e: string) => {
+    const id = ++emoteSeq.current
+    setEmotes((list) => [...list.slice(-14), { id, e, x: 8 + Math.random() * 84 }])
+    setTimeout(() => setEmotes((list) => list.filter((x) => x.id !== id)), 2600)
+  }, [])
 
   const broadcastState = useCallback((playing: boolean, t: number) => {
     if (Date.now() < applyingRemote.current) return
@@ -103,7 +122,12 @@ export function TogetherOverlay({
   // apply the partner's play/pause/seek, with drift correction
   useEffect(() => {
     registerTgHandler((p) => {
-      if (p.from === meId || p.a !== 'state' || p.t == null || p.at == null) return
+      if (p.from === meId) return
+      if (p.a === 'emote' && p.e) {
+        pushEmote(p.e)
+        return
+      }
+      if (p.a !== 'state' || p.t == null || p.at == null) return
       setPartnerHere(true)
       const expected = p.playing ? p.t + (Date.now() - p.at) / 1000 : p.t
       applyingRemote.current = Date.now() + 900
@@ -121,7 +145,7 @@ export function TogetherOverlay({
       }
     })
     return () => registerTgHandler(() => {})
-  }, [registerTgHandler, meId])
+  }, [registerTgHandler, meId, pushEmote])
 
   // youtube player
   useEffect(() => {
@@ -177,25 +201,53 @@ export function TogetherOverlay({
     return () => clearInterval(iv)
   }, [broadcastState])
 
-  const isVideo = session.kind === 'youtube' || (session.kind === 'media' && session.isVideo)
+  const isVideo = session.kind === 'youtube' || session.kind === 'drive' || (session.kind === 'media' && session.isVideo)
+  const title = ('name' in session && session.name) ? session.name : 'Watching together'
+  const mediaEvents = {
+    onPlay: (e: React.SyntheticEvent<HTMLVideoElement>) => broadcastState(true, e.currentTarget.currentTime),
+    onPause: (e: React.SyntheticEvent<HTMLVideoElement>) => broadcastState(false, e.currentTarget.currentTime),
+    onSeeked: (e: React.SyntheticEvent<HTMLVideoElement>) => broadcastState(!e.currentTarget.paused, e.currentTarget.currentTime),
+  }
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-      className="fixed inset-0 z-[85] flex flex-col bg-[#06050d]/95 backdrop-blur-sm">
-      <div className="flex items-center justify-between px-4 pb-2 pt-[calc(0.75rem+env(safe-area-inset-top))]">
-        <div className="flex min-w-0 items-center gap-2 text-white">
-          {session.kind === 'youtube' ? <Clapperboard size={18} className="shrink-0 text-red-400" /> : <Music size={18} className="shrink-0 text-amber-400" />}
-          <span className="truncate text-sm font-bold">
-            {session.kind === 'media' && session.name ? session.name : 'Watching together'} · with {partnerName}
-          </span>
+      className="fixed inset-0 z-[85] flex flex-col overflow-y-auto bg-[#06050d]/95 backdrop-blur-sm">
+      <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2 text-white">
+          {session.kind === 'media' && !session.isVideo
+            ? <Music size={18} className="shrink-0 text-amber-400" />
+            : <Clapperboard size={18} className="shrink-0 text-red-400" />}
+          <span className="truncate text-sm font-bold">{title} · with {partnerName}</span>
         </div>
         <button onClick={() => { sendTg({ a: 'close' }); onClose() }} aria-label="Leave together session"
-          className="rounded-full p-2 text-white/70 hover:bg-white/10">
+          className="shrink-0 rounded-full p-2 text-white/70 hover:bg-white/10">
           <X size={18} />
         </button>
       </div>
 
-      <div className={cn('relative mx-3 overflow-hidden rounded-3xl ring-1 ring-white/15', isVideo ? 'aspect-video' : 'p-4')}>
+      <div className={cn('relative mx-3 shrink-0 overflow-hidden rounded-3xl ring-1 ring-white/15', isVideo ? 'aspect-video' : 'p-3 sm:p-4')}>
         {session.kind === 'youtube' && <div id="tg-yt" className="h-full w-full" />}
+        {session.kind === 'drive' && (
+          driveFallback ? (
+            // Drive refused direct playback — its own player still works for
+            // both, just without automatic sync
+            <iframe
+              src={`https://drive.google.com/file/d/${session.fileId}/preview`}
+              className="h-full w-full"
+              allow="autoplay"
+              title="Google Drive player"
+            />
+          ) : (
+            <video
+              ref={mediaRef}
+              src={`https://drive.google.com/uc?export=download&id=${session.fileId}`}
+              controls
+              playsInline
+              className="h-full w-full object-contain"
+              onError={() => setDriveFallback(true)}
+              {...mediaEvents}
+            />
+          )
+        )}
         {session.kind === 'media' && (
           mediaGone ? (
             <p className="py-8 text-center text-sm text-white/60">
@@ -208,18 +260,43 @@ export function TogetherOverlay({
               controls
               playsInline
               className={cn('w-full', session.isVideo ? 'h-full object-contain' : 'h-14')}
-              onPlay={(e) => broadcastState(true, e.currentTarget.currentTime)}
-              onPause={(e) => broadcastState(false, e.currentTarget.currentTime)}
-              onSeeked={(e) => broadcastState(!e.currentTarget.paused, e.currentTarget.currentTime)}
+              {...mediaEvents}
             />
           ) : (
             <div className="h-14 w-full animate-pulse rounded-xl bg-white/10" />
           )
         )}
+        {/* floating live reactions from both sides */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          {emotes.map((em) => (
+            <motion.div key={em.id}
+              initial={{ opacity: 1, y: 0, scale: 0.8 }}
+              animate={{ opacity: 0, y: -180, scale: 1.5 }}
+              transition={{ duration: 2.4, ease: 'easeOut' }}
+              className="absolute bottom-2 text-2xl"
+              style={{ left: `${em.x}%` }}>
+              {em.e}
+            </motion.div>
+          ))}
+        </div>
       </div>
 
-      <div className="px-4 py-3 text-center text-xs text-white/50">
-        {partnerHere ? `In sync with ${partnerName} — play, pause and seek together. 🎧` : `Waiting for ${partnerName} to join…`}
+      <div className="px-4 py-2 text-center text-xs text-white/50">
+        {session.kind === 'drive' && driveFallback
+          ? 'Drive player mode — press play on both phones.'
+          : partnerHere
+            ? `In sync with ${partnerName} — play, pause and seek together. 🎧`
+            : `Waiting for ${partnerName} to join…`}
+      </div>
+
+      {/* live emote bar */}
+      <div className="flex flex-wrap items-center justify-center gap-1 px-4 pb-2">
+        {['❤️', '😂', '🔥', '😮', '👏', '💯'].map((e) => (
+          <button key={e} onClick={() => { pushEmote(e); sendTg({ a: 'emote', e }) }}
+            className="rounded-full bg-white/10 px-2.5 py-1.5 text-lg transition hover:bg-white/20 active:scale-90">
+            {e}
+          </button>
+        ))}
       </div>
       {callNode}
     </motion.div>
@@ -233,7 +310,7 @@ export type RtcPayload = {
   sdp?: RTCSessionDescriptionInit
   cand?: RTCIceCandidateInit
 }
-export type CallState = 'idle' | 'incoming' | 'connecting' | 'live' | 'failed'
+export type CallState = 'idle' | 'incoming' | 'connecting' | 'live' | 'failed' | 'mic'
 
 export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; sendRtc: (p: Omit<RtcPayload, 'from'>) => void }) {
   const [state, setState] = useState<CallState>('idle')
@@ -269,7 +346,18 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   }, [cleanup, sendRtc])
 
   const makePc = useCallback(async () => {
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        // free public TURN relay — mobile carriers usually block direct
+        // peer-to-peer, so calls ride this relay when punching through fails
+        {
+          urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443?transport=tcp'],
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
+      ],
+    })
     pc.onicecandidate = (e) => { if (e.candidate) sendRtc({ t: 'ice', cand: e.candidate.toJSON() }) }
     pc.ontrack = (e) => {
       remoteStream.current = e.streams[0]
@@ -287,6 +375,11 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     return pc
   }, [cleanup, sendRtc])
 
+  const failState = (e: unknown): CallState =>
+    e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'NotFoundError' || e.name === 'SecurityError')
+      ? 'mic'
+      : 'failed'
+
   const startCall = useCallback(async () => {
     try {
       const pc = await makePc()
@@ -294,8 +387,8 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
       await pc.setLocalDescription(offer)
       sendRtc({ t: 'offer', sdp: offer })
       setState('connecting')
-    } catch {
-      setState('failed')
+    } catch (e) {
+      setState(failState(e))
     }
   }, [makePc, sendRtc])
 
@@ -311,8 +404,8 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
       await pc.setLocalDescription(answer)
       sendRtc({ t: 'answer', sdp: answer })
       setState('connecting')
-    } catch {
-      setState('failed')
+    } catch (e) {
+      setState(failState(e))
     }
   }, [makePc, sendRtc])
 
@@ -358,12 +451,13 @@ export function VoiceCallBar({ call, partnerName }: {
         call.state === 'incoming' ? 'bg-emerald-500/15' : call.state === 'failed' ? 'bg-rose-500/10' : 'bg-brand-500/10')}>
       <audio ref={call.attachEl} autoPlay className="hidden" />
       <Phone size={16} className={cn(
-        call.state === 'live' ? 'text-emerald-500' : call.state === 'failed' ? 'text-rose-500' : 'animate-pulse text-brand-500')} />
-      <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
+        call.state === 'live' ? 'text-emerald-500' : call.state === 'failed' || call.state === 'mic' ? 'text-rose-500' : 'animate-pulse text-brand-500')} />
+      <span className="min-w-0 flex-1 text-sm font-semibold leading-snug text-slate-800 dark:text-slate-100">
         {call.state === 'incoming' && `${partnerName} is calling…`}
-        {call.state === 'connecting' && `Calling ${partnerName}…`}
+        {call.state === 'connecting' && `Calling ${partnerName}… (can take ~10s on mobile data)`}
         {call.state === 'live' && `Voice call with ${partnerName}`}
-        {call.state === 'failed' && 'Call failed — this network may block direct calls.'}
+        {call.state === 'failed' && 'Call couldn’t connect — check you’re both online and try again.'}
+        {call.state === 'mic' && 'Microphone is blocked — allow mic access for FocusLion in your phone settings, then try again.'}
       </span>
       {call.state === 'incoming' && (
         <button onClick={call.acceptCall}

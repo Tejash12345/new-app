@@ -15,7 +15,7 @@ import { useOnlineCheck } from '../hooks/useOnline'
 import { GlassCard, Page, Input, Button, Empty, ProgressRing } from '../components/ui'
 import { cn } from '../lib/utils'
 import { chatMediaPath, deleteMediaBlob, getMediaBlob, objectUrlFor, putMediaBlob } from '../lib/mediaStore'
-import { TogetherOverlay, VoiceCallBar, useVoiceCall, ytIdFrom, playableKind, type TogetherSession, type TgPayload, type RtcPayload } from '../components/Together'
+import { TogetherOverlay, VoiceCallBar, useVoiceCall, ytIdFrom, driveIdFrom, playableKind, type TogetherSession, type TgPayload, type RtcPayload } from '../components/Together'
 
 type DMessage = {
   id: string
@@ -23,7 +23,7 @@ type DMessage = {
   recipient_id: string
   body: string
   created_at: string
-  kind?: 'text' | 'image' | 'audio' | 'file' | 'post' | 'focus'
+  kind?: 'text' | 'image' | 'audio' | 'file' | 'post' | 'focus' | 'tg'
   file_url?: string | null
   file_name?: string | null
   // WhatsApp-style reply: id of the quoted message + a snapshot of its
@@ -77,7 +77,19 @@ function snippetOf(m: DMessage) {
   if (m.kind === 'file') return `📄 ${m.file_name ?? 'Document'}`
   if (m.kind === 'post') return '📰 Shared post'
   if (m.kind === 'focus') return '⚡ Focus Together invite'
+  if (m.kind === 'tg') return '🎬 Watch together'
   return (m.body || '').slice(0, 90)
+}
+
+/** Parse a Together join-card message back into a session. */
+function tgSessionFrom(m: DMessage): TogetherSession | null {
+  try {
+    const meta = JSON.parse(m.file_name ?? '{}')
+    if (meta.kind === 'youtube' && meta.videoId) return { kind: 'youtube', videoId: meta.videoId }
+    if (meta.kind === 'drive' && meta.fileId) return { kind: 'drive', fileId: meta.fileId, name: meta.name }
+    if (meta.kind === 'media' && meta.msgId) return { kind: 'media', msgId: meta.msgId, name: meta.name, isVideo: meta.isVideo }
+  } catch { /* not a session card */ }
+  return null
 }
 
 // Focus Together — a live focus session both friends run in lockstep
@@ -378,9 +390,13 @@ function FriendsChat() {
   const [duoMenuOpen, setDuoMenuOpen] = useState(false)
   // Together: synced playback + voice call
   const [tg, setTg] = useState<TogetherSession | null>(null)
+  // incoming watch-together invite — the partner accepts instead of being
+  // yanked into a fullscreen player mid-typing
+  const [tgInvite, setTgInvite] = useState<TogetherSession | null>(null)
   const [tgMenuOpen, setTgMenuOpen] = useState(false)
-  const [ytPrompt, setYtPrompt] = useState(false)
+  const [linkPrompt, setLinkPrompt] = useState<'yt' | 'drive' | null>(null)
   const [ytUrl, setYtUrl] = useState('')
+  const [pasteFail, setPasteFail] = useState(false)
   const tgOverlayHandler = useRef<(p: TgPayload) => void>(() => {})
   const sendTg = (p: Omit<TgPayload, 'from'>) => {
     if (user) channelRef.current?.send({ type: 'broadcast', event: 'tg', payload: { ...p, from: user.id } })
@@ -555,6 +571,8 @@ function FriendsChat() {
     // shared disappearing-messages timer for this pair
     setTtl(0)
     setTtlMenuOpen(false)
+    setTg(null)
+    setTgInvite(null)
     {
       const [a, b] = [user.id, active.friend_id].sort()
       supabase.from('dm_pairs').select('ttl_seconds').eq('a', a).eq('b', b).maybeSingle()
@@ -597,11 +615,12 @@ function FriendsChat() {
         const p = payload as TgPayload
         if (p.from === user.id) return
         if (p.a === 'open') {
-          if (p.kind === 'youtube' && p.videoId) setTg({ kind: 'youtube', videoId: p.videoId })
-          if (p.kind === 'media' && p.msgId) setTg({ kind: 'media', msgId: p.msgId, name: p.name, isVideo: p.isVideo })
-          navigator.vibrate?.(20)
+          if (p.kind === 'youtube' && p.videoId) setTgInvite({ kind: 'youtube', videoId: p.videoId })
+          if (p.kind === 'media' && p.msgId) setTgInvite({ kind: 'media', msgId: p.msgId, name: p.name, isVideo: p.isVideo })
+          if (p.kind === 'drive' && p.fileId) setTgInvite({ kind: 'drive', fileId: p.fileId, name: p.name })
+          navigator.vibrate?.([40, 40, 40])
         }
-        if (p.a === 'close') setTg(null)
+        if (p.a === 'close') setTgInvite(null)
         if (p.a === 'state') tgOverlayHandler.current(p)
       })
       .on('broadcast', { event: 'rtc' }, ({ payload }) => {
@@ -683,11 +702,32 @@ function FriendsChat() {
 
   // ---- Together: synced music / video + voice call ----
 
-  function openTogether(s: TogetherSession) {
+  /** Start a Together session; the join card lets an offline friend hop in later. */
+  function openTogether(s: TogetherSession, opts?: { skipCard?: boolean }) {
     setTgMenuOpen(false)
-    setYtPrompt(false)
+    setLinkPrompt(null)
     setTg(s)
-    sendTg({ a: 'open', kind: s.kind, ...(s.kind === 'youtube' ? { videoId: s.videoId } : { msgId: s.msgId, name: s.name, isVideo: s.isVideo }) })
+    const meta = s.kind === 'youtube'
+      ? { videoId: s.videoId }
+      : s.kind === 'drive'
+        ? { fileId: s.fileId, name: s.name }
+        : { msgId: s.msgId, name: s.name, isVideo: s.isVideo }
+    sendTg({ a: 'open', kind: s.kind, ...meta })
+    if (opts?.skipCard || !user || !active) return
+    // drop a join card into the chat so the session survives the moment
+    const label = s.kind === 'youtube' ? 'a YouTube video' : ('name' in s && s.name) || 'something'
+    const row: Record<string, unknown> = {
+      sender_id: user.id, recipient_id: active.friend_id,
+      body: `🎬 Watching ${label} together — tap to join!`,
+      kind: 'tg', file_name: JSON.stringify({ kind: s.kind, ...meta }), ...expiryFields(),
+    }
+    supabase.from('direct_messages').insert(row).select().single().then(({ data }) => {
+      if (!data) return
+      const real = data as DMessage
+      setMessages((m) => [...m, real])
+      getSocket()?.emit('dm', real)
+      channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
+    }, () => {})
   }
 
   /** Resolve a chat attachment to a playable URL — device vault first. */
@@ -1194,8 +1234,10 @@ function FriendsChat() {
                 return (
                   <>
                     <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} online={on} size={9} />
-                    <div>
-                      <div className="font-bold text-slate-900 dark:text-white">{fname(active)}</div>
+                    {/* min-w-0 so long names truncate instead of pushing the
+                        header buttons off a 320px screen */}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-bold text-slate-900 dark:text-white">{fname(active)}</div>
                       {typingUsers[active.friend_id] ? (
                         <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
                       ) : (
@@ -1224,12 +1266,16 @@ function FriendsChat() {
                         className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
                         <Phone size={15} className="text-emerald-500" /> Voice call
                       </button>
-                      <button onClick={() => { setTgMenuOpen(false); setYtUrl(''); setYtPrompt(true) }}
+                      <button onClick={() => { setTgMenuOpen(false); setYtUrl(''); setPasteFail(false); setLinkPrompt('yt') }}
                         className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
                         <Clapperboard size={15} className="text-red-500" /> Watch YouTube together
                       </button>
+                      <button onClick={() => { setTgMenuOpen(false); setYtUrl(''); setPasteFail(false); setLinkPrompt('drive') }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
+                        <FileText size={15} className="text-amber-500" /> Play from Google Drive
+                      </button>
                       <div className="px-2.5 pb-1 pt-0.5 text-[10px] text-slate-400">
-                        Tip: any song or video sent in this chat has a Play together button under it.
+                        Tip: any song, video or Drive link sent in this chat gets a Play together button under it.
                       </div>
                     </div>
                   </>
@@ -1292,6 +1338,25 @@ function FriendsChat() {
 
             {/* live voice call strip (moves into the Together overlay when open) */}
             {!tg && <VoiceCallBar call={call} partnerName={fname(active).split(' ')[0]} />}
+
+            {/* incoming watch-together invite — accept to join in sync */}
+            {tgInvite && !tg && (
+              <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+                className="mb-2 flex items-center gap-2.5 rounded-2xl bg-purple-500/15 px-3.5 py-2.5">
+                <MonitorPlay size={16} className="shrink-0 animate-pulse text-purple-500" />
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  {fname(active).split(' ')[0]} started watching{('name' in tgInvite && tgInvite.name) ? ` ${tgInvite.name}` : ''} — join?
+                </span>
+                <button onClick={() => { setTg(tgInvite); setTgInvite(null) }}
+                  className="rounded-full bg-gradient-to-r from-brand-500 to-purple-500 px-3.5 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
+                  Join
+                </button>
+                <button onClick={() => setTgInvite(null)} aria-label="Dismiss invite"
+                  className="rounded-full p-1.5 text-slate-400 hover:bg-slate-500/10">
+                  <X size={15} />
+                </button>
+              </motion.div>
+            )}
 
             <div className="flex-1 space-y-2 overflow-y-auto pr-1">
               {ttl > 0 && (
@@ -1391,7 +1456,7 @@ function FriendsChat() {
                     <SwipeReply onReply={() => setReplyTo(m)}>
                     <div className={cn('group flex items-end gap-1.5', mine ? 'justify-end' : 'justify-start')}>
                     {!mine && <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} size={7} />}
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex min-w-0 items-center gap-1.5">
                       {/* always visible on touch — hover-reveal only works on
                           desktop, so a hidden control is unreachable on Android */}
                       {mine && (
@@ -1406,7 +1471,28 @@ function FriendsChat() {
                           <Reply size={14} />
                         </button>
                       )}
-                      {m.kind === 'focus' ? (
+                      {m.kind === 'tg' ? (
+                        <div className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
+                          <div className="max-w-[78vw] rounded-2xl border border-brand-400/40 bg-gradient-to-br from-brand-500/15 to-purple-500/10 p-3.5 sm:max-w-md">
+                            <div className="flex items-center gap-2.5">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-purple-500 text-white shadow">
+                                <MonitorPlay size={19} />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-sm font-extrabold text-slate-900 dark:text-white">Watch together</div>
+                                <div className="truncate text-xs text-slate-500 dark:text-slate-400">{m.body.replace(/^🎬\s*/, '')}</div>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => { const s = tgSessionFrom(m); if (s) openTogether(s, { skipCard: true }) }}
+                              disabled={!tgSessionFrom(m)}
+                              className="mt-2.5 w-full rounded-xl bg-gradient-to-r from-brand-500 to-purple-500 py-2 text-sm font-black uppercase tracking-wide text-white shadow transition active:scale-95 disabled:opacity-50">
+                              ▶ Join
+                            </button>
+                          </div>
+                          <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}{tick}</span>
+                        </div>
+                      ) : m.kind === 'focus' ? (
                         <div className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
                           <div className="max-w-[78vw] rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-400/15 to-orange-500/10 p-3.5 sm:max-w-md">
                             <div className="flex items-center gap-2.5">
@@ -1438,7 +1524,7 @@ function FriendsChat() {
                         onPointerCancel={pressCancel}
                         onPointerLeave={pressCancel}
                         onDoubleClick={() => setReactFor(m)}
-                        className={cn('max-w-[78vw] select-none sm:max-w-md rounded-2xl text-sm',
+                        className={cn('min-w-0 max-w-[70vw] select-none break-words [overflow-wrap:anywhere] sm:max-w-md rounded-2xl text-sm',
                         m.kind === 'image' && m.file_url ? 'overflow-hidden p-1' : 'px-3.5 py-2',
                         mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
                              : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
@@ -1499,18 +1585,22 @@ function FriendsChat() {
                     </SwipeReply>
                     {/* Play/Watch together chip for YouTube links and media */}
                     {(() => {
-                      const yt = m.kind !== 'image' && m.kind !== 'audio' && m.kind !== 'file' ? ytIdFrom(m.body) : null
+                      const isText = m.kind !== 'image' && m.kind !== 'audio' && m.kind !== 'file' && m.kind !== 'tg'
+                      const yt = isText ? ytIdFrom(m.body) : null
+                      const drive = isText && !yt ? driveIdFrom(m.body) : null
                       const playable = playableKind(m.kind, m.file_name)
-                      if (!yt && !playable) return null
+                      if (!yt && !drive && !playable) return null
                       return (
                         <div className={cn('mt-0.5 flex pb-0.5', mine ? 'justify-end pr-1' : 'justify-start pl-10')}>
                           <button
                             onClick={() => openTogether(yt
                               ? { kind: 'youtube', videoId: yt }
-                              : { kind: 'media', msgId: m.id, name: m.file_name ?? undefined, isVideo: playable === 'video' })}
+                              : drive
+                                ? { kind: 'drive', fileId: drive, name: 'a Drive file' }
+                                : { kind: 'media', msgId: m.id, name: m.file_name ?? undefined, isVideo: playable === 'video' })}
                             className="flex items-center gap-1.5 rounded-full bg-brand-500/10 px-2.5 py-1 text-[11px] font-bold text-brand-600 transition hover:bg-brand-500/20 active:scale-95 dark:text-brand-300">
                             <Play size={11} className="fill-current" />
-                            {yt ? 'Watch together' : playable === 'audio' ? 'Listen together' : 'Play together'}
+                            {yt || drive ? 'Watch together' : playable === 'audio' ? 'Listen together' : 'Play together'}
                           </button>
                         </div>
                       )
@@ -1635,34 +1725,69 @@ function FriendsChat() {
       </GlassCard>
       {lightbox && <Lightbox src={lightbox.src} name={lightbox.name} onClose={() => setLightbox(null)} />}
 
-      {/* ---- Together: paste a YouTube link ---- */}
-      {ytPrompt && active && (
-        <div className="fixed inset-0 z-[75] flex items-center justify-center p-6">
-          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setYtPrompt(false)} />
-          <div className="glass-strong relative w-full max-w-sm rounded-3xl p-5">
-            <div className="mb-3 flex items-center gap-2 font-bold text-slate-900 dark:text-white">
-              <Clapperboard size={18} className="text-red-500" /> Watch together
-            </div>
-            <Input autoFocus placeholder="Paste a YouTube link…" value={ytUrl}
-              onChange={(e) => setYtUrl(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Enter') return
-                const id = ytIdFrom(ytUrl)
-                if (id) openTogether({ kind: 'youtube', videoId: id })
-              }} />
-            {ytUrl && !ytIdFrom(ytUrl) && (
-              <p className="mt-1.5 text-xs text-rose-500">That doesn't look like a YouTube link yet.</p>
-            )}
-            <div className="mt-3 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setYtPrompt(false)}>Cancel</Button>
-              <Button disabled={!ytIdFrom(ytUrl)}
-                onClick={() => { const id = ytIdFrom(ytUrl); if (id) openTogether({ kind: 'youtube', videoId: id }) }}>
-                Start for both
-              </Button>
+      {/* ---- Together: paste a YouTube or Google Drive link ---- */}
+      {linkPrompt && active && (() => {
+        const parse = linkPrompt === 'yt' ? ytIdFrom : driveIdFrom
+        const start = () => {
+          const id = parse(ytUrl)
+          if (!id) return
+          openTogether(linkPrompt === 'yt'
+            ? { kind: 'youtube', videoId: id }
+            : { kind: 'drive', fileId: id, name: 'a Drive file' })
+        }
+        return (
+          <div className="fixed inset-0 z-[75] flex items-center justify-center p-4 sm:p-6">
+            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setLinkPrompt(null)} />
+            <div className="glass-strong relative w-full max-w-sm rounded-3xl p-5">
+              <div className="mb-1 flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+                {linkPrompt === 'yt'
+                  ? <><Clapperboard size={18} className="text-red-500" /> Watch YouTube together</>
+                  : <><FileText size={18} className="text-amber-500" /> Play from Google Drive</>}
+              </div>
+              {linkPrompt === 'drive' && (
+                <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+                  The file must be shared as “anyone with the link”.
+                </p>
+              )}
+              <div className="flex gap-2">
+                <Input autoFocus placeholder={linkPrompt === 'yt' ? 'YouTube link…' : 'Google Drive link…'} value={ytUrl}
+                  onChange={(e) => { setYtUrl(e.target.value); setPasteFail(false) }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') start() }} />
+                {/* Android WebViews hide the long-press paste menu half the
+                    time — a real Paste button reads the clipboard directly */}
+                <Button variant="soft" className="shrink-0"
+                  onClick={async () => {
+                    try {
+                      const t = await navigator.clipboard.readText()
+                      if (t?.trim()) {
+                        setYtUrl(t.trim())
+                        setPasteFail(false)
+                      } else setPasteFail(true)
+                    } catch {
+                      setPasteFail(true)
+                    }
+                  }}>
+                  Paste
+                </Button>
+              </div>
+              {pasteFail && (
+                <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+                  Couldn't read the clipboard — long-press the box and tap Paste instead.
+                </p>
+              )}
+              {ytUrl && !parse(ytUrl) && (
+                <p className="mt-1.5 text-xs text-rose-500">
+                  That doesn't look like a {linkPrompt === 'yt' ? 'YouTube' : 'Google Drive'} link yet.
+                </p>
+              )}
+              <div className="mt-3 flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setLinkPrompt(null)}>Cancel</Button>
+                <Button disabled={!parse(ytUrl)} onClick={start}>Start for both</Button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* ---- Together: synced playback overlay (call strip rides along) ---- */}
       {tg && active && user && (
