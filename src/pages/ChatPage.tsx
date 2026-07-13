@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { smartReplies } from '../lib/ai'
@@ -15,6 +15,7 @@ import { useOnlineCheck } from '../hooks/useOnline'
 import { GlassCard, Page, Input, Button, Empty, ProgressRing } from '../components/ui'
 import { cn } from '../lib/utils'
 import { chatMediaPath, deleteMediaBlob, getMediaBlob, objectUrlFor, putMediaBlob } from '../lib/mediaStore'
+import { TogetherOverlay, VoiceCallBar, useVoiceCall, ytIdFrom, playableKind, type TogetherSession, type TgPayload, type RtcPayload } from '../components/Together'
 
 type DMessage = {
   id: string
@@ -375,6 +376,23 @@ function FriendsChat() {
   const [ttlMenuOpen, setTtlMenuOpen] = useState(false)
   const [duo, setDuo] = useState<DuoState | null>(null)
   const [duoMenuOpen, setDuoMenuOpen] = useState(false)
+  // Together: synced playback + voice call
+  const [tg, setTg] = useState<TogetherSession | null>(null)
+  const [tgMenuOpen, setTgMenuOpen] = useState(false)
+  const [ytPrompt, setYtPrompt] = useState(false)
+  const [ytUrl, setYtUrl] = useState('')
+  const tgOverlayHandler = useRef<(p: TgPayload) => void>(() => {})
+  const sendTg = (p: Omit<TgPayload, 'from'>) => {
+    if (user) channelRef.current?.send({ type: 'broadcast', event: 'tg', payload: { ...p, from: user.id } })
+  }
+  const call = useVoiceCall({
+    meId: user?.id,
+    sendRtc: (p) => {
+      if (user) channelRef.current?.send({ type: 'broadcast', event: 'rtc', payload: { ...p, from: user.id } })
+    },
+  })
+  const callRef = useRef(call)
+  useEffect(() => { callRef.current = call })
   const [, setDuoTick] = useState(0)
   const duoRef = useRef<DuoState | null>(null)
   useEffect(() => { duoRef.current = duo })
@@ -575,6 +593,20 @@ function FriendsChat() {
       .on('broadcast', { event: 'ttl' }, ({ payload }) => {
         setTtl((payload as { seconds: number }).seconds)
       })
+      .on('broadcast', { event: 'tg' }, ({ payload }) => {
+        const p = payload as TgPayload
+        if (p.from === user.id) return
+        if (p.a === 'open') {
+          if (p.kind === 'youtube' && p.videoId) setTg({ kind: 'youtube', videoId: p.videoId })
+          if (p.kind === 'media' && p.msgId) setTg({ kind: 'media', msgId: p.msgId, name: p.name, isVideo: p.isVideo })
+          navigator.vibrate?.(20)
+        }
+        if (p.a === 'close') setTg(null)
+        if (p.a === 'state') tgOverlayHandler.current(p)
+      })
+      .on('broadcast', { event: 'rtc' }, ({ payload }) => {
+        callRef.current.handleRtc(payload as RtcPayload)
+      })
       .on('broadcast', { event: 'focus' }, ({ payload }) => {
         const p = payload as { a: 'start' | 'quit' | 'done'; from: string; start?: number; min?: number }
         if (p.from === user.id) return
@@ -647,6 +679,32 @@ function FriendsChat() {
     // instant push to the other side — socket.io first, channel broadcast too
     getSocket()?.emit('dm', real)
     channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
+  }
+
+  // ---- Together: synced music / video + voice call ----
+
+  function openTogether(s: TogetherSession) {
+    setTgMenuOpen(false)
+    setYtPrompt(false)
+    setTg(s)
+    sendTg({ a: 'open', kind: s.kind, ...(s.kind === 'youtube' ? { videoId: s.videoId } : { msgId: s.msgId, name: s.name, isVideo: s.isVideo }) })
+  }
+
+  /** Resolve a chat attachment to a playable URL — device vault first. */
+  async function resolveTgMedia(msgId: string): Promise<string | null> {
+    const m = messages.find((x) => x.id === msgId)
+    const cached = await getMediaBlob(msgId)
+    if (cached) return objectUrlFor(msgId, cached)
+    if (!m?.file_url || m.media_state === 'purged') return null
+    try {
+      const r = await fetch(m.file_url)
+      if (!r.ok) return null
+      const blob = await r.blob()
+      await putMediaBlob(msgId, blob)
+      return objectUrlFor(msgId, blob)
+    } catch {
+      return m.file_url
+    }
   }
 
   // ---- Focus Together: a live synced focus session for both friends ----
@@ -1149,8 +1207,36 @@ function FriendsChat() {
                   </>
                 )
               })()}
-              {/* Focus Together — invite this friend into a live synced session */}
+              {/* Together — synced YouTube / music + live voice call */}
               <div className="relative ml-auto">
+                <button onClick={() => setTgMenuOpen((o) => !o)} aria-label="Together menu"
+                  className={cn('rounded-full p-2 transition hover:bg-slate-500/10', tg || call.state !== 'idle' ? 'text-brand-500' : 'text-slate-400')}>
+                  <MonitorPlay size={18} />
+                </button>
+                {tgMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setTgMenuOpen(false)} />
+                    <div className="glass-strong absolute right-0 z-50 mt-1 w-56 rounded-2xl p-1.5">
+                      <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Together
+                      </div>
+                      <button onClick={() => { setTgMenuOpen(false); void call.startCall() }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
+                        <Phone size={15} className="text-emerald-500" /> Voice call
+                      </button>
+                      <button onClick={() => { setTgMenuOpen(false); setYtUrl(''); setYtPrompt(true) }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
+                        <Clapperboard size={15} className="text-red-500" /> Watch YouTube together
+                      </button>
+                      <div className="px-2.5 pb-1 pt-0.5 text-[10px] text-slate-400">
+                        Tip: any song or video sent in this chat has a Play together button under it.
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              {/* Focus Together — invite this friend into a live synced session */}
+              <div className="relative">
                 <button onClick={() => setDuoMenuOpen((o) => !o)} aria-label="Focus together"
                   className="rounded-full p-2 text-amber-500 transition hover:bg-amber-400/15">
                   <Zap size={18} />
@@ -1203,6 +1289,9 @@ function FriendsChat() {
                 )}
               </div>
             </div>
+
+            {/* live voice call strip (moves into the Together overlay when open) */}
+            {!tg && <VoiceCallBar call={call} partnerName={fname(active).split(' ')[0]} />}
 
             <div className="flex-1 space-y-2 overflow-y-auto pr-1">
               {ttl > 0 && (
@@ -1408,6 +1497,24 @@ function FriendsChat() {
                     </div>
                     </div>
                     </SwipeReply>
+                    {/* Play/Watch together chip for YouTube links and media */}
+                    {(() => {
+                      const yt = m.kind !== 'image' && m.kind !== 'audio' && m.kind !== 'file' ? ytIdFrom(m.body) : null
+                      const playable = playableKind(m.kind, m.file_name)
+                      if (!yt && !playable) return null
+                      return (
+                        <div className={cn('mt-0.5 flex pb-0.5', mine ? 'justify-end pr-1' : 'justify-start pl-10')}>
+                          <button
+                            onClick={() => openTogether(yt
+                              ? { kind: 'youtube', videoId: yt }
+                              : { kind: 'media', msgId: m.id, name: m.file_name ?? undefined, isVideo: playable === 'video' })}
+                            className="flex items-center gap-1.5 rounded-full bg-brand-500/10 px-2.5 py-1 text-[11px] font-bold text-brand-600 transition hover:bg-brand-500/20 active:scale-95 dark:text-brand-300">
+                            <Play size={11} className="fill-current" />
+                            {yt ? 'Watch together' : playable === 'audio' ? 'Listen together' : 'Play together'}
+                          </button>
+                        </div>
+                      )
+                    })()}
                     {/* reaction chips, WhatsApp-style under the bubble */}
                     {m.reactions && Object.keys(m.reactions).length > 0 && (
                       <div className={cn('-mt-1 flex gap-1 pb-0.5', mine ? 'justify-end pr-1' : 'justify-start pl-10')}>
@@ -1527,6 +1634,49 @@ function FriendsChat() {
         )}
       </GlassCard>
       {lightbox && <Lightbox src={lightbox.src} name={lightbox.name} onClose={() => setLightbox(null)} />}
+
+      {/* ---- Together: paste a YouTube link ---- */}
+      {ytPrompt && active && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setYtPrompt(false)} />
+          <div className="glass-strong relative w-full max-w-sm rounded-3xl p-5">
+            <div className="mb-3 flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+              <Clapperboard size={18} className="text-red-500" /> Watch together
+            </div>
+            <Input autoFocus placeholder="Paste a YouTube link…" value={ytUrl}
+              onChange={(e) => setYtUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                const id = ytIdFrom(ytUrl)
+                if (id) openTogether({ kind: 'youtube', videoId: id })
+              }} />
+            {ytUrl && !ytIdFrom(ytUrl) && (
+              <p className="mt-1.5 text-xs text-rose-500">That doesn't look like a YouTube link yet.</p>
+            )}
+            <div className="mt-3 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setYtPrompt(false)}>Cancel</Button>
+              <Button disabled={!ytIdFrom(ytUrl)}
+                onClick={() => { const id = ytIdFrom(ytUrl); if (id) openTogether({ kind: 'youtube', videoId: id }) }}>
+                Start for both
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---- Together: synced playback overlay (call strip rides along) ---- */}
+      {tg && active && user && (
+        <TogetherOverlay
+          session={tg}
+          meId={user.id}
+          partnerName={fname(active).split(' ')[0]}
+          sendTg={sendTg}
+          registerTgHandler={(fn) => { tgOverlayHandler.current = fn }}
+          resolveMediaUrl={resolveTgMedia}
+          onClose={() => setTg(null)}
+          callNode={<div className="px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"><VoiceCallBar call={call} partnerName={fname(active).split(' ')[0]} /></div>}
+        />
+      )}
 
       {/* ---- Focus Together: live synced session overlay ---- */}
       {duo && active && (() => {
