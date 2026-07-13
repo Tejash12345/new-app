@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { smartReplies } from '../lib/ai'
@@ -35,6 +35,18 @@ type DMessage = {
   media_state?: 'stored' | 'delivered' | 'purged'
   // one emoji per person: {"<user_id>": "❤️"}
   reactions?: Record<string, string>
+  // disappearing messages: set when the chat's shared timer was on at send
+  expires_at?: string | null
+}
+
+const TTL_OPTIONS = [
+  { label: 'Off', s: 0 },
+  { label: '24 hours', s: 86_400 },
+  { label: '7 days', s: 604_800 },
+  { label: '90 days', s: 7_776_000 },
+]
+function ttlLabel(s: number) {
+  return TTL_OPTIONS.find((o) => o.s === s)?.label.toLowerCase() ?? `${s}s`
 }
 
 const REACTION_SET = ['❤️', '😂', '👍', '😮', '😢', '🔥']
@@ -331,6 +343,8 @@ function FriendsChat() {
   const [flashId, setFlashId] = useState<string | null>(null)
   const [reactFor, setReactFor] = useState<DMessage | null>(null)
   const [peerReadAt, setPeerReadAt] = useState<string | null>(null)
+  const [ttl, setTtl] = useState(0)
+  const [ttlMenuOpen, setTtlMenuOpen] = useState(false)
   const press = useRef<{ t: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null)
   const lastReadSent = useRef(0)
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -487,6 +501,15 @@ function FriendsChat() {
       .limit(200)
       .then(({ data }) => { if (!cancelled) setMessages(((data as DMessage[]) ?? []).reverse()) })
 
+    // shared disappearing-messages timer for this pair
+    setTtl(0)
+    setTtlMenuOpen(false)
+    {
+      const [a, b] = [user.id, active.friend_id].sort()
+      supabase.from('dm_pairs').select('ttl_seconds').eq('a', a).eq('b', b).maybeSingle()
+        .then(({ data }) => { if (!cancelled && data) setTtl(data.ttl_seconds) }, () => {})
+    }
+
     // read receipts: where has THEY read up to, and tell them where I have
     setPeerReadAt(null)
     supabase.from('dm_reads').select('last_read_at')
@@ -516,6 +539,9 @@ function FriendsChat() {
         const p = payload as { from: string; at: string }
         if (p.from === active.friend_id) setPeerReadAt(p.at)
       })
+      .on('broadcast', { event: 'ttl' }, ({ payload }) => {
+        setTtl((payload as { seconds: number }).seconds)
+      })
       .subscribe()
     channelRef.current = channel
     markRead()
@@ -542,7 +568,7 @@ function FriendsChat() {
     setInput('')
     setSuggestions([])
     setSendError(null)
-    const reply = replyFields()
+    const reply = { ...replyFields(), ...expiryFields() }
     setReplyTo(null)
     const optimistic: DMessage = {
       id: `tmp-${Date.now()}`, sender_id: user.id, recipient_id: active.friend_id,
@@ -553,7 +579,7 @@ function FriendsChat() {
       .from('direct_messages')
       .insert({ sender_id: user.id, recipient_id: active.friend_id, body, ...reply })
       .select().single()
-    if (error && 'reply_to' in reply && /reply_|column|schema/i.test(error.message)) {
+    if (error && Object.keys(reply).length > 0 && /reply_|expires_at|column|schema/i.test(error.message)) {
       // reply columns not migrated yet — deliver the message without the
       // quote instead of losing it, and point at the missing upgrade
       ;({ data, error } = await supabase
@@ -578,6 +604,46 @@ function FriendsChat() {
     getSocket()?.emit('dm', real)
     channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
   }
+
+  /** Change the shared disappearing-messages timer — both sides see it instantly. */
+  async function changeTtl(s: number) {
+    if (!user || !active) return
+    setTtlMenuOpen(false)
+    setTtl(s)
+    const [a, b] = [user.id, active.friend_id].sort()
+    await supabase.from('dm_pairs').upsert({ a, b, ttl_seconds: s, updated_by: user.id, updated_at: new Date().toISOString() })
+      .then(() => {}, () => { /* pre-migration DB — timer just won't stick */ })
+    channelRef.current?.send({ type: 'broadcast', event: 'ttl', payload: { seconds: s, from: user.id } })
+  }
+
+  /** expires_at for a message sent right now (empty when the timer is off). */
+  function expiryFields() {
+    return ttl > 0 ? { expires_at: new Date(Date.now() + ttl * 1000).toISOString() } : {}
+  }
+
+  // hide expired messages immediately; the 20s presence tick re-runs this
+  const visible = messages.filter((m) => !m.expires_at || new Date(m.expires_at).getTime() > Date.now())
+
+  // physical cleanup of expired messages — either side may delete them
+  // (upgrade-32 policy), including bucket files and the local media vault
+  useEffect(() => {
+    if (!user || !active) return
+    const expired = messages.filter((m) => m.expires_at && new Date(m.expires_at).getTime() <= Date.now())
+    if (!expired.length) return
+    supabase.from('direct_messages').delete()
+      .lt('expires_at', new Date().toISOString())
+      .or(`and(sender_id.eq.${user.id},recipient_id.eq.${active.friend_id}),and(sender_id.eq.${active.friend_id},recipient_id.eq.${user.id})`)
+      .then(() => {}, () => {})
+    for (const m of expired) {
+      if (m.file_url && m.sender_id === user.id) {
+        const path = chatMediaPath(m.file_url)
+        if (path) supabase.storage.from('chat-media').remove([path]).then(() => {}, () => {})
+      }
+      void deleteMediaBlob(m.id)
+    }
+    setMessages((list) => list.filter((m) => !expired.some((e) => e.id === m.id)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, user?.id, active?.friend_id])
 
   /** Tell the other side (and the DB) how far I've read — throttled. */
   function markRead() {
@@ -729,7 +795,7 @@ function FriendsChat() {
       return
     }
     const { data: pub } = supabase.storage.from('chat-media').getPublicUrl(path)
-    const reply = replyFields()
+    const reply = { ...replyFields(), ...expiryFields() }
     setReplyTo(null)
     const row = {
       sender_id: user.id, recipient_id: active.friend_id,
@@ -740,7 +806,7 @@ function FriendsChat() {
       .from('direct_messages')
       .insert({ ...row, ...reply })
       .select().single()
-    if (error && 'reply_to' in reply && /reply_|column|schema/i.test(error.message)) {
+    if (error && Object.keys(reply).length > 0 && /reply_|expires_at|column|schema/i.test(error.message)) {
       ;({ data, error } = await supabase.from('direct_messages').insert(row).select().single())
     }
     setUploading(false)
@@ -967,16 +1033,50 @@ function FriendsChat() {
                   </>
                 )
               })()}
+              {/* disappearing-messages timer — shared by both sides of the chat */}
+              <div className="relative ml-auto">
+                <button onClick={() => setTtlMenuOpen((o) => !o)} aria-label="Disappearing messages"
+                  className={cn('rounded-full p-2 transition hover:bg-slate-500/10', ttl > 0 ? 'text-brand-500' : 'text-slate-400')}>
+                  <Timer size={18} />
+                </button>
+                {ttlMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setTtlMenuOpen(false)} />
+                    <div className="glass-strong absolute right-0 z-50 mt-1 w-52 rounded-2xl p-1.5">
+                      <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Disappearing messages
+                      </div>
+                      {TTL_OPTIONS.map((o) => (
+                        <button key={o.s} onClick={() => changeTtl(o.s)}
+                          className={cn('flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-sm font-semibold transition hover:bg-slate-500/10',
+                            ttl === o.s ? 'text-brand-500' : 'text-slate-700 dark:text-slate-200')}>
+                          {o.label}{ttl === o.s && <span>✓</span>}
+                        </button>
+                      ))}
+                      <div className="px-2.5 pb-1 pt-0.5 text-[10px] text-slate-400">
+                        Applies to new messages, for both of you.
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className="flex-1 space-y-2 overflow-y-auto pr-1">
-              {messages.length === 0 ? (
+              {ttl > 0 && (
+                <div className="flex justify-center py-1">
+                  <span className="flex items-center gap-1.5 rounded-full bg-brand-500/10 px-3 py-1 text-[11px] font-semibold text-brand-500">
+                    <Timer size={11} /> New messages disappear after {ttlLabel(ttl)}
+                  </span>
+                </div>
+              )}
+              {visible.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-center text-sm text-slate-400">
                   Say hi to {fname(active).split(' ')[0]}! 👋
                 </div>
-              ) : messages.map((m, i) => {
+              ) : visible.map((m, i) => {
                 const mine = m.sender_id === user?.id
-                const time = msgTime(m.created_at)
+                const time = (m.expires_at ? '⏱ ' : '') + msgTime(m.created_at)
                 // WhatsApp ticks on my bubbles: ✓ sent → ✓✓ once they read it
                 const read = mine && !!peerReadAt && new Date(m.created_at) <= new Date(peerReadAt)
                 const tick = mine && !m.id.startsWith('tmp-')
@@ -1001,7 +1101,7 @@ function FriendsChat() {
                 )
                 return (
                   <Fragment key={m.id}>
-                    {isNewDay(messages[i - 1]?.created_at, m.created_at) && (
+                    {isNewDay(visible[i - 1]?.created_at, m.created_at) && (
                       <div className="flex justify-center py-1.5">
                         <span className="rounded-full bg-slate-500/10 px-3 py-1 text-[11px] font-semibold text-slate-500 dark:bg-white/10 dark:text-slate-300">
                           {dayLabel(m.created_at)}
