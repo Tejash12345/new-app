@@ -624,8 +624,12 @@ function FriendsChat() {
           navigator.vibrate?.([40, 40, 40])
         }
         if (p.a === 'close') setTgInvite(null)
-        // forward sync, emotes and join/leave presence into the open overlay
-        if (p.a === 'state' || p.a === 'emote' || p.a === 'join' || p.a === 'close') tgOverlayHandler.current(p)
+        // forward sync, emotes and join/leave presence into the open overlay;
+        // never let an overlay error break the realtime pipeline (a thrown
+        // handler killed message processing in prod)
+        if (p.a === 'state' || p.a === 'emote' || p.a === 'join' || p.a === 'close') {
+          try { tgOverlayHandler.current(p) } catch { /* overlay mid-boot */ }
+        }
       })
       .on('broadcast', { event: 'focus' }, ({ payload }) => {
         const p = payload as { a: 'start' | 'quit' | 'done'; from: string; start?: number; min?: number }

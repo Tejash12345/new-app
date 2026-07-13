@@ -281,9 +281,10 @@ export function TogetherOverlay({
   useEffect(() => {
     if (session.kind !== 'youtube') return
     let dead = false
+    let player: YTPlayer | null = null
     void loadYouTubeApi().then(() => {
       if (dead || !window.YT) return
-      ytRef.current = new window.YT.Player('tg-yt', {
+      player = new window.YT.Player('tg-yt', {
         videoId: session.videoId,
         width: '100%',
         height: '100%',
@@ -292,6 +293,26 @@ export function TogetherOverlay({
         // sync are the ones from OUR transport bar below
         playerVars: { playsinline: 1, rel: 0, controls: 0, disablekb: 1, origin: window.location.origin },
         events: {
+          // CRITICAL: expose the player only when its API methods actually
+          // exist — sync events arriving during boot were calling
+          // getPlayerState on a half-built object and crashing (prod trace)
+          onReady: () => {
+            if (dead || !player) return
+            ytRef.current = player
+            // partner already watching? catch up muted right away
+            const pend = pendingState.current
+            if (needsTapRef.current && pend?.playing) {
+              iDrive.current = false
+              applyingRemote.current = Date.now() + ECHO_MS
+              expectEcho(true)
+              const exp = pend.t + (Date.now() - pend.at) / 1000
+              player.mute()
+              if (exp > 1) player.seekTo(exp, true)
+              player.playVideo()
+              setNeedsTap(false)
+              setSoundGate(true)
+            }
+          },
           onStateChange: (e: { data: number }) => {
             if (!window.YT) return
             setUiPlaying(e.data === window.YT.PlayerState.PLAYING)
@@ -301,10 +322,11 @@ export function TogetherOverlay({
     })
     return () => {
       dead = true
-      ytRef.current?.destroy()
       ytRef.current = null
+      try { player?.destroy() } catch { /* player died with the iframe */ }
     }
-  }, [session.kind, session.kind === 'youtube' ? session.videoId : '', broadcastState])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.kind, session.kind === 'youtube' ? session.videoId : ''])
 
   // chat-attachment player (from the device vault)
   useEffect(() => {
