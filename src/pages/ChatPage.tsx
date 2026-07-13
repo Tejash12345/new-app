@@ -903,7 +903,7 @@ function FriendsChat() {
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Sparkles size={14} className="shrink-0 text-brand-500" />
                 {suggestions.map((s) => (
-                  <button key={s} type="button" onClick={() => send(s)}
+                  <button key={s} type="button" onPointerDown={(e) => e.preventDefault()} onClick={() => send(s)}
                     className="max-w-full truncate rounded-full border border-brand-400/40 bg-brand-500/10 px-3 py-1.5 text-xs font-semibold text-brand-600 transition hover:bg-brand-500/20 dark:text-brand-300">
                     {s}
                   </button>
@@ -920,7 +920,7 @@ function FriendsChat() {
                   </div>
                   <div className="truncate text-xs text-slate-500 dark:text-slate-300">{snippetOf(replyTo)}</div>
                 </div>
-                <button onClick={() => setReplyTo(null)} aria-label="Cancel reply"
+                <button onPointerDown={(e) => e.preventDefault()} onClick={() => setReplyTo(null)} aria-label="Cancel reply"
                   className="shrink-0 rounded-full p-1.5 text-slate-400 hover:bg-slate-500/10">
                   <X size={15} />
                 </button>
@@ -976,6 +976,9 @@ function FriendsChat() {
                   </button>
                 </div>
                 <button
+                  // sending must not steal focus from the text input — the blur
+                  // is what closes the Android keyboard after every message
+                  onPointerDown={(e) => { if (input.trim()) e.preventDefault() }}
                   onClick={() => (input.trim() ? send() : startRecording())}
                   disabled={uploading}
                   aria-label={input.trim() ? 'Send message' : 'Record a voice message'}
@@ -1143,7 +1146,8 @@ function RoomsChat() {
         <div className="mt-3 flex gap-2">
           <Input placeholder={`Message ${activeRoom.label}…`} value={input}
             onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} maxLength={500} />
-          <Button onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
+          {/* keep focus in the input so the mobile keyboard stays open per message */}
+          <Button onPointerDown={(e) => e.preventDefault()} onClick={send} disabled={!input.trim()}><Send size={16} /></Button>
         </div>
       </GlassCard>
     </div>
