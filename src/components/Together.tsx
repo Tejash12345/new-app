@@ -492,8 +492,8 @@ export function VoiceCallBar({ call, partnerName }: {
   if (call.state === 'idle') return <audio ref={call.attachEl} autoPlay className="hidden" />
   return (
     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-      className={cn('mb-2 flex items-center gap-2.5 rounded-2xl px-3.5 py-2.5',
-        call.state === 'incoming' ? 'bg-emerald-500/15' : call.state === 'failed' ? 'bg-rose-500/10' : 'bg-brand-500/10')}>
+      className={cn('mb-2 flex items-center gap-2 rounded-2xl border bg-white px-3 py-2.5 shadow-md dark:bg-slate-900 sm:gap-2.5 sm:px-3.5',
+        call.state === 'incoming' ? 'border-emerald-400/70' : call.state === 'failed' || call.state === 'mic' ? 'border-rose-400/60' : 'border-brand-400/50')}>
       <audio ref={call.attachEl} autoPlay className="hidden" />
       <Phone size={16} className={cn(
         call.state === 'live' ? 'text-emerald-500' : call.state === 'failed' || call.state === 'mic' ? 'text-rose-500' : 'animate-pulse text-brand-500')} />

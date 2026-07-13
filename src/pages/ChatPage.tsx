@@ -287,7 +287,7 @@ function SharedPostBubble({ m, mine, onOpen }: { m: DMessage; mine: boolean; onO
   const note = m.body && !/^Shared/.test(m.body) ? m.body : null
 
   return (
-    <div className={cn('max-w-[78vw] sm:max-w-md', mine && 'flex flex-col items-end')}>
+    <div className={cn('min-w-0 max-w-full sm:max-w-md', mine && 'flex flex-col items-end')}>
       {/* optional note typed alongside the share */}
       {note && (
         <div className={cn('mb-1 rounded-2xl px-3.5 py-2 text-sm',
@@ -1266,7 +1266,7 @@ function FriendsChat() {
                 {tgMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setTgMenuOpen(false)} />
-                    <div className="glass-strong absolute right-0 z-50 mt-1 w-56 rounded-2xl p-1.5">
+                    <div className="absolute right-0 z-50 mt-1 w-56 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-white/10 dark:bg-slate-900">
                       <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
                         Together
                       </div>
@@ -1298,7 +1298,7 @@ function FriendsChat() {
                 {duoMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setDuoMenuOpen(false)} />
-                    <div className="glass-strong absolute right-0 z-50 mt-1 w-52 rounded-2xl p-1.5">
+                    <div className="absolute right-0 z-50 mt-1 w-52 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-white/10 dark:bg-slate-900">
                       <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
                         ⚡ Focus together
                       </div>
@@ -1324,7 +1324,7 @@ function FriendsChat() {
                 {ttlMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setTtlMenuOpen(false)} />
-                    <div className="glass-strong absolute right-0 z-50 mt-1 w-52 rounded-2xl p-1.5">
+                    <div className="absolute right-0 z-50 mt-1 w-52 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-white/10 dark:bg-slate-900">
                       <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
                         Disappearing messages
                       </div>
@@ -1350,17 +1350,17 @@ function FriendsChat() {
             {/* incoming watch-together invite — accept to join in sync */}
             {tgInvite && !tg && (
               <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-                className="mb-2 flex items-center gap-2.5 rounded-2xl bg-purple-500/15 px-3.5 py-2.5">
+                className="mb-2 flex items-center gap-2 rounded-2xl border border-purple-300/70 bg-white px-3 py-2.5 shadow-md dark:border-purple-400/40 dark:bg-slate-900 sm:gap-2.5 sm:px-3.5">
                 <MonitorPlay size={16} className="shrink-0 animate-pulse text-purple-500" />
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
                   {fname(active).split(' ')[0]} started watching{('name' in tgInvite && tgInvite.name) ? ` ${tgInvite.name}` : ''} — join?
                 </span>
                 <button onClick={() => { setTg(tgInvite); setTgInvite(null) }}
-                  className="rounded-full bg-gradient-to-r from-brand-500 to-purple-500 px-3.5 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
+                  className="shrink-0 rounded-full bg-gradient-to-r from-brand-500 to-purple-500 px-3.5 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
                   Join
                 </button>
                 <button onClick={() => setTgInvite(null)} aria-label="Dismiss invite"
-                  className="rounded-full p-1.5 text-slate-400 hover:bg-slate-500/10">
+                  className="shrink-0 rounded-full p-1.5 text-slate-400 hover:bg-slate-500/10">
                   <X size={15} />
                 </button>
               </motion.div>
@@ -1428,8 +1428,8 @@ function FriendsChat() {
                         <motion.div
                           initial={{ opacity: 0, scale: 0.8, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
                           transition={{ type: 'spring', damping: 20, stiffness: 380 }}
-                          className={cn('glass-strong relative z-30 mb-1',
-                            reactMore ? 'w-72 max-w-[78vw] rounded-3xl p-2' : 'flex w-fit gap-0.5 rounded-full px-2 py-1',
+                          className={cn('relative z-30 mb-1 border border-slate-200 bg-white shadow-xl dark:border-white/10 dark:bg-slate-900',
+                            reactMore ? 'w-72 max-w-[calc(100vw-2.5rem)] rounded-3xl p-2' : 'flex w-fit max-w-[calc(100vw-2.5rem)] flex-wrap gap-0.5 rounded-full px-2 py-1',
                             mine && 'ml-auto')}
                         >
                           {reactMore ? (
@@ -1480,8 +1480,8 @@ function FriendsChat() {
                         </button>
                       )}
                       {m.kind === 'tg' ? (
-                        <div className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
-                          <div className="max-w-[78vw] rounded-2xl border border-brand-400/40 bg-gradient-to-br from-brand-500/15 to-purple-500/10 p-3.5 sm:max-w-md">
+                        <div className={cn('flex min-w-0 flex-col', mine ? 'items-end' : 'items-start')}>
+                          <div className="min-w-0 max-w-full rounded-2xl border border-brand-400/40 bg-gradient-to-br from-brand-500/15 to-purple-500/10 p-3.5 sm:max-w-md">
                             <div className="flex items-center gap-2.5">
                               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-purple-500 text-white shadow">
                                 <MonitorPlay size={19} />
@@ -1501,8 +1501,8 @@ function FriendsChat() {
                           <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}{tick}</span>
                         </div>
                       ) : m.kind === 'focus' ? (
-                        <div className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
-                          <div className="max-w-[78vw] rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-400/15 to-orange-500/10 p-3.5 sm:max-w-md">
+                        <div className={cn('flex min-w-0 flex-col', mine ? 'items-end' : 'items-start')}>
+                          <div className="min-w-0 max-w-full rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-400/15 to-orange-500/10 p-3.5 sm:max-w-md">
                             <div className="flex items-center gap-2.5">
                               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow">
                                 <Zap size={19} />
@@ -1520,7 +1520,7 @@ function FriendsChat() {
                           <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}{tick}</span>
                         </div>
                       ) : m.kind === 'post' ? (
-                        <div className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
+                        <div className={cn('flex min-w-0 flex-col', mine ? 'items-end' : 'items-start')}>
                           <SharedPostBubble m={m} mine={mine} onOpen={(id) => navigate(`/feed?post=${id}`)} />
                           <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}{tick}</span>
                         </div>
@@ -1746,7 +1746,7 @@ function FriendsChat() {
         return (
           <div className="fixed inset-0 z-[75] flex items-center justify-center p-4 sm:p-6">
             <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setLinkPrompt(null)} />
-            <div className="glass-strong relative w-full max-w-sm rounded-3xl p-5">
+            <div className="relative w-full max-w-sm rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-white/10 dark:bg-slate-900">
               <div className="mb-1 flex items-center gap-2 font-bold text-slate-900 dark:text-white">
                 {linkPrompt === 'yt'
                   ? <><Clapperboard size={18} className="text-red-500" /> Watch YouTube together</>
