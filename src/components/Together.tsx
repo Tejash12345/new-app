@@ -142,6 +142,9 @@ export function TogetherOverlay({
   const [uiPlaying, setUiPlaying] = useState(false)
   const [cur, setCur] = useState(0)
   const [dur, setDur] = useState(0)
+  // while the finger drags the bar, show the scrub position and only
+  // seek+sync on release — live-seeking on every tick jerked both players
+  const [scrub, setScrub] = useState<number | null>(null)
   // how long this hangout has been running
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
@@ -197,15 +200,16 @@ export function TogetherOverlay({
         setPartnerHere(true)
         pushNotice(`🎉 ${partnerName} joined the room`)
         navigator.vibrate?.(15)
-        // greet the newcomer with our position so they sync instantly
-        if (iDrive.current) {
-          const yt = ytRef.current
-          const el = mediaRef.current
-          if (yt && window.YT && yt.getPlayerState() === window.YT.PlayerState.PLAYING) {
-            sendTgRef.current({ a: 'state', playing: true, t: yt.getCurrentTime(), at: Date.now() })
-          } else if (el && !el.paused) {
-            sendTgRef.current({ a: 'state', playing: true, t: el.currentTime, at: Date.now() })
-          }
+        // greet the newcomer with our position — playing OR paused, so they
+        // land on the right second either way
+        const yt = ytRef.current
+        const el = mediaRef.current
+        const playing = yt && window.YT
+          ? yt.getPlayerState() === window.YT.PlayerState.PLAYING
+          : el ? !el.paused : false
+        const t = yt ? yt.getCurrentTime() : el ? el.currentTime : 0
+        if ((yt || el) && (playing || t > 1)) {
+          sendTgRef.current({ a: 'state', playing, t, at: Date.now() })
         }
         return
       }
@@ -335,6 +339,8 @@ export function TogetherOverlay({
 
   /** First real tap on this device — unblocks playback and catches up to the partner. */
   function tapStart() {
+    // player still booting — ignore the tap instead of "starting" a black box
+    if (session.kind === 'youtube' && !ytRef.current) return
     setNeedsTap(false)
     const pend = pendingState.current
     const expected = pend ? (pend.playing ? pend.t + (Date.now() - pend.at) / 1000 : pend.t) : 0
@@ -344,20 +350,52 @@ export function TogetherOverlay({
       applyingRemote.current = Date.now() + ECHO_MS
       expectEcho(pend.playing)
     }
+    // if the partner is PAUSED, land on their second but stay paused too —
+    // force-playing here used to split the two sides
+    const shouldPlay = !pend || pend.playing
     const yt = ytRef.current
     if (yt) {
       if (expected > 1) yt.seekTo(expected, true)
-      yt.playVideo()
+      if (shouldPlay) yt.playVideo()
     }
     const el = mediaRef.current
     if (el) {
       if (expected > 1) el.currentTime = expected
-      void el.play().catch(() => {})
+      if (shouldPlay) void el.play().catch(() => {})
     }
     // the starter's kick-off is a real user action — tell the partner
     // (player events no longer broadcast, so this must be explicit)
     if (!pend) userAction(true, expected)
   }
+
+  // real-world phone needs: keep the screen awake while watching, and make
+  // Android's back button close the player instead of leaving the page
+  useEffect(() => {
+    type WakeSentinel = { release: () => Promise<void> }
+    let lock: WakeSentinel | null = null
+    const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<WakeSentinel> } }
+    const acquire = async () => {
+      try { lock = (await nav.wakeLock?.request('screen')) ?? null } catch { /* unsupported */ }
+    }
+    void acquire()
+    const onVis = () => { if (document.visibilityState === 'visible') void acquire() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      void lock?.release().catch(() => {})
+    }
+  }, [])
+  const closeRef = useRef(onClose)
+  useEffect(() => { closeRef.current = onClose })
+  useEffect(() => {
+    window.history.pushState({ flTogether: true }, '')
+    const onPop = () => {
+      sendTgRef.current({ a: 'close' })
+      closeRef.current()
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   // transport-bar position poll (UI only)
   useEffect(() => {
@@ -447,18 +485,30 @@ export function TogetherOverlay({
             {!needsTap && <div className="absolute inset-0 z-[5]" onClick={togglePlay} />}
             {/* our transport bar — the ONLY thing that syncs */}
             {!needsTap && (
-              <div className="absolute inset-x-0 bottom-0 z-[8] flex items-center gap-2 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pb-2 pt-7">
+              <div className="absolute inset-x-0 bottom-0 z-[8] flex items-center gap-1.5 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-2.5 pb-2 pt-7 sm:gap-2 sm:px-3">
                 <button onClick={togglePlay} aria-label={uiPlaying ? 'Pause for both' : 'Play for both'}
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-slate-900 shadow active:scale-90">
                   {uiPlaying ? '❚❚' : '▶'}
                 </button>
-                <span className="shrink-0 font-mono text-[10px] font-bold text-white/85">{fmtTime(cur)}</span>
+                <button onClick={() => seekYt(Math.max(0, cur - 10))} aria-label="Back 10 seconds"
+                  className="shrink-0 rounded-full px-1 py-1 text-[11px] font-black text-white/85 active:scale-90">
+                  ↺10
+                </button>
+                <span className="shrink-0 font-mono text-[10px] font-bold text-white/85">{fmtTime(scrub ?? cur)}</span>
                 <input
-                  type="range" min={0} max={Math.max(1, dur)} step={1} value={Math.min(cur, dur || cur)}
-                  onChange={(e) => seekYt(Number(e.target.value))}
+                  type="range" min={0} max={Math.max(1, dur)} step={1}
+                  value={Math.min(scrub ?? cur, Math.max(1, dur))}
+                  onChange={(e) => setScrub(Number(e.target.value))}
+                  onPointerUp={() => { if (scrub != null) { seekYt(scrub); setScrub(null) } }}
+                  onTouchEnd={() => { if (scrub != null) { seekYt(scrub); setScrub(null) } }}
+                  onKeyUp={() => { if (scrub != null) { seekYt(scrub); setScrub(null) } }}
                   aria-label="Seek for both"
                   className="h-1.5 min-w-0 flex-1 cursor-pointer accent-amber-400"
                 />
+                <button onClick={() => seekYt(Math.min(dur || cur + 10, cur + 10))} aria-label="Forward 10 seconds"
+                  className="shrink-0 rounded-full px-1 py-1 text-[11px] font-black text-white/85 active:scale-90">
+                  ↻10
+                </button>
                 <span className="shrink-0 font-mono text-[10px] font-bold text-white/60">{fmtTime(dur)}</span>
               </div>
             )}
