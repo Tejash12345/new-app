@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronRight, Flame, Gamepad2, Play, Star, Trophy, X, Zap } from 'lucide-react'
+import { Camera, ChevronRight, Flame, Gamepad2, Play, Star, Trophy, X, Zap } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { AiMission, Habit, StudySession, Task } from '../lib/types'
 import { GlassCard, Page, SectionTitle } from '../components/ui'
 import { cn, levelForXp, levelProgress, levelTitle, todayKey, xpForLevel } from '../lib/utils'
-import { CITY_TOTAL_BUILDINGS, cityUnlocked, startCityScene } from '../game/cityScene'
+import { CITY_TOTAL_BUILDINGS, DISTRICTS, cityUnlocked, districtsUnlocked, nextDistrict, startCityScene } from '../game/cityScene'
 import { startLionRun, type RunResult } from '../game/lionRun'
 
 /** Free run every day, +1 per completed focus session, capped. */
@@ -36,6 +36,7 @@ export function CityPage() {
   // three.js is heavy, so it loads on demand the first time the city opens;
   // if the chunk or WebGL fails, the 2D skyline takes over seamlessly
   const cityRef = useRef<HTMLCanvasElement>(null)
+  const captureRef = useRef<(() => string | null) | null>(null)
   useEffect(() => {
     const el = cityRef.current
     if (!el) return
@@ -43,19 +44,48 @@ export function CityPage() {
     const sceneOpts = { level, streak, reducedMotion }
     let stop: (() => void) | undefined
     let cancelled = false
+    const fallback2d = () => {
+      stop = startCityScene(el, sceneOpts)
+      captureRef.current = () => el.toDataURL('image/png')
+    }
     import('../game/city3d')
       .then(({ startCity3D }) => {
         if (cancelled) return
-        stop = startCity3D(el, sceneOpts) ?? startCityScene(el, sceneOpts)
+        const h = startCity3D(el, sceneOpts)
+        if (h) {
+          stop = h.stop
+          captureRef.current = h.capture
+        } else fallback2d()
       })
       .catch(() => {
-        if (!cancelled) stop = startCityScene(el, sceneOpts)
+        if (!cancelled) fallback2d()
       })
     return () => {
       cancelled = true
+      captureRef.current = null
       stop?.()
     }
   }, [level, streak])
+
+  // Photo Mode — share the current city view, or download it if sharing isn't available
+  async function photoMode() {
+    const url = captureRef.current?.()
+    if (!url) return
+    try {
+      const blob = await (await fetch(url)).blob()
+      const file = new File([blob], 'lion-city.png', { type: 'image/png' })
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'My Lion City' })
+        return
+      }
+    } catch {
+      // sharing declined or unsupported — fall through to download
+    }
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'lion-city.png'
+    a.click()
+  }
 
   const unlockedBlds = cityUnlocked(level)
   const stars = Math.min(5, Math.ceil(level / 2))
@@ -94,6 +124,8 @@ export function CityPage() {
   const [gameOpen, setGameOpen] = useState(false)
   const [runKey, setRunKey] = useState(0)
   const [result, setResult] = useState<(RunResult & { xpEarned: number; newBest: boolean }) | null>(null)
+  const [runStarted, setRunStarted] = useState(false)
+  const [runLive, setRunLive] = useState<{ score: number; coins: number } | null>(null)
   const gameRef = useRef<HTMLCanvasElement>(null)
   // keep live values readable from the engine callbacks without re-creating the engine
   const live = useRef({ runsUsed, runXpToday, best })
@@ -103,13 +135,15 @@ export function CityPage() {
 
   useEffect(() => {
     if (!gameOpen || !gameRef.current) return
-    const handle = startLionRun(gameRef.current, {
+    const el = gameRef.current
+    const callbacks = {
       onStart: () => {
+        setRunStarted(true)
         const used = live.current.runsUsed + 1
         setRunsUsed(used)
         localStorage.setItem(`fl-city-runs-${todayKey()}`, String(used))
       },
-      onOver: (r) => {
+      onOver: (r: RunResult) => {
         const capLeft = Math.max(0, MAX_RUN_XP_PER_DAY - live.current.runXpToday)
         const xpEarned = Math.min(r.coins, MAX_XP_PER_RUN, capLeft)
         if (xpEarned > 0) {
@@ -125,20 +159,40 @@ export function CityPage() {
         }
         setResult({ ...r, xpEarned, newBest })
       },
-    })
-    return handle.destroy
+      onScore: (score: number, coins: number) => setRunLive({ score, coins }),
+    }
+    // the runner is 3D (three.js, lazy chunk); the 2D engine covers no-WebGL devices
+    let destroy: (() => void) | undefined
+    let cancelled = false
+    import('../game/lionRun3d')
+      .then(({ startLionRun3D }) => {
+        if (cancelled) return
+        const h = startLionRun3D(el, callbacks)
+        destroy = h ? h.destroy : startLionRun(el, callbacks).destroy
+      })
+      .catch(() => {
+        if (!cancelled) destroy = startLionRun(el, callbacks).destroy
+      })
+    return () => {
+      cancelled = true
+      destroy?.()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameOpen, runKey])
 
   function openGame() {
     if (tokens <= 0) return
     setResult(null)
+    setRunStarted(false)
+    setRunLive(null)
     setRunKey((k) => k + 1)
     setGameOpen(true)
   }
   function runAgain() {
     if (tokens <= 0) return
     setResult(null)
+    setRunStarted(false)
+    setRunLive(null)
     setRunKey((k) => k + 1)
   }
 
@@ -146,6 +200,8 @@ export function CityPage() {
     if (unlockedBlds >= CITY_TOTAL_BUILDINGS) return 'skyline complete 👑'
     return `next building at Lv ${level + 1}`
   }, [unlockedBlds, level])
+  const districts = districtsUnlocked(level)
+  const upcoming = nextDistrict(level)
 
   return (
     <Page title="Lion City" subtitle="Your discipline, rendered as a 3D city — drag it to look around. 🌆">
@@ -177,7 +233,16 @@ export function CityPage() {
           </div>
         </div>
 
-        {/* respect bar + skyline progress */}
+        {/* photo mode */}
+        <button
+          onClick={photoMode}
+          aria-label="Photo mode — share your city"
+          className="absolute bottom-[104px] right-3 rounded-full bg-black/45 p-2.5 text-white/85 backdrop-blur-md transition hover:bg-black/65 active:scale-90"
+        >
+          <Camera size={17} />
+        </button>
+
+        {/* respect bar + skyline / district progress */}
         <div className="absolute inset-x-3 bottom-3 rounded-2xl bg-black/45 px-3.5 py-2.5 backdrop-blur-md">
           <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-[0.2em] text-white/60">
             <span>Respect — {intoLevel}/{levelSpan} XP to Lv {level + 1}</span>
@@ -191,6 +256,9 @@ export function CityPage() {
           <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.2em] text-white/60 sm:hidden">
             Skyline {unlockedBlds}/{CITY_TOTAL_BUILDINGS} · {nextUnlockLabel}
           </div>
+          <div className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.2em] text-amber-300/80">
+            Districts {districts}/{DISTRICTS.length}{upcoming && <> · {upcoming.name} opens at Lv {upcoming.level}</>}
+          </div>
         </div>
       </div>
 
@@ -203,7 +271,7 @@ export function CityPage() {
           <div className="min-w-0 flex-1">
             <div className="city-display text-xl text-slate-900 dark:text-white">LION RUN</div>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Night sprint through your skyline — jump the roadworks, grab XP orbs.
+              3D night sprint through a neon canyon — swipe between lanes, jump the barriers, grab XP orbs.
             </p>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold">
               <span className="flex items-center gap-1 text-amber-500"><Trophy size={13} /> Best {best.toLocaleString()}</span>
@@ -302,7 +370,8 @@ export function CityPage() {
       </div>
 
       <p className="text-center text-xs text-slate-400 dark:text-slate-500">
-        The skyline is built from your real XP — every level adds a building. Time of day in the city follows your clock. 🌙
+        The city is built from your real XP — every level adds a building, and whole districts open at milestones.
+        Time of day and even the weather follow your world. 🌙
       </p>
 
       {/* ---- Lion Run modal ---- */}
@@ -328,6 +397,26 @@ export function CityPage() {
 
             <div className="relative mx-3 mb-[calc(0.75rem+env(safe-area-inset-bottom))] flex-1 touch-none overflow-hidden rounded-3xl ring-1 ring-white/15">
               <canvas key={runKey} ref={gameRef} className="h-full w-full" />
+
+              {/* live score (3D runner reports through onScore) */}
+              {runLive && !result && (
+                <div className="pointer-events-none absolute right-3 top-3 text-right font-mono">
+                  <div className="text-xl font-black text-emerald-300 drop-shadow-[0_1px_0_rgba(0,0,0,0.9)]">
+                    {String(runLive.score).padStart(6, '0')}
+                  </div>
+                  <div className="text-xs font-black text-amber-300">● {runLive.coins}</div>
+                </div>
+              )}
+
+              {/* start hint */}
+              {!runStarted && !result && (
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-black/25">
+                  <div className="city-display text-3xl text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">TAP TO RUN</div>
+                  <div className="mt-2 text-xs font-semibold text-white/70">
+                    swipe ← → to change lane · tap to jump · tap again = double jump
+                  </div>
+                </div>
+              )}
 
               {/* WASTED */}
               <AnimatePresence>

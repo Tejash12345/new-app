@@ -1,18 +1,33 @@
 /**
- * Lion City in 3D — the three.js skyline behind the game hub hero.
+ * Lion City in 3D — the living open world behind the game hub.
  *
- * Same rules as the 2D fallback (cityScene.ts): the real clock drives the
- * sky, lights, neon and headlights; the user level decides how many
- * buildings have been built. The city grows outward from the plaza where
- * the low-poly lion sits, and the next locked building shows as an amber
- * wireframe with a crane so the next unlock is always visible.
+ * Everything is driven by two inputs:
+ *  - the real clock  → sky, sun/moon, stars, window lights, neon, headlights,
+ *    floodlights, fireflies… plus deterministic weather (clear/rain/storm/
+ *    snow) that rolls every few hours
+ *  - the user level  → downtown buildings unlock one by one (cityUnlocked),
+ *    and whole DISTRICTS come online at level milestones: university, park,
+ *    harbor, tech park, metro line, stadium, mountain temple, airport, neon
+ *    strip and finally the Golden Lion Tower
  *
- * Camera slowly orbits on its own; a horizontal drag steers it (vertical
- * pans stay with the page scroll — the canvas is touch-action: pan-y).
- * Returns null if WebGL isn't available so the caller can fall back to 2D.
+ * The world is deliberately animated everywhere: traffic scales with level,
+ * pedestrians walk the plaza, a metro loops its elevated track, a hot-air
+ * balloon drifts, a helicopter patrols, birds cross the sky by day, a ship
+ * works the harbor, cranes swing over the next unlock. Bloom post-processing
+ * makes night neon glow; it disables itself automatically if the device
+ * can't hold frame rate.
+ *
+ * Returns null if WebGL isn't available so the caller can fall back to the
+ * 2D skyline. The handle exposes capture() for Photo Mode.
  */
 import * as THREE from 'three'
-import { CITY_TOTAL_BUILDINGS, cityUnlocked, type CityOpts } from './cityScene'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { CITY_TOTAL_BUILDINGS, cityUnlocked, nextDistrict, type CityOpts } from './cityScene'
+import { buildLion } from './lionModel'
+
+export type City3DHandle = { stop: () => void; capture: () => string | null }
 
 // ---------- tiny seeded RNG (mulberry32) ----------
 function rng(seed: number) {
@@ -50,8 +65,18 @@ function skyAt(hour: number) {
   }
 }
 
+type Weather = 'clear' | 'rain' | 'storm' | 'snow'
+/** Deterministic weather that rolls every 3 hours — same for every visit in the slot. */
+function weatherNow(): Weather {
+  const slot = Math.floor(Date.now() / (3 * 3600 * 1000))
+  const roll = rng(slot)()
+  if (roll < 0.58) return 'clear'
+  if (roll < 0.82) return 'rain'
+  if (roll < 0.92) return 'storm'
+  return 'snow'
+}
+
 // ---------- canvas textures ----------
-/** Facade (day) + lit-window (night emissive) texture pair. */
 function facadeTextures(seed: number, tint: string) {
   const r = rng(seed)
   const day = document.createElement('canvas')
@@ -112,7 +137,7 @@ function glowSprite(color: string, size: number) {
   return sp
 }
 
-export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => void) | null {
+export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHandle | null {
   let renderer: THREE.WebGLRenderer
   try {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'low-power' })
@@ -121,17 +146,26 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
   }
   renderer.setPixelRatio(Math.min(1.75, window.devicePixelRatio || 1))
 
+  const level = opts.level
   const scene = new THREE.Scene()
-  scene.fog = new THREE.Fog(0x0, 130, 320)
-  const camera = new THREE.PerspectiveCamera(46, 1, 0.5, 600)
+  scene.fog = new THREE.Fog(0x0, 130, 380)
+  const camera = new THREE.PerspectiveCamera(46, 1, 0.5, 700)
 
-  const unlocked = cityUnlocked(opts.level)
+  const unlocked = cityUnlocked(level)
   const r = rng(20260713)
   const disposables: { dispose: () => void }[] = []
   const track = <T extends { dispose: () => void }>(x: T): T => { disposables.push(x); return x }
 
-  // ---------- sky dome (vertex-color gradient, re-tinted as the clock moves) ----------
-  const domeGeo = track(new THREE.SphereGeometry(230, 24, 12))
+  // ---------- post-processing: bloom, with an automatic kill switch ----------
+  const composer = new EffectComposer(renderer)
+  composer.addPass(new RenderPass(scene, camera))
+  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.7, 0.55)
+  composer.addPass(bloom)
+  let fxOn = localStorage.getItem('fl-city-fx') !== 'off'
+  let slowFrames = 0
+
+  // ---------- sky dome ----------
+  const domeGeo = track(new THREE.SphereGeometry(300, 24, 12))
   const domeCount = domeGeo.attributes.position.count
   domeGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(domeCount * 3), 3))
   const domeMat = track(new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false }))
@@ -141,7 +175,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     const col = domeGeo.attributes.color
     const c = new THREE.Color()
     for (let i = 0; i < domeCount; i++) {
-      const t = Math.max(0, Math.min(1, pos.getY(i) / 160))
+      const t = Math.max(0, Math.min(1, pos.getY(i) / 200))
       c.copy(low).lerp(top, t)
       col.setXYZ(i, c.r, c.g, c.b)
     }
@@ -154,25 +188,27 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
   sun.position.set(60, 90, 40)
   const plazaLamp = new THREE.PointLight(0xffc46e, 0, 60, 1.6)
   plazaLamp.position.set(0, 10, 0)
-  scene.add(ambient, sun, plazaLamp)
+  const flashLight = new THREE.DirectionalLight(0xcfe0ff, 0) // storm lightning
+  flashLight.position.set(-40, 120, -30)
+  scene.add(ambient, sun, plazaLamp, flashLight)
 
   // ---------- ground + avenues ----------
   const ground = new THREE.Mesh(
-    track(new THREE.CircleGeometry(170, 40)),
+    track(new THREE.CircleGeometry(190, 40)),
     track(new THREE.MeshLambertMaterial({ color: 0x191723 })),
   )
   ground.rotation.x = -Math.PI / 2
   scene.add(ground)
   const roadMat = track(new THREE.MeshLambertMaterial({ color: 0x121019 }))
   for (const rot of [0, Math.PI / 2]) {
-    const road = new THREE.Mesh(track(new THREE.PlaneGeometry(320, 8)), roadMat)
+    const road = new THREE.Mesh(track(new THREE.PlaneGeometry(340, 8)), roadMat)
     road.rotation.set(-Math.PI / 2, 0, rot)
     road.position.y = 0.04
     scene.add(road)
   }
   const dashMat = track(new THREE.MeshBasicMaterial({ color: 0xffb454 }))
   const dashGeo = track(new THREE.PlaneGeometry(2.2, 0.4))
-  for (let i = -12; i <= 12; i++) {
+  for (let i = -13; i <= 13; i++) {
     if (Math.abs(i) < 2) continue
     for (const rot of [0, Math.PI / 2]) {
       const dash = new THREE.Mesh(dashGeo, dashMat)
@@ -182,19 +218,12 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     }
   }
 
-  // ---------- buildings (city grows outward from the plaza) ----------
-  // daylight-plausible concrete and glass tones — the day/night ambient
-  // lighting darkens them into silhouettes after sunset on its own
+  // ---------- downtown buildings ----------
   const FACADES = ['#8d92b0', '#a3a0bd', '#7e84a6', '#b3aca4', '#95a2bd']
   const texSets = FACADES.map((tint, i) => facadeTextures(500 + i, tint))
   texSets.forEach((s) => { track(s.map); track(s.emissiveMap) })
 
-  type Bld = {
-    mesh: THREE.Mesh
-    h: number
-    order: number
-    mats: THREE.MeshLambertMaterial[]
-  }
+  type Bld = { mesh: THREE.Mesh; h: number; order: number; mats: THREE.MeshLambertMaterial[] }
   const blds: Bld[] = []
   const spots: { x: number; z: number; d: number }[] = []
   for (const gx of [-2, -1, 1, 2]) {
@@ -215,9 +244,8 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
   spots.slice(0, CITY_TOTAL_BUILDINGS).forEach((s, order) => {
     const w = 5.5 + r() * 3
     const dep = 5.5 + r() * 3
-    // tallest towers cluster around the plaza, the skyline tapers outward
     const h = 6 + r() * 10 + 26 / (1 + s.d)
-    if (order >= unlocked) return // locked — ghost handled below
+    if (order >= unlocked) return
     const set = texSets[order % texSets.length]
     const side = new THREE.MeshLambertMaterial({
       map: set.map,
@@ -233,22 +261,18 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     mesh.position.set(s.x, h / 2, s.z)
     scene.add(mesh)
     blds.push({ mesh, h, order, mats: [side] })
-    // sidewalk pad
     const pad = new THREE.Mesh(padGeo, padMat)
     pad.scale.set(w + 2, 0.5, dep + 2)
     pad.position.set(s.x, 0.25, s.z)
     scene.add(pad)
-    // rooftop props
     if (r() > 0.5) {
       const tank = new THREE.Mesh(padGeo, padMat)
       tank.scale.set(1.6, 1.6, 1.6)
       tank.position.set(s.x + w * 0.25, h + 0.8, s.z)
-      mesh.userData.props = [tank, pad]
       scene.add(tank)
     }
     if (r() > 0.55) {
-      const mastGeo = track(new THREE.CylinderGeometry(0.09, 0.09, 3))
-      const mast = new THREE.Mesh(mastGeo, padMat)
+      const mast = new THREE.Mesh(track(new THREE.CylinderGeometry(0.09, 0.09, 3)), padMat)
       mast.position.set(s.x - w * 0.2, h + 1.5, s.z)
       scene.add(mast)
       const beacon = new THREE.Mesh(
@@ -261,7 +285,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     }
   })
 
-  // ghost of the next building — amber wireframe + crane + level tag
+  // ghost of the next building — amber wireframe + swinging crane + level tag
   let craneGroup: THREE.Group | null = null
   if (unlocked < CITY_TOTAL_BUILDINGS) {
     const s = spots[unlocked]
@@ -274,9 +298,8 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     )
     edges.position.y = gh / 2
     craneGroup.add(edges)
-    const mastGeo = track(new THREE.BoxGeometry(0.4, gh + 7, 0.4))
     const craneMat = track(new THREE.MeshBasicMaterial({ color: 0xffb454, transparent: true, opacity: 0.8 }))
-    const mast = new THREE.Mesh(mastGeo, craneMat)
+    const mast = new THREE.Mesh(track(new THREE.BoxGeometry(0.4, gh + 7, 0.4)), craneMat)
     mast.position.set(gw * 0.7, (gh + 7) / 2, 0)
     craneGroup.add(mast)
     const jib = new THREE.Mesh(track(new THREE.BoxGeometry(gw * 1.6, 0.4, 0.4)), craneMat)
@@ -288,7 +311,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
       c.fillStyle = '#ffb454'
       c.shadowColor = '#ffb454'
       c.shadowBlur = 18
-      c.fillText(`LV ${opts.level + 1}`, w2 / 2, h2 / 2 + 16)
+      c.fillText(`LV ${level + 1}`, w2 / 2, h2 / 2 + 16)
     })
     tag.scale.set(9, 4.5, 1)
     tag.position.set(0, gh + 10.5, 0)
@@ -344,16 +367,14 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     scene.add(bb)
   }
 
-  // ---------- plaza: hill, acacia, low-poly lion ----------
+  // ---------- plaza: hill, acacia, the lion monument ----------
   const plaza = new THREE.Group()
   const hill = new THREE.Mesh(
     track(new THREE.SphereGeometry(7, 20, 12)),
     track(new THREE.MeshLambertMaterial({ color: 0x3c6b3f })),
   )
   hill.scale.set(1.5, 0.42, 1.5)
-  hill.position.y = 0
   plaza.add(hill)
-  // acacia
   const trunkMat = track(new THREE.MeshLambertMaterial({ color: 0x4a3220 }))
   const trunk = new THREE.Mesh(track(new THREE.CylinderGeometry(0.22, 0.34, 3.6)), trunkMat)
   trunk.position.set(-4.4, 4, 1.6)
@@ -367,53 +388,11 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
   crown.position.set(-4.9, 6, 1.6)
   plaza.add(crown)
 
-  // the lion is the plaza monument — big enough to read from the aerial
-  // camera, lit up gold after dark like a real city landmark
-  const lion = new THREE.Group()
-  const bodyMat = track(new THREE.MeshLambertMaterial({ color: 0xc98a4b, emissive: 0xffa64d, emissiveIntensity: 0 }))
-  const maneMat = track(new THREE.MeshLambertMaterial({ color: 0x7a4a1c, emissive: 0xcc7a26, emissiveIntensity: 0 }))
-  const body = new THREE.Mesh(track(new THREE.SphereGeometry(1.15, 14, 10)), bodyMat)
-  body.scale.set(1.6, 1, 1)
-  body.position.y = 1.35
-  lion.add(body)
-  const legGeo = track(new THREE.CylinderGeometry(0.22, 0.19, 1.1))
-  for (const [lx, lz] of [[-1.1, 0.5], [-1.1, -0.5], [1.1, 0.5], [1.1, -0.5]]) {
-    const leg = new THREE.Mesh(legGeo, bodyMat)
-    leg.position.set(lx, 0.55, lz)
-    lion.add(leg)
-  }
-  const headGroup = new THREE.Group()
-  const mane = new THREE.Mesh(track(new THREE.DodecahedronGeometry(1)), maneMat)
-  mane.scale.set(1, 1, 0.75)
-  headGroup.add(mane)
-  const head = new THREE.Mesh(track(new THREE.SphereGeometry(0.62, 12, 9)), bodyMat)
-  head.position.z = 0.42
-  headGroup.add(head)
-  const muzzle = new THREE.Mesh(track(new THREE.SphereGeometry(0.3, 8, 6)), track(new THREE.MeshLambertMaterial({ color: 0xe6c497 })))
-  muzzle.scale.set(1, 0.75, 0.9)
-  muzzle.position.set(0, -0.14, 0.96)
-  headGroup.add(muzzle)
-  const earGeo = track(new THREE.SphereGeometry(0.2, 6, 5))
-  for (const ex of [-0.5, 0.5]) {
-    const ear = new THREE.Mesh(earGeo, maneMat)
-    ear.position.set(ex, 0.88, 0.2)
-    headGroup.add(ear)
-  }
-  headGroup.position.set(1.7, 2.5, 0)
-  headGroup.rotation.y = Math.PI / 2 // face along +x, toward the avenue
-  lion.add(headGroup)
-  const tail = new THREE.Mesh(track(new THREE.CylinderGeometry(0.09, 0.07, 1.7)), bodyMat)
-  tail.position.set(-1.9, 1.7, 0)
-  tail.rotation.z = 0.7
-  lion.add(tail)
-  const tuft = new THREE.Mesh(track(new THREE.SphereGeometry(0.19, 6, 5)), maneMat)
-  tuft.position.set(-2.45, 2.3, 0)
-  lion.add(tuft)
-  lion.position.y = 2.6
-  lion.scale.setScalar(2.1)
-  plaza.add(lion)
+  const monument = buildLion()
+  monument.group.position.y = 2.6
+  monument.group.scale.setScalar(2.1)
+  plaza.add(monument.group)
 
-  // four plaza lamps
   const lampGlows: THREE.Sprite[] = []
   for (const [lx, lz] of [[9, 9], [-9, 9], [9, -9], [-9, -9]]) {
     const post = new THREE.Mesh(track(new THREE.CylinderGeometry(0.12, 0.12, 4.4)), padMat)
@@ -426,11 +405,307 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
   }
   scene.add(plaza)
 
-  // ---------- cars on the avenues ----------
-  const cars: { g: THREE.Group; axis: 'x' | 'z'; v: number; head: THREE.Sprite }[] = []
-  for (const [axis, colorHex] of [['z', 0xe04a5a], ['x', 0x4f6bfa]] as const) {
+  // ---------- districts (level-gated) ----------
+  const districtPos: Record<string, [number, number]> = {
+    'University District': [-62, -58],
+    'Lion Park': [-60, 55],
+    'Harbor': [95, 0],
+    'Tech Park': [60, -58],
+    'Metro Line': [0, 0],
+    'Stadium': [66, 62],
+    'Mountain Temple': [-14, -150],
+    'Airport': [12, 135],
+    'Neon Strip': [-26, 33],
+    'Golden Lion Tower': [-38, -14],
+  }
+  const lowMat = track(new THREE.MeshLambertMaterial({ color: 0x9a8f7e }))
+
+  // University — three halls + a clock tower
+  if (level >= 3) {
+    const [ux, uz] = districtPos['University District']
     const g = new THREE.Group()
-    const bodyMesh = new THREE.Mesh(track(new THREE.BoxGeometry(3.4, 1, 1.8)), track(new THREE.MeshLambertMaterial({ color: colorHex })))
+    for (const [dx, dz, w, h, d] of [[-8, 0, 10, 5, 7], [4, 4, 8, 4, 6], [3, -7, 7, 4, 6]]) {
+      const hall = new THREE.Mesh(track(new THREE.BoxGeometry(w, h, d)), lowMat)
+      hall.position.set(dx, h / 2, dz)
+      g.add(hall)
+    }
+    const tower = new THREE.Mesh(track(new THREE.BoxGeometry(3, 13, 3)), lowMat)
+    tower.position.set(-8, 6.5, 6)
+    g.add(tower)
+    const clock = textSprite((c, w2, h2) => {
+      c.fillStyle = '#f5ecd8'
+      c.beginPath()
+      c.arc(w2 / 2, h2 / 2, 52, 0, Math.PI * 2)
+      c.fill()
+      c.strokeStyle = '#2a2438'
+      c.lineWidth = 7
+      c.stroke()
+      c.beginPath()
+      c.moveTo(w2 / 2, h2 / 2)
+      c.lineTo(w2 / 2, h2 / 2 - 36)
+      c.moveTo(w2 / 2, h2 / 2)
+      c.lineTo(w2 / 2 + 26, h2 / 2 + 10)
+      c.stroke()
+    }, 128, 128)
+    clock.scale.set(2.4, 2.4, 1)
+    clock.position.set(-8, 11, 6)
+    g.add(clock)
+    g.position.set(ux, 0, uz)
+    scene.add(g)
+  }
+
+  // Lion Park — instanced trees + fireflies at night
+  let fireflyMat: THREE.PointsMaterial | null = null
+  let fireflyGeo: THREE.BufferGeometry | null = null
+  if (level >= 4) {
+    const [px, pz] = districtPos['Lion Park']
+    const lawn = new THREE.Mesh(track(new THREE.CircleGeometry(16, 20)), track(new THREE.MeshLambertMaterial({ color: 0x2f5d33 })))
+    lawn.rotation.x = -Math.PI / 2
+    lawn.position.set(px, 0.05, pz)
+    scene.add(lawn)
+    const trunkGeo = track(new THREE.CylinderGeometry(0.25, 0.35, 2.4))
+    const crownGeo = track(new THREE.ConeGeometry(1.7, 3.4, 7))
+    const trunkI = new THREE.InstancedMesh(trunkGeo, trunkMat, 12)
+    const crownI = new THREE.InstancedMesh(crownGeo, track(new THREE.MeshLambertMaterial({ color: 0x39703a })), 12)
+    const m = new THREE.Matrix4()
+    for (let i = 0; i < 12; i++) {
+      const a = r() * Math.PI * 2
+      const rad = 3 + r() * 11
+      const tx = px + Math.cos(a) * rad
+      const tz = pz + Math.sin(a) * rad
+      const sc = 0.8 + r() * 0.7
+      m.makeScale(sc, sc, sc).setPosition(tx, 1.2 * sc, tz)
+      trunkI.setMatrixAt(i, m)
+      m.makeScale(sc, sc, sc).setPosition(tx, (2.4 + 1.4) * sc, tz)
+      crownI.setMatrixAt(i, m)
+    }
+    scene.add(trunkI, crownI)
+    fireflyGeo = track(new THREE.BufferGeometry())
+    const fp = new Float32Array(30 * 3)
+    for (let i = 0; i < 30; i++) {
+      fp[i * 3] = px + (r() - 0.5) * 26
+      fp[i * 3 + 1] = 1 + r() * 3
+      fp[i * 3 + 2] = pz + (r() - 0.5) * 26
+    }
+    fireflyGeo.setAttribute('position', new THREE.BufferAttribute(fp, 3))
+    fireflyMat = track(new THREE.PointsMaterial({
+      color: 0xd8ff7a, size: 2.4, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, sizeAttenuation: false, depthWrite: false,
+    }))
+    scene.add(new THREE.Points(fireflyGeo, fireflyMat))
+  }
+
+  // Harbor — water, dock, a working ship
+  let ship: THREE.Group | null = null
+  let shipDir = 1
+  if (level >= 5) {
+    const water = new THREE.Mesh(
+      track(new THREE.PlaneGeometry(95, 230)),
+      track(new THREE.MeshPhongMaterial({ color: 0x123a5e, specular: 0x88bbff, shininess: 90, transparent: true, opacity: 0.92 })),
+    )
+    water.rotation.x = -Math.PI / 2
+    water.position.set(118, 0.06, 0)
+    scene.add(water)
+    const dock = new THREE.Mesh(padGeo, padMat)
+    dock.scale.set(14, 1.2, 30)
+    dock.position.set(76, 0.6, 8)
+    scene.add(dock)
+    ship = new THREE.Group()
+    const hull = new THREE.Mesh(track(new THREE.BoxGeometry(9, 1.6, 3)), track(new THREE.MeshLambertMaterial({ color: 0x8a2f3c })))
+    hull.position.y = 0.9
+    ship.add(hull)
+    const cabin = new THREE.Mesh(track(new THREE.BoxGeometry(2.6, 1.8, 2.2)), track(new THREE.MeshLambertMaterial({ color: 0xe8e4da })))
+    cabin.position.set(-1.6, 2.4, 0)
+    ship.add(cabin)
+    ship.rotation.y = Math.PI / 2
+    ship.position.set(100, 0, -30)
+    scene.add(ship)
+  }
+
+  // Tech Park — mirrored towers with extra neon
+  if (level >= 8) {
+    const [tx, tz] = districtPos['Tech Park']
+    const glassMat = track(new THREE.MeshPhongMaterial({ color: 0x2e4a6e, specular: 0xaaccff, shininess: 80 }))
+    for (const [dx, dz, h] of [[-5, 0, 18], [4, 5, 14], [3, -6, 22]]) {
+      const t2 = new THREE.Mesh(track(new THREE.BoxGeometry(6, h, 6)), glassMat)
+      t2.position.set(tx + dx, h / 2, tz + dz)
+      scene.add(t2)
+    }
+    const sp = textSprite((c, w2, h2) => {
+      c.font = '900 46px "Arial Black", sans-serif'
+      c.textAlign = 'center'
+      c.fillStyle = '#4fd6ff'
+      c.shadowColor = '#4fd6ff'
+      c.shadowBlur = 24
+      c.fillText('TECH PARK', w2 / 2, h2 / 2 + 16)
+    }, 512, 128)
+    sp.scale.set(15, 3.6, 1)
+    sp.position.set(tx, 25, tz)
+    scene.add(sp)
+    neons.push(sp)
+  }
+
+  // Metro — elevated ring with a three-car train
+  const trainCars: THREE.Mesh[] = []
+  if (level >= 10) {
+    const rail = new THREE.Mesh(
+      track(new THREE.TorusGeometry(46, 0.22, 6, 90)),
+      track(new THREE.MeshLambertMaterial({ color: 0x4a4660 })),
+    )
+    rail.rotation.x = Math.PI / 2
+    rail.position.y = 7.5
+    scene.add(rail)
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2
+      const pillar = new THREE.Mesh(track(new THREE.CylinderGeometry(0.28, 0.34, 7.5)), padMat)
+      pillar.position.set(Math.cos(a) * 46, 3.75, Math.sin(a) * 46)
+      scene.add(pillar)
+    }
+    const carGeo = track(new THREE.BoxGeometry(3.4, 1.5, 1.7))
+    const carMat = track(new THREE.MeshLambertMaterial({ color: 0xd8dae6, emissive: 0xaBc4ff, emissiveIntensity: 0 }))
+    for (let i = 0; i < 3; i++) {
+      const car = new THREE.Mesh(carGeo, carMat)
+      scene.add(car)
+      trainCars.push(car)
+    }
+  }
+
+  // Stadium — bowl, pitch, floodlights
+  const floodGlows: THREE.Sprite[] = []
+  if (level >= 12) {
+    const [sx, sz] = districtPos['Stadium']
+    const bowl = new THREE.Mesh(
+      track(new THREE.TorusGeometry(9, 2.8, 8, 26)),
+      track(new THREE.MeshLambertMaterial({ color: 0xb9b2a6 })),
+    )
+    bowl.rotation.x = Math.PI / 2
+    bowl.scale.z = 1.5
+    bowl.position.set(sx, 2.1, sz)
+    scene.add(bowl)
+    const pitch = new THREE.Mesh(track(new THREE.CircleGeometry(8.2, 18)), track(new THREE.MeshLambertMaterial({ color: 0x2f7a3a })))
+    pitch.rotation.x = -Math.PI / 2
+    pitch.position.set(sx, 0.08, sz)
+    scene.add(pitch)
+    for (const [dx, dz] of [[10, 10], [-10, 10], [10, -10], [-10, -10]]) {
+      const pole = new THREE.Mesh(track(new THREE.CylinderGeometry(0.16, 0.16, 9)), padMat)
+      pole.position.set(sx + dx, 4.5, sz + dz)
+      scene.add(pole)
+      const fl = glowSprite('rgba(230,240,255,0.95)', 6)
+      fl.position.set(sx + dx, 9.4, sz + dz)
+      scene.add(fl)
+      floodGlows.push(fl)
+    }
+  }
+
+  // Mountain Temple — hazy peak on the horizon
+  if (level >= 15) {
+    const [mx, mz] = districtPos['Mountain Temple']
+    const mountain = new THREE.Mesh(track(new THREE.ConeGeometry(34, 42, 7)), track(new THREE.MeshLambertMaterial({ color: 0x4e4a5e })))
+    mountain.position.set(mx, 21, mz)
+    scene.add(mountain)
+    const cap = new THREE.Mesh(track(new THREE.ConeGeometry(11, 13, 7)), track(new THREE.MeshLambertMaterial({ color: 0xe8ecf5 })))
+    cap.position.set(mx, 35.5, mz)
+    scene.add(cap)
+    const temple = new THREE.Mesh(track(new THREE.ConeGeometry(2.6, 3.4, 4)), track(new THREE.MeshLambertMaterial({ color: 0xc9503c })))
+    temple.position.set(mx, 43.5, mz)
+    scene.add(temple)
+    const tg = glowSprite('rgba(255,214,140,0.9)', 7)
+    tg.position.set(mx, 44, mz)
+    scene.add(tg)
+    lampGlows.push(tg)
+  }
+
+  // Airport — runway with edge lights and a tower
+  if (level >= 20) {
+    const [ax, az] = districtPos['Airport']
+    const runway = new THREE.Mesh(track(new THREE.PlaneGeometry(9, 64)), roadMat)
+    runway.rotation.x = -Math.PI / 2
+    runway.position.set(ax, 0.05, az)
+    scene.add(runway)
+    const edgeMat = track(new THREE.MeshBasicMaterial({ color: 0xffffff }))
+    const edgeGeo = track(new THREE.BoxGeometry(0.5, 0.2, 0.5))
+    for (let i = -4; i <= 4; i++) {
+      for (const side of [-4.8, 4.8]) {
+        const l2 = new THREE.Mesh(edgeGeo, edgeMat)
+        l2.position.set(ax + side, 0.15, az + i * 7)
+        scene.add(l2)
+      }
+    }
+    const twr = new THREE.Mesh(track(new THREE.CylinderGeometry(0.9, 1.2, 9)), lowMat)
+    twr.position.set(ax - 9, 4.5, az - 20)
+    scene.add(twr)
+  }
+
+  // Neon Strip — venue row with animated billboards
+  if (level >= 25) {
+    const [nx, nz] = districtPos['Neon Strip']
+    const words = ['XP', 'WIN', 'ROAR']
+    const colors = ['#ffb454', '#ff4fa3', '#00e5c3']
+    for (let i = 0; i < 3; i++) {
+      const venue = new THREE.Mesh(track(new THREE.BoxGeometry(6, 4, 5)), padMat)
+      venue.position.set(nx + i * 8, 2, nz)
+      scene.add(venue)
+      const sp = textSprite((c, w2, h2) => {
+        c.font = '900 60px "Arial Black", sans-serif'
+        c.textAlign = 'center'
+        c.fillStyle = colors[i]
+        c.shadowColor = colors[i]
+        c.shadowBlur = 28
+        c.fillText(words[i], w2 / 2, h2 / 2 + 22)
+      }, 256, 128)
+      sp.scale.set(6.5, 3.2, 1)
+      sp.position.set(nx + i * 8, 6.2, nz)
+      scene.add(sp)
+      neons.push(sp)
+    }
+  }
+
+  // Golden Lion Tower — the endgame landmark
+  let goldMat: THREE.MeshLambertMaterial | null = null
+  if (level >= 30) {
+    const [gx, gz] = districtPos['Golden Lion Tower']
+    goldMat = track(new THREE.MeshLambertMaterial({ color: 0xd9a43a, emissive: 0xffc45e, emissiveIntensity: 0 }))
+    let y = 0
+    for (const [rad, h] of [[4.4, 16], [3.2, 12], [2, 9]]) {
+      const tier = new THREE.Mesh(track(new THREE.CylinderGeometry(rad, rad + 0.6, h, 10)), goldMat)
+      tier.position.set(gx, y + h / 2, gz)
+      scene.add(tier)
+      y += h
+    }
+    const crownGlow = glowSprite('rgba(255,214,120,1)', 16)
+    crownGlow.position.set(gx, y + 3, gz)
+    scene.add(crownGlow)
+    lampGlows.push(crownGlow)
+  }
+
+  // marker over the NEXT district to unlock
+  const upcoming = nextDistrict(level)
+  if (upcoming && districtPos[upcoming.name]) {
+    const [ux, uz] = districtPos[upcoming.name]
+    const marker = textSprite((c, w2, h2) => {
+      c.font = '900 34px "Arial Black", sans-serif'
+      c.textAlign = 'center'
+      c.fillStyle = 'rgba(255,180,84,0.9)'
+      c.shadowColor = '#ffb454'
+      c.shadowBlur = 14
+      c.fillText(upcoming.name.toUpperCase(), w2 / 2, h2 / 2)
+      c.font = '700 26px Inter, sans-serif'
+      c.fillStyle = 'rgba(255,255,255,0.75)'
+      c.fillText(`UNLOCKS AT LV ${upcoming.level}`, w2 / 2, h2 / 2 + 34)
+    }, 512, 128)
+    marker.scale.set(20, 5, 1)
+    marker.position.set(ux === 0 && uz === 0 ? 0 : ux, 16, ux === 0 && uz === 0 ? -46 : uz)
+    scene.add(marker)
+  }
+
+  // ---------- traffic (scales with level) + pedestrians ----------
+  type Car = { g: THREE.Group; axis: 'x' | 'z'; dir: number; v: number; off: number; head: THREE.Sprite }
+  const cars: Car[] = []
+  const carColors = [0xe04a5a, 0x4f6bfa, 0xf2b544, 0x3ec78f, 0xc9cdd8, 0x8f7bff]
+  const nCars = Math.min(8, 2 + Math.floor(level / 4))
+  for (let i = 0; i < nCars; i++) {
+    const g = new THREE.Group()
+    const bodyMesh = new THREE.Mesh(track(new THREE.BoxGeometry(3.4, 1, 1.8)), track(new THREE.MeshLambertMaterial({ color: carColors[i % carColors.length] })))
     bodyMesh.position.y = 0.8
     g.add(bodyMesh)
     const cab = new THREE.Mesh(track(new THREE.BoxGeometry(1.7, 0.8, 1.6)), track(new THREE.MeshLambertMaterial({ color: 0x11101c })))
@@ -439,12 +714,81 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     const head = glowSprite('rgba(255,240,190,0.95)', 3)
     head.position.set(2.1, 0.8, 0)
     g.add(head)
-    if (axis === 'z') g.rotation.y = -Math.PI / 2
+    const axis = i % 2 === 0 ? 'z' : 'x'
+    const dir = i % 4 < 2 ? 1 : -1
+    g.rotation.y = axis === 'z' ? (dir === 1 ? -Math.PI / 2 : Math.PI / 2) : dir === 1 ? 0 : Math.PI
     scene.add(g)
-    cars.push({ g, axis, v: 9 + Math.random() * 4, head })
+    cars.push({ g, axis, dir, v: 8 + (i % 3) * 3, off: i * 41, head })
   }
 
-  // ---------- stars, moon, sun ----------
+  const walkers = new THREE.InstancedMesh(
+    track(new THREE.CapsuleGeometry(0.32, 0.9, 3, 8)),
+    track(new THREE.MeshLambertMaterial({ color: 0xd8d4e8 })),
+    14,
+  )
+  scene.add(walkers)
+  const walkerPhase = Array.from({ length: 14 }, () => r())
+
+  // ---------- sky traffic: balloon, helicopter, birds, airliner ----------
+  let balloon: THREE.Group | null = null
+  if (level >= 6) {
+    balloon = new THREE.Group()
+    const env = new THREE.Mesh(track(new THREE.SphereGeometry(2.4, 12, 10)), track(new THREE.MeshLambertMaterial({ color: 0xe0574f })))
+    balloon.add(env)
+    const basket = new THREE.Mesh(track(new THREE.BoxGeometry(1, 0.8, 1)), trunkMat)
+    basket.position.y = -3.4
+    balloon.add(basket)
+    scene.add(balloon)
+  }
+  let heli: THREE.Group | null = null
+  let rotor: THREE.Mesh | null = null
+  let heliBeacon: THREE.Sprite | null = null
+  if (level >= 15) {
+    heli = new THREE.Group()
+    const hb = new THREE.Mesh(track(new THREE.SphereGeometry(1, 10, 8)), track(new THREE.MeshLambertMaterial({ color: 0x2a2f42 })))
+    hb.scale.set(1.7, 0.8, 0.8)
+    heli.add(hb)
+    const tailB = new THREE.Mesh(track(new THREE.BoxGeometry(2.4, 0.25, 0.25)), padMat)
+    tailB.position.x = -2.2
+    heli.add(tailB)
+    rotor = new THREE.Mesh(track(new THREE.BoxGeometry(4.6, 0.08, 0.3)), padMat)
+    rotor.position.y = 1
+    heli.add(rotor)
+    heliBeacon = glowSprite('rgba(255,80,80,0.95)', 2.2)
+    heliBeacon.position.y = 1.4
+    heli.add(heliBeacon)
+    scene.add(heli)
+  }
+  // birds: a small flock of dark points circling by day
+  const birdGeo = track(new THREE.BufferGeometry())
+  {
+    const bp = new Float32Array(9 * 3)
+    for (let i = 0; i < 9; i++) {
+      bp[i * 3] = (r() - 0.5) * 10
+      bp[i * 3 + 1] = (r() - 0.5) * 2.4
+      bp[i * 3 + 2] = (r() - 0.5) * 8
+    }
+    birdGeo.setAttribute('position', new THREE.BufferAttribute(bp, 3))
+  }
+  const birdMat = track(new THREE.PointsMaterial({ color: 0x1c1a26, size: 2.2, transparent: true, sizeAttenuation: false }))
+  const birds = new THREE.Points(birdGeo, birdMat)
+  scene.add(birds)
+  // airliner streaking high above (level 20+)
+  let airliner: THREE.Group | null = null
+  if (level >= 20) {
+    airliner = new THREE.Group()
+    const fus = new THREE.Mesh(track(new THREE.CylinderGeometry(0.5, 0.5, 7, 8)), track(new THREE.MeshLambertMaterial({ color: 0xe8e8f0 })))
+    fus.rotation.z = Math.PI / 2
+    airliner.add(fus)
+    const wing = new THREE.Mesh(track(new THREE.BoxGeometry(1.4, 0.12, 8)), track(new THREE.MeshLambertMaterial({ color: 0xc8c8d8 })))
+    airliner.add(wing)
+    const strobe = glowSprite('rgba(255,255,255,0.95)', 2)
+    strobe.position.y = 0.8
+    airliner.add(strobe)
+    scene.add(airliner)
+  }
+
+  // ---------- stars, moon, sun, clouds ----------
   const starGeo = track(new THREE.BufferGeometry())
   {
     const pts = new Float32Array(350 * 3)
@@ -452,7 +796,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     for (let i = 0; i < 350; i++) {
       const a = sr() * Math.PI * 2
       const el = sr() * Math.PI * 0.42 + 0.12
-      const rad = 215
+      const rad = 285
       pts[i * 3] = Math.cos(a) * Math.cos(el) * rad
       pts[i * 3 + 1] = Math.sin(el) * rad
       pts[i * 3 + 2] = Math.sin(a) * Math.cos(el) * rad
@@ -461,21 +805,51 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
   }
   const starMat = track(new THREE.PointsMaterial({ color: 0xffffff, size: 1.6, transparent: true, fog: false, sizeAttenuation: false }))
   scene.add(new THREE.Points(starGeo, starMat))
-  const moon = glowSprite('rgba(235,240,255,1)', 26)
-  const sunSprite = glowSprite('rgba(255,238,180,1)', 34)
+  const moon = glowSprite('rgba(235,240,255,1)', 30)
+  const sunSprite = glowSprite('rgba(255,238,180,1)', 40)
   moon.material.fog = false
   sunSprite.material.fog = false
   scene.add(moon, sunSprite)
+  const clouds: THREE.Sprite[] = []
+  for (let i = 0; i < 5; i++) {
+    const cl = glowSprite('rgba(255,255,255,0.55)', 1)
+    cl.scale.set(46 + r() * 30, 15 + r() * 8, 1)
+    cl.material.fog = false
+    scene.add(cl)
+    clouds.push(cl)
+  }
 
-  // ---------- camera orbit ----------
+  // ---------- weather particles ----------
+  const precipGeo = track(new THREE.BufferGeometry())
+  {
+    const pp = new Float32Array(700 * 3)
+    const pr = rng(7)
+    for (let i = 0; i < 700; i++) {
+      pp[i * 3] = (pr() - 0.5) * 180
+      pp[i * 3 + 1] = pr() * 70
+      pp[i * 3 + 2] = (pr() - 0.5) * 180
+    }
+    precipGeo.setAttribute('position', new THREE.BufferAttribute(pp, 3))
+  }
+  const precipMat = track(new THREE.PointsMaterial({ color: 0x9db8e8, size: 1.6, transparent: true, opacity: 0, sizeAttenuation: false, depthWrite: false }))
+  scene.add(new THREE.Points(precipGeo, precipMat))
+  let flashTimer = 0
+
+  // ---------- camera: cinematic intro, then a gentle drag-steerable orbit ----------
   let azimuth = -0.7
   let azVel = 0
   let dragging = false
   let lastX = 0
-  // stay outside the outer ring (radius ~56) and high enough to read the grid
+  const INTRO_S = 3.2
+  let introT = opts.reducedMotion ? INTRO_S : 0
   const radius = () => (camera.aspect < 0.85 ? 104 : 88)
   function placeCamera() {
-    camera.position.set(Math.cos(azimuth) * radius(), 46, Math.sin(azimuth) * radius())
+    const k = Math.min(1, introT / INTRO_S)
+    const e = 1 - (1 - k) * (1 - k) * (1 - k)
+    const rad = radius() * (2.3 - 1.3 * e)
+    const height = 130 - 84 * e
+    const az = azimuth - 1.2 * (1 - e)
+    camera.position.set(Math.cos(az) * rad, height, Math.sin(az) * rad)
     camera.lookAt(0, 4, 0)
   }
   function onDown(e: PointerEvent) {
@@ -490,9 +864,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     azVel = dx * 0.004
     azimuth += azVel
   }
-  function onUp() {
-    dragging = false
-  }
+  function onUp() { dragging = false }
   canvas.addEventListener('pointerdown', onDown)
   canvas.addEventListener('pointermove', onMove)
   canvas.addEventListener('pointerup', onUp)
@@ -504,47 +876,15 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
   let running = true
   let visible = true
   let lastTint = -1
+  let prevT = 0
   const startT = performance.now()
+  const mtx = new THREE.Matrix4()
 
-  function frame(t: number) {
-    if (!running) return
-    raf = requestAnimationFrame(frame)
-    if (!visible) return
-    const now = new Date()
-    const hour = now.getHours() + now.getMinutes() / 60
-    const sky = skyAt(hour)
-    const dark = sky.dark
-    const tSec = (t - startT) / 1000
-
-    // sky + fog + lights — only re-tint the dome when the palette moved
-    if (Math.abs(dark - lastTint) > 0.01) {
-      tintDome(sky.top, sky.low)
-      lastTint = dark
-    }
-    ;(scene.fog as THREE.Fog).color.copy(sky.low).multiplyScalar(0.7)
-    ambient.intensity = 0.85 - dark * 0.62
-    ambient.color.setHSL(0.62, dark * 0.35, 1)
-    sun.intensity = Math.max(0.05, 1.15 * (1 - dark))
-    plazaLamp.intensity = dark * 26
-    starMat.opacity = dark * 0.9
-
-    // sun & moon arcs
-    const sf = (hour - 6) / 12
-    sunSprite.visible = sf > -0.04 && sf < 1.04
-    if (sunSprite.visible) {
-      sunSprite.position.set(Math.cos(Math.PI * (1 - sf)) * 180, Math.sin(Math.PI * Math.max(0.02, Math.min(0.98, sf))) * 130 + 6, -90)
-    }
-    const mf = ((hour + 24 - 18) % 24) / 12
-    moon.visible = mf > -0.04 && mf < 1.04 && dark > 0.2
-    if (moon.visible) {
-      moon.position.set(Math.cos(Math.PI * (1 - mf)) * 180, Math.sin(Math.PI * Math.max(0.02, Math.min(0.98, mf))) * 130 + 6, -90)
-    }
-
-    // windows, neon, lamps, beacons
+  function animateWorld(tSec: number, dt: number, dark: number, weather: Weather) {
+    // downtown build-up in reveal order
     const flicker = 0.9 + 0.1 * Math.sin(tSec * 3.1)
     for (const b of blds) {
       b.mats[0].emissiveIntensity = dark * flicker
-      // build-up: each building rises in reveal order
       const k = Math.max(0, Math.min(1, (tSec - b.order * 0.05) / 0.55))
       const e = 1 - (1 - k) * (1 - k)
       b.mesh.scale.y = Math.max(0.001, e)
@@ -555,40 +895,183 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
       n2.material.opacity = Math.max(0.06, dark * fl)
     })
     lampGlows.forEach((g2) => { g2.material.opacity = dark })
+    floodGlows.forEach((g2) => { g2.material.opacity = dark * 0.9 })
     beacons.forEach((bc, i) => {
       ;(bc.material as THREE.MeshBasicMaterial).opacity = 0.3 + 0.7 * Math.abs(Math.sin(tSec * 2 + i * 2))
     })
     if (craneGroup) craneGroup.rotation.y = Math.sin(tSec * 0.3) * 0.15
+    if (goldMat) goldMat.emissiveIntensity = dark * 0.8
 
-    // lion — breathe, look around, tail sway; glows gold after dark
-    body.scale.y = 1 + Math.sin(tSec * 1.7) * 0.03
-    headGroup.rotation.y = Math.PI / 2 + Math.sin(tSec * 0.4) * 0.5
-    tail.rotation.x = Math.sin(tSec * 2.2) * 0.25
-    bodyMat.emissiveIntensity = dark * 0.35
-    maneMat.emissiveIntensity = dark * 0.3
+    // monument lion
+    monument.body.scale.y = 1 + Math.sin(tSec * 1.7) * 0.03
+    monument.headGroup.rotation.y = Math.PI / 2 + Math.sin(tSec * 0.4) * 0.5
+    monument.tail.rotation.x = Math.sin(tSec * 2.2) * 0.25
+    monument.bodyMat.emissiveIntensity = dark * 0.35
+    monument.maneMat.emissiveIntensity = dark * 0.3
 
-    // cars — loop along the avenues, headlights only after dark
+    // traffic
     for (const car of cars) {
-      const range = 150
-      const p = ((tSec * car.v + range) % (range * 2)) - range
-      if (car.axis === 'z') car.g.position.set(2.6, 0, p)
-      else car.g.position.set(-p, 0, 2.6)
+      const range = 160
+      const p = (((tSec * car.v + car.off) % (range * 2)) + range * 2) % (range * 2) - range
+      const along = car.dir * p
+      const lane = 2.6 * car.dir
+      if (car.axis === 'z') car.g.position.set(lane, 0, along)
+      else car.g.position.set(along, 0, -lane)
       car.head.material.opacity = dark
     }
 
-    // camera — gentle self-orbit unless the user is steering
+    // pedestrians walk the plaza block; thinner crowds at night
+    walkers.count = dark > 0.7 ? 6 : 14
+    for (let i = 0; i < walkers.count; i++) {
+      const per = 4 * 27 // perimeter of the 13.5-radius sidewalk square
+      const p = ((tSec * 1.6 + walkerPhase[i] * per) % per + per) % per
+      const seg = Math.floor(p / 27)
+      const q = p % 27 - 13.5
+      const [wx, wz] = [[q, 13.5], [13.5, -q], [-q, -13.5], [-13.5, q]][seg]
+      const bob = 1 + Math.abs(Math.sin(tSec * 6 + i)) * 0.06
+      mtx.makeScale(1, bob, 1).setPosition(wx, 0.85, wz)
+      walkers.setMatrixAt(i, mtx)
+    }
+    walkers.instanceMatrix.needsUpdate = true
+
+    // metro
+    if (trainCars.length) {
+      const emis = trainCars[0].material as THREE.MeshLambertMaterial
+      emis.emissiveIntensity = dark * 0.7
+      trainCars.forEach((car, i) => {
+        const a = tSec * 0.14 - i * 0.082
+        car.position.set(Math.cos(a) * 46, 8.4, Math.sin(a) * 46)
+        car.rotation.y = -a - Math.PI / 2
+      })
+    }
+
+    // harbor ship
+    if (ship) {
+      ship.position.z += shipDir * dt * 2.2
+      if (ship.position.z > 70) shipDir = -1
+      if (ship.position.z < -70) shipDir = 1
+      ship.rotation.y = shipDir === 1 ? Math.PI / 2 : -Math.PI / 2
+      ship.position.y = Math.sin(tSec * 1.1) * 0.12
+    }
+
+    // sky traffic
+    if (balloon) {
+      const a = tSec * 0.045
+      balloon.position.set(Math.cos(a) * 66, 30 + Math.sin(tSec * 0.5) * 2, Math.sin(a) * 66)
+    }
+    if (heli && rotor && heliBeacon) {
+      const a = tSec * 0.18 + 2
+      heli.position.set(Math.cos(a) * 58, 40, Math.sin(a) * 58)
+      heli.rotation.y = -a - Math.PI / 2
+      rotor.rotation.y = tSec * 22
+      heliBeacon.material.opacity = 0.4 + 0.6 * Math.abs(Math.sin(tSec * 4))
+    }
+    const dayness = 1 - dark
+    birdMat.opacity = dayness * (weather === 'clear' ? 0.9 : 0.3)
+    {
+      const a = tSec * 0.06
+      birds.position.set(Math.cos(a) * 74, 32 + Math.sin(tSec * 0.8) * 3, Math.sin(a) * 74)
+    }
+    if (airliner) {
+      const p = ((tSec * 14) % 520) - 260
+      airliner.position.set(p, 92, -60 + p * 0.15)
+      const strobe = airliner.children[2] as THREE.Sprite
+      strobe.material.opacity = Math.abs(Math.sin(tSec * 5)) > 0.85 ? 1 : 0.1
+    }
+
+    // clouds drift in a slow ring
+    clouds.forEach((cl, i) => {
+      const a = tSec * 0.008 + (i / clouds.length) * Math.PI * 2
+      cl.position.set(Math.cos(a) * 130, 62 + i * 5, Math.sin(a) * 130)
+      cl.material.opacity = (weather === 'clear' ? 0.35 : 0.6) - dark * 0.18
+    })
+
+    // fireflies — park sparkle after dark
+    if (fireflyMat && fireflyGeo) {
+      fireflyMat.opacity = dark * (0.5 + 0.5 * Math.abs(Math.sin(tSec * 1.3)))
+      fireflyGeo.attributes.position.needsUpdate = false
+    }
+
+    // precipitation
+    const precip = weather === 'rain' || weather === 'storm' ? 'rain' : weather === 'snow' ? 'snow' : null
+    precipMat.opacity = precip ? (precip === 'rain' ? 0.55 : 0.8) : 0
+    precipMat.color.set(precip === 'snow' ? 0xffffff : 0x9db8e8)
+    if (precip) {
+      const pos = precipGeo.attributes.position
+      const fall = precip === 'rain' ? 55 : 8
+      for (let i = 0; i < pos.count; i++) {
+        let y = pos.getY(i) - fall * dt
+        if (y < 0) y = 70
+        if (precip === 'snow') pos.setX(i, pos.getX(i) + Math.sin(tSec * 1.5 + i) * dt * 2)
+        pos.setY(i, y)
+      }
+      pos.needsUpdate = true
+    }
+    // storm lightning
+    if (weather === 'storm') {
+      if (flashTimer <= 0 && Math.random() < dt * 0.18) flashTimer = 0.14
+    }
+    flashTimer = Math.max(0, flashTimer - dt)
+    flashLight.intensity = flashTimer > 0 ? 3.4 : 0
+  }
+
+  function frame(t: number) {
+    if (!running) return
+    raf = requestAnimationFrame(frame)
+    if (!visible) return
+    const dt = Math.min(0.05, (t - prevT) / 1000 || 0.016)
+    prevT = t
+    const now = new Date()
+    const hour = now.getHours() + now.getMinutes() / 60
+    const sky = skyAt(hour)
+    const weather = weatherNow()
+    // rain and storm mute the daylight
+    const dark = Math.min(1, sky.dark + (weather === 'rain' ? 0.12 : weather === 'storm' ? 0.28 : 0))
+    const tSec = (t - startT) / 1000
+
+    if (Math.abs(dark - lastTint) > 0.01) {
+      tintDome(sky.top, sky.low)
+      lastTint = dark
+    }
+    ;(scene.fog as THREE.Fog).color.copy(sky.low).multiplyScalar(weather === 'clear' ? 0.7 : 0.5)
+    ambient.intensity = 0.85 - dark * 0.62
+    sun.intensity = Math.max(0.05, 1.15 * (1 - dark) * (weather === 'clear' ? 1 : 0.6))
+    plazaLamp.intensity = dark * 26
+    starMat.opacity = weather === 'clear' ? dark * 0.9 : dark * 0.15
+
+    const sf = (hour - 6) / 12
+    sunSprite.visible = sf > -0.04 && sf < 1.04 && weather !== 'storm'
+    if (sunSprite.visible) {
+      sunSprite.position.set(Math.cos(Math.PI * (1 - sf)) * 240, Math.sin(Math.PI * Math.max(0.02, Math.min(0.98, sf))) * 170 + 6, -110)
+    }
+    const mf = ((hour + 24 - 18) % 24) / 12
+    moon.visible = mf > -0.04 && mf < 1.04 && dark > 0.2
+    if (moon.visible) {
+      moon.position.set(Math.cos(Math.PI * (1 - mf)) * 240, Math.sin(Math.PI * Math.max(0.02, Math.min(0.98, mf))) * 170 + 6, -110)
+    }
+
+    animateWorld(tSec, dt, dark, weather)
+
+    if (introT < INTRO_S) introT += dt
     if (!dragging) {
       azVel *= 0.95
       azimuth += azVel + 0.0012
     }
     placeCamera()
-    renderer.render(scene, camera)
+
+    // adaptive quality: if the device can't hold ~25fps with bloom, drop it
+    if (fxOn && dt > 0.04) {
+      if (++slowFrames > 90) fxOn = false
+    } else if (slowFrames > 0 && dt < 0.03) slowFrames--
+    if (fxOn) composer.render()
+    else renderer.render(scene, camera)
   }
 
   function resize() {
     const rect = canvas.parentElement?.getBoundingClientRect()
     if (!rect || rect.width === 0) return
     renderer.setSize(rect.width, rect.height, false)
+    composer.setSize(rect.width, rect.height)
     camera.aspect = rect.width / rect.height
     camera.updateProjectionMatrix()
     placeCamera()
@@ -600,7 +1083,6 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
   resize()
 
   if (opts.reducedMotion) {
-    // a single settled frame: buildings fully risen, no orbit
     for (const b of blds) {
       b.mesh.scale.y = 1
       b.mesh.position.y = b.h / 2
@@ -613,27 +1095,40 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): (() => v
     raf = requestAnimationFrame(frame)
   }
 
-  return () => {
-    running = false
-    cancelAnimationFrame(raf)
-    ro.disconnect()
-    io.disconnect()
-    canvas.removeEventListener('pointerdown', onDown)
-    canvas.removeEventListener('pointermove', onMove)
-    canvas.removeEventListener('pointerup', onUp)
-    canvas.removeEventListener('pointercancel', onUp)
-    scene.traverse((o) => {
-      const m = o as THREE.Mesh
-      if (m.material) {
-        for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
-          const withMap = mat as THREE.Material & { map?: THREE.Texture | null }
-          withMap.map?.dispose()
-          mat.dispose()
-        }
+  return {
+    // Photo Mode: render a fresh frame and read it back synchronously
+    capture: () => {
+      try {
+        if (fxOn && !opts.reducedMotion) composer.render()
+        else renderer.render(scene, camera)
+        return canvas.toDataURL('image/png')
+      } catch {
+        return null
       }
-      m.geometry?.dispose()
-    })
-    disposables.forEach((d) => d.dispose())
-    renderer.dispose()
+    },
+    stop: () => {
+      running = false
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+      io.disconnect()
+      canvas.removeEventListener('pointerdown', onDown)
+      canvas.removeEventListener('pointermove', onMove)
+      canvas.removeEventListener('pointerup', onUp)
+      canvas.removeEventListener('pointercancel', onUp)
+      scene.traverse((o) => {
+        const m = o as THREE.Mesh
+        if (m.material) {
+          for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
+            const withMap = mat as THREE.Material & { map?: THREE.Texture | null }
+            withMap.map?.dispose()
+            mat.dispose()
+          }
+        }
+        m.geometry?.dispose()
+      })
+      disposables.forEach((d) => d.dispose())
+      composer.dispose()
+      renderer.dispose()
+    },
   }
 }

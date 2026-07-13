@@ -25,6 +25,33 @@ export function cityMaxLevel() {
   return Math.ceil((CITY_TOTAL_BUILDINGS - 4) / 2)
 }
 
+/**
+ * Districts of Lion City and the level that unlocks each. Lives here (not in
+ * city3d.ts) so the page can show unlock progress without pulling the heavy
+ * three.js chunk into the main bundle.
+ */
+export const DISTRICTS = [
+  { name: 'Downtown', level: 1 },
+  { name: 'University District', level: 3 },
+  { name: 'Lion Park', level: 4 },
+  { name: 'Harbor', level: 5 },
+  { name: 'Tech Park', level: 8 },
+  { name: 'Metro Line', level: 10 },
+  { name: 'Stadium', level: 12 },
+  { name: 'Mountain Temple', level: 15 },
+  { name: 'Airport', level: 20 },
+  { name: 'Neon Strip', level: 25 },
+  { name: 'Golden Lion Tower', level: 30 },
+] as const
+
+export function districtsUnlocked(level: number) {
+  return DISTRICTS.filter((d) => level >= d.level).length
+}
+
+export function nextDistrict(level: number) {
+  return DISTRICTS.find((d) => d.level > level) ?? null
+}
+
 export type CityOpts = { level: number; streak: number; reducedMotion?: boolean }
 
 // ---------- tiny seeded RNG (mulberry32) ----------
