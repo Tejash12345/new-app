@@ -642,16 +642,24 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   const pendingOffer = useRef<RTCSessionDescriptionInit | null>(null)
   const candBuffer = useRef<RTCIceCandidateInit[]>([])
 
-  // callback ref: the <audio> element moves between the chat and the
-  // Together overlay, so re-attach the remote stream on every mount
+  // callback ref: re-attach the remote stream whenever the element mounts,
+  // and ALWAYS call play() explicitly — relying on the autoPlay attribute
+  // after a srcObject swap is exactly why audio was intermittent
   const attachEl = useCallback((el: HTMLAudioElement | null) => {
     remoteAudioRef.current = el
-    if (el && remoteStream.current) el.srcObject = remoteStream.current
+    if (el && remoteStream.current) {
+      el.srcObject = remoteStream.current
+      el.volume = 1
+      void el.play().catch(() => {})
+    }
   }, [])
 
   const cleanup = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
+    // drop the dead stream too, or the next call re-attaches silence
+    remoteStream.current = null
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null
     pcRef.current?.close()
     pcRef.current = null
     pendingOffer.current = null
@@ -681,7 +689,12 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     pc.onicecandidate = (e) => { if (e.candidate) sendRtc({ t: 'ice', cand: e.candidate.toJSON() }) }
     pc.ontrack = (e) => {
       remoteStream.current = e.streams[0]
-      if (remoteAudioRef.current) remoteAudioRef.current.srcObject = e.streams[0]
+      const el = remoteAudioRef.current
+      if (el) {
+        el.srcObject = e.streams[0]
+        el.volume = 1
+        void el.play().catch(() => {})
+      }
     }
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') setState('live')
@@ -764,12 +777,13 @@ export function VoiceCallBar({ call, partnerName }: {
   call: ReturnType<typeof useVoiceCall>
   partnerName: string
 }) {
-  if (call.state === 'idle') return <audio ref={call.attachEl} autoPlay className="hidden" />
+  // NOTE: the remote <audio> sink is owned by CallHost (always mounted) —
+  // this bar is pure UI
+  if (call.state === 'idle') return null
   return (
     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
       className={cn('mb-2 flex items-center gap-2 rounded-2xl border bg-white px-3 py-2.5 shadow-md dark:bg-slate-900 sm:gap-2.5 sm:px-3.5',
         call.state === 'incoming' ? 'border-emerald-400/70' : call.state === 'failed' || call.state === 'mic' ? 'border-rose-400/60' : 'border-brand-400/50')}>
-      <audio ref={call.attachEl} autoPlay className="hidden" />
       <Phone size={16} className={cn(
         call.state === 'live' ? 'text-emerald-500' : call.state === 'failed' || call.state === 'mic' ? 'text-rose-500' : 'animate-pulse text-brand-500')} />
       <span className="min-w-0 flex-1 text-sm font-semibold leading-snug text-slate-800 dark:text-slate-100">

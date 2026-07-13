@@ -97,11 +97,59 @@ export function CallHost() {
     }
   }, [call.state])
 
+  // call sounds: ringtone while it rings, soft ringback while dialing, a
+  // short chime when connected — a silent ring was easy to miss, and a
+  // quiet-but-working call was indistinguishable from a broken one
+  useEffect(() => {
+    if (call.state !== 'incoming' && call.state !== 'connecting' && call.state !== 'live') return
+    let ctx: AudioContext | null = null
+    try { ctx = new AudioContext() } catch { return }
+    void ctx.resume().catch(() => {})
+    let interval: ReturnType<typeof setInterval> | null = null
+    const beep = (freq: number, dur: number, when = 0, vol = 0.18) => {
+      if (!ctx) return
+      const o = ctx.createOscillator()
+      const g = ctx.createGain()
+      o.frequency.value = freq
+      g.gain.setValueAtTime(vol, ctx.currentTime + when)
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + when + dur)
+      o.connect(g)
+      g.connect(ctx.destination)
+      o.start(ctx.currentTime + when)
+      o.stop(ctx.currentTime + when + dur + 0.05)
+    }
+    if (call.state === 'incoming') {
+      const ring = () => {
+        beep(880, 0.3, 0)
+        beep(880, 0.3, 0.45)
+        navigator.vibrate?.([250, 150, 250])
+      }
+      ring()
+      interval = setInterval(ring, 2600)
+    } else if (call.state === 'connecting') {
+      const tone = () => beep(440, 0.9, 0, 0.07)
+      tone()
+      interval = setInterval(tone, 3000)
+    } else {
+      beep(660, 0.12, 0)
+      beep(990, 0.12, 0.16)
+    }
+    return () => {
+      if (interval) clearInterval(interval)
+      void ctx?.close().catch(() => {})
+    }
+  }, [call.state])
+
   if (!user) return null
+  // the remote-audio sink stays mounted through EVERY state (ring included),
+  // so no early audio is ever dropped between re-renders
+  const sink = <audio ref={call.attachEl} autoPlay className="hidden" />
 
   // fullscreen ring for incoming calls — impossible to miss
   if (call.state === 'incoming' && peer) {
     return (
+      <>
+      {sink}
       <div className="aurora fixed inset-0 z-[120] flex flex-col items-center justify-center px-8">
         <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
           className="flex w-full max-w-xs flex-col items-center rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-2xl dark:border-white/10 dark:bg-slate-900">
@@ -127,17 +175,21 @@ export function CallHost() {
           </div>
         </motion.div>
       </div>
+      </>
     )
   }
 
   // connecting / live / failed / mic — floating strip on every page
   if (call.state !== 'idle' && peer) {
     return (
-      <div className="fixed inset-x-3 top-[calc(0.5rem+env(safe-area-inset-top))] z-[110]">
-        <VoiceCallBar call={call} partnerName={peer.name} />
-      </div>
+      <>
+        {sink}
+        <div className="fixed inset-x-3 top-[calc(0.5rem+env(safe-area-inset-top))] z-[110]">
+          <VoiceCallBar call={call} partnerName={peer.name} />
+        </div>
+      </>
     )
   }
-  // keep the hidden audio element mounted so remote audio always has a sink
-  return <VoiceCallBar call={call} partnerName="" />
+  // idle: keep only the audio sink mounted, ready for the next call
+  return sink
 }
