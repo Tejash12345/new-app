@@ -33,6 +33,16 @@ type DMessage = {
   // device-first media handover: stored (on server) → delivered (recipient
   // vaulted it) → purged (server copy deleted; blobs live on the 2 devices)
   media_state?: 'stored' | 'delivered' | 'purged'
+  // one emoji per person: {"<user_id>": "❤️"}
+  reactions?: Record<string, string>
+}
+
+const REACTION_SET = ['❤️', '😂', '👍', '😮', '😢', '🔥']
+
+function reactionCounts(r: Record<string, string>) {
+  const out: Record<string, number> = {}
+  for (const e of Object.values(r)) out[e] = (out[e] ?? 0) + 1
+  return out
 }
 
 /** One-line preview of a message for reply quotes (media become icons). */
@@ -319,6 +329,10 @@ function FriendsChat() {
   const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null)
   const [replyTo, setReplyTo] = useState<DMessage | null>(null)
   const [flashId, setFlashId] = useState<string | null>(null)
+  const [reactFor, setReactFor] = useState<DMessage | null>(null)
+  const [peerReadAt, setPeerReadAt] = useState<string | null>(null)
+  const press = useRef<{ t: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null)
+  const lastReadSent = useRef(0)
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [suggestBusy, setSuggestBusy] = useState(false)
@@ -473,11 +487,19 @@ function FriendsChat() {
       .limit(200)
       .then(({ data }) => { if (!cancelled) setMessages(((data as DMessage[]) ?? []).reverse()) })
 
+    // read receipts: where has THEY read up to, and tell them where I have
+    setPeerReadAt(null)
+    supabase.from('dm_reads').select('last_read_at')
+      .eq('user_id', active.friend_id).eq('peer_id', user.id).maybeSingle()
+      .then(({ data }) => { if (!cancelled && data) setPeerReadAt(data.last_read_at) }, () => {})
+
     const channel = supabase.channel(`dm-${pairKey}`)
     channel
       .on('broadcast', { event: 'msg' }, ({ payload }) => {
         const m = payload as DMessage
         setMessages((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev, m])
+        // the thread is open, so anything that arrives is instantly read
+        if (m.sender_id !== user.id) markRead()
       })
       .on('broadcast', { event: 'del' }, ({ payload }) => {
         setMessages((prev) => prev.filter((x) => x.id !== (payload as { id: string }).id))
@@ -486,10 +508,20 @@ function FriendsChat() {
         const from = (payload as { from: string }).from
         if (from !== user.id) markTyping(from)
       })
+      .on('broadcast', { event: 'react' }, ({ payload }) => {
+        const { id, reactions } = payload as { id: string; reactions: Record<string, string> }
+        setMessages((prev) => prev.map((x) => (x.id === id ? { ...x, reactions } : x)))
+      })
+      .on('broadcast', { event: 'read' }, ({ payload }) => {
+        const p = payload as { from: string; at: string }
+        if (p.from === active.friend_id) setPeerReadAt(p.at)
+      })
       .subscribe()
     channelRef.current = channel
+    markRead()
 
     return () => { cancelled = true; supabase.removeChannel(channel) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pairKey])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
@@ -545,6 +577,53 @@ function FriendsChat() {
     // instant push to the other side — socket.io first, channel broadcast too
     getSocket()?.emit('dm', real)
     channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
+  }
+
+  /** Tell the other side (and the DB) how far I've read — throttled. */
+  function markRead() {
+    if (!user || !activeIdRef.current) return
+    const now = Date.now()
+    if (now - lastReadSent.current < 2000) return
+    lastReadSent.current = now
+    const at = new Date().toISOString()
+    supabase.from('dm_reads')
+      .upsert({ user_id: user.id, peer_id: activeIdRef.current, last_read_at: at })
+      .then(() => {}, () => { /* pre-migration DB — receipts just stay off */ })
+    channelRef.current?.send({ type: 'broadcast', event: 'read', payload: { from: user.id, at } })
+  }
+
+  /** Toggle my emoji on a message; everyone in the chat sees it instantly. */
+  async function react(m: DMessage, emoji: string) {
+    if (!user) return
+    const next = { ...(m.reactions ?? {}) }
+    if (next[user.id] === emoji) delete next[user.id]
+    else next[user.id] = emoji
+    setReactFor(null)
+    setMessages((list) => list.map((x) => (x.id === m.id ? { ...x, reactions: next } : x)))
+    const { error } = await supabase.from('direct_messages').update({ reactions: next }).eq('id', m.id)
+    if (!error) channelRef.current?.send({ type: 'broadcast', event: 'react', payload: { id: m.id, reactions: next } })
+  }
+
+  // long-press a bubble to open the reaction picker (double-click on desktop);
+  // any real movement cancels it so scrolling and swipe-to-reply stay smooth
+  function pressStart(m: DMessage, e: React.PointerEvent) {
+    pressCancel()
+    const t = setTimeout(() => {
+      setReactFor(m)
+      navigator.vibrate?.(10)
+    }, 430)
+    press.current = { t, x: e.clientX, y: e.clientY }
+  }
+  function pressMove(e: React.PointerEvent) {
+    if (press.current && (Math.abs(e.clientX - press.current.x) > 8 || Math.abs(e.clientY - press.current.y) > 8)) {
+      pressCancel()
+    }
+  }
+  function pressCancel() {
+    if (press.current) {
+      clearTimeout(press.current.t)
+      press.current = null
+    }
   }
 
   /** Recipient vaulted a file — flag it so the sender's device can purge the server copy. */
@@ -898,6 +977,11 @@ function FriendsChat() {
               ) : messages.map((m, i) => {
                 const mine = m.sender_id === user?.id
                 const time = msgTime(m.created_at)
+                // WhatsApp ticks on my bubbles: ✓ sent → ✓✓ once they read it
+                const read = mine && !!peerReadAt && new Date(m.created_at) <= new Date(peerReadAt)
+                const tick = mine && !m.id.startsWith('tmp-')
+                  ? <span className={cn('ml-1 text-[10px] font-bold leading-none', read ? 'text-cyan-200' : 'text-white/60')}>{read ? '✓✓' : '✓'}</span>
+                  : null
                 // reply quote: prefer the live original (for You/name + jump),
                 // fall back to the snapshot stored on the message itself
                 const orig = m.reply_to ? messages.find((x) => x.id === m.reply_to) : undefined
@@ -928,6 +1012,25 @@ function FriendsChat() {
                       ref={(el) => { if (el) msgRefs.current.set(m.id, el); else msgRefs.current.delete(m.id) }}
                       className={cn('rounded-2xl transition-shadow duration-300', flashId === m.id && 'ring-2 ring-brand-400')}
                     >
+                    {/* reaction picker — long-press (or double-click) a bubble */}
+                    {reactFor?.id === m.id && (
+                      <>
+                        <div className="fixed inset-0 z-20" onClick={() => setReactFor(null)} />
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.8, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+                          transition={{ type: 'spring', damping: 20, stiffness: 380 }}
+                          className={cn('glass-strong relative z-30 mb-1 flex w-fit gap-0.5 rounded-full px-2 py-1', mine && 'ml-auto')}
+                        >
+                          {REACTION_SET.map((e) => (
+                            <button key={e} onPointerDown={(ev) => ev.preventDefault()} onClick={() => react(m, e)}
+                              className={cn('rounded-full px-1.5 py-0.5 text-xl transition hover:scale-125 active:scale-90',
+                                m.reactions?.[user?.id ?? ''] === e && 'bg-brand-500/25')}>
+                              {e}
+                            </button>
+                          ))}
+                        </motion.div>
+                      </>
+                    )}
                     <SwipeReply onReply={() => setReplyTo(m)}>
                     <div className={cn('group flex items-end gap-1.5', mine ? 'justify-end' : 'justify-start')}>
                     {!mine && <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} size={7} />}
@@ -949,10 +1052,17 @@ function FriendsChat() {
                       {m.kind === 'post' ? (
                         <div className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
                           <SharedPostBubble m={m} mine={mine} onOpen={(id) => navigate(`/feed?post=${id}`)} />
-                          <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}</span>
+                          <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}{tick}</span>
                         </div>
                       ) : (
-                      <div className={cn('max-w-[78vw] sm:max-w-md rounded-2xl text-sm',
+                      <div
+                        onPointerDown={(e) => pressStart(m, e)}
+                        onPointerMove={pressMove}
+                        onPointerUp={pressCancel}
+                        onPointerCancel={pressCancel}
+                        onPointerLeave={pressCancel}
+                        onDoubleClick={() => setReactFor(m)}
+                        className={cn('max-w-[78vw] select-none sm:max-w-md rounded-2xl text-sm',
                         m.kind === 'image' && m.file_url ? 'overflow-hidden p-1' : 'px-3.5 py-2',
                         mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
                              : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
@@ -967,7 +1077,7 @@ function FriendsChat() {
                                   <img src={url} alt={m.file_name ?? 'photo'} loading="lazy"
                                     className="max-h-64 rounded-xl object-contain" />
                                 </button>
-                                <div className={cn('px-1.5 pb-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
+                                <div className={cn('px-1.5 pb-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}{tick}</div>
                               </>
                             )}
                           </WithLocalMedia>
@@ -976,7 +1086,7 @@ function FriendsChat() {
                             {(url, expired) => expired || !url ? <ExpiredMedia kind="audio" /> : (
                               <>
                                 <audio controls preload="metadata" src={url} className="h-10 w-56 max-w-full" />
-                                <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
+                                <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}{tick}</div>
                               </>
                             )}
                           </WithLocalMedia>
@@ -989,7 +1099,7 @@ function FriendsChat() {
                                   <FileText size={17} className="shrink-0" />
                                   <span className="truncate">{m.file_name ?? 'Document'}</span>
                                 </a>
-                                <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}</div>
+                                <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}{tick}</div>
                               </>
                             )}
                           </WithLocalMedia>
@@ -997,7 +1107,7 @@ function FriendsChat() {
                           <>
                             {m.body}
                             {/* WhatsApp-style inline time, bottom-right of the bubble */}
-                            <span className={cn('float-right ml-2 mt-1.5 text-[10px] leading-none', mine ? 'text-white/70' : 'text-slate-400')}>{time}</span>
+                            <span className={cn('float-right ml-2 mt-1.5 text-[10px] leading-none', mine ? 'text-white/70' : 'text-slate-400')}>{time}{tick}</span>
                           </>
                         )}
                       </div>
@@ -1011,6 +1121,17 @@ function FriendsChat() {
                     </div>
                     </div>
                     </SwipeReply>
+                    {/* reaction chips, WhatsApp-style under the bubble */}
+                    {m.reactions && Object.keys(m.reactions).length > 0 && (
+                      <div className={cn('-mt-1 flex gap-1 pb-0.5', mine ? 'justify-end pr-1' : 'justify-start pl-10')}>
+                        {Object.entries(reactionCounts(m.reactions)).map(([e, n]) => (
+                          <button key={e} onClick={() => react(m, e)}
+                            className="rounded-full border border-slate-200/70 bg-white/90 px-1.5 py-0.5 text-[13px] leading-none shadow-sm transition active:scale-90 dark:border-white/10 dark:bg-slate-800/95">
+                            {e}{n > 1 && <span className="ml-0.5 text-[10px] font-bold text-slate-500 dark:text-slate-300">{n}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     </div>
                   </Fragment>
                 )
