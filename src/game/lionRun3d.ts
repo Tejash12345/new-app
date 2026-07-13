@@ -1,13 +1,24 @@
 /**
- * Lion Run 3D — the endless runner, now a third-person night sprint.
+ * Lion Run 3D — the endless runner, a cinematic third-person night sprint.
  *
  * Three lanes through a neon canyon: swipe left/right to change lane, tap
- * (or swipe up) to jump, double-tap for a double jump. Vault the barriers,
+ * (or swipe up) to jump, tap again for a double jump. Vault the barriers,
  * dodge the walls, grab amber XP orbs. One hit and you're WASTED.
  *
+ * Mobile-first input: the canvas takes touch-action none + pointer capture,
+ * and swipes fire the moment the threshold is crossed (not on release), so
+ * lane changes feel instant on phones and the browser can never steal the
+ * gesture for a scroll.
+ *
+ * The run climbs STAGES every 400m — each stage re-grades the whole canyon
+ * (sky, fog, neon, road markings), speeds the world up and introduces new
+ * obstacle patterns. Cinematics: fly-around start swoop, FOV that widens
+ * with speed, camera bank into lane changes, orb-collect bursts, slow-mo
+ * crash with shake.
+ *
  * Same integration contract as the 2D engine (onStart consumes a play token,
- * onOver reports the result); onScore feeds the DOM HUD. Returns null when
- * WebGL is unavailable so the caller can fall back to the 2D runner.
+ * onOver reports the result); onScore/onStage feed the DOM HUD. Returns null
+ * when WebGL is unavailable so the caller can fall back to the 2D runner.
  */
 import * as THREE from 'three'
 import { buildLion } from './lionModel'
@@ -17,12 +28,28 @@ export type Run3DHandle = { destroy: () => void }
 
 type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack'; z: number; alive: boolean }
 type Orb = { holder: THREE.Group; lane: number; z: number; alive: boolean }
+type Burst = { sprite: THREE.Sprite; t: number }
 
 const LANE_X = [-3, 0, 3]
+const STAGE_LEN = 400 // metres per stage
+
+// per-stage world grade: sky, fog, road dashes, neon palette, name
+const STAGES = [
+  { name: 'MIDNIGHT', bg: 0x07061a, fog: 0x140f2e, dash: 0xffb454, neon: [0xff4fa3, 0x00e5c3, 0x8f7bff, 0x4fd6ff] },
+  { name: 'CYBER', bg: 0x0a0418, fog: 0x2a0f3e, dash: 0x00e5c3, neon: [0x00f0ff, 0xff2fd6, 0x00f0ff, 0xff2fd6] },
+  { name: 'STORM', bg: 0x0a0e1e, fog: 0x1c2a4e, dash: 0xcfe0ff, neon: [0x4fa0ff, 0xffffff, 0x4fa0ff, 0x9db8e8] },
+  { name: 'INFERNO', bg: 0x160608, fog: 0x3e1210, dash: 0xff7b3a, neon: [0xff7b3a, 0xff4646, 0xffb454, 0xff4646] },
+  { name: 'GOLDEN DAWN', bg: 0x241536, fog: 0x6e3a2a, dash: 0xffd678, neon: [0xffd678, 0xffb454, 0xffd678, 0xffb454] },
+]
 
 export function startLionRun3D(
   canvas: HTMLCanvasElement,
-  cb: { onStart: () => void; onOver: (r: RunResult) => void; onScore?: (score: number, coins: number) => void },
+  cb: {
+    onStart: () => void
+    onOver: (r: RunResult & { stage?: number }) => void
+    onScore?: (score: number, coins: number) => void
+    onStage?: (stage: number, name: string) => void
+  },
 ): Run3DHandle | null {
   let renderer: THREE.WebGLRenderer
   try {
@@ -33,8 +60,10 @@ export function startLionRun3D(
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
 
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x07061a)
-  scene.fog = new THREE.Fog(0x140f2e, 30, 130)
+  const bgColor = new THREE.Color(STAGES[0].bg)
+  const fogColor = new THREE.Color(STAGES[0].fog)
+  scene.background = bgColor
+  scene.fog = new THREE.Fog(fogColor.getHex(), 30, 130)
   const camera = new THREE.PerspectiveCamera(55, 1, 0.3, 300)
 
   const disposables: { dispose: () => void }[] = []
@@ -61,8 +90,7 @@ export function startLionRun3D(
     sh.position.set(sx, 0.01, -100)
     scene.add(sh)
   }
-  // scrolling lane dashes
-  const dashMat = track(new THREE.MeshBasicMaterial({ color: 0xffb454 }))
+  const dashMat = track(new THREE.MeshBasicMaterial({ color: STAGES[0].dash }))
   const dashGeo = track(new THREE.PlaneGeometry(0.22, 2))
   const dashes: THREE.Mesh[] = []
   for (const lx of [-1.5, 1.5]) {
@@ -75,7 +103,7 @@ export function startLionRun3D(
     }
   }
 
-  // ---------- neon canyon: instanced towers on both sides ----------
+  // ---------- neon canyon: instanced towers + colored edge strips ----------
   const nightTex = (() => {
     const cv = document.createElement('canvas')
     cv.width = 64
@@ -118,14 +146,13 @@ export function startLionRun3D(
     towers.instanceMatrix.needsUpdate = true
   }
   placeTowers()
-  const neonColors = [0xff4fa3, 0x00e5c3, 0x8f7bff, 0x4fd6ff]
   const neonStripGeo = track(new THREE.BoxGeometry(0.25, 1, 0.25))
-  const neonStrips: { mesh: THREE.Mesh; idx: number }[] = []
+  const neonStrips: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; idx: number }[] = []
   for (let i = 0; i < 8; i++) {
-    const mat = track(new THREE.MeshBasicMaterial({ color: neonColors[i % 4] }))
+    const mat = track(new THREE.MeshBasicMaterial({ color: STAGES[0].neon[i % 4] }))
     const strip = new THREE.Mesh(neonStripGeo, mat)
     scene.add(strip)
-    neonStrips.push({ mesh: strip, idx: i * 3 })
+    neonStrips.push({ mesh: strip, mat, idx: i * 3 })
   }
 
   // stars + moon
@@ -140,22 +167,37 @@ export function startLionRun3D(
     starGeo.setAttribute('position', new THREE.BufferAttribute(pts, 3))
   }
   scene.add(new THREE.Points(starGeo, track(new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, transparent: true, opacity: 0.8, sizeAttenuation: false }))))
-  const moonCv = document.createElement('canvas')
-  moonCv.width = moonCv.height = 64
-  {
-    const c = moonCv.getContext('2d')!
+  const softGlowTex = (color: string) => {
+    const cv = document.createElement('canvas')
+    cv.width = cv.height = 64
+    const c = cv.getContext('2d')!
     const g = c.createRadialGradient(32, 32, 2, 32, 32, 30)
-    g.addColorStop(0, 'rgba(235,240,255,1)')
+    g.addColorStop(0, color)
     g.addColorStop(1, 'rgba(0,0,0,0)')
     c.fillStyle = g
     c.fillRect(0, 0, 64, 64)
+    return track(new THREE.CanvasTexture(cv))
   }
-  const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: track(new THREE.CanvasTexture(moonCv)), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }))
+  const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: softGlowTex('rgba(235,240,255,1)'), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }))
   moon.scale.setScalar(18)
   moon.position.set(-24, 55, -160)
   scene.add(moon)
 
-  // ---------- the runner ----------
+  // stage-3 rain
+  const rainGeo = track(new THREE.BufferGeometry())
+  {
+    const rp = new Float32Array(300 * 3)
+    for (let i = 0; i < 300; i++) {
+      rp[i * 3] = (Math.sin(i * 31) * 0.5) * 40
+      rp[i * 3 + 1] = Math.abs(Math.sin(i * 17)) * 30
+      rp[i * 3 + 2] = -Math.abs(Math.sin(i * 23)) * 60
+    }
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rp, 3))
+  }
+  const rainMat = track(new THREE.PointsMaterial({ color: 0x9db8e8, size: 1.4, transparent: true, opacity: 0, sizeAttenuation: false, depthWrite: false }))
+  scene.add(new THREE.Points(rainGeo, rainMat))
+
+  // ---------- the runner + grounding blob shadow ----------
   const rig = buildLion()
   rig.group.rotation.y = Math.PI / 2 // face down the road (-z)
   rig.group.scale.setScalar(0.5)
@@ -163,6 +205,13 @@ export function startLionRun3D(
   rig.maneMat.emissiveIntensity = 0.35
   rig.bodyMat.color.set(0x3a2410)
   scene.add(rig.group)
+  const shadow = new THREE.Mesh(
+    track(new THREE.CircleGeometry(1.1, 16)),
+    track(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4, depthWrite: false })),
+  )
+  shadow.rotation.x = -Math.PI / 2
+  shadow.position.y = 0.02
+  scene.add(shadow)
 
   // ---------- obstacle + orb pools ----------
   const barMat = track(new THREE.MeshLambertMaterial({ color: 0xffb454, emissive: 0xffb454, emissiveIntensity: 0.25 }))
@@ -175,18 +224,9 @@ export function startLionRun3D(
 
   const orbGeo = track(new THREE.SphereGeometry(0.32, 10, 8))
   const orbMat = track(new THREE.MeshBasicMaterial({ color: 0xffd678 }))
-  const orbGlowTex = (() => {
-    const cv = document.createElement('canvas')
-    cv.width = cv.height = 64
-    const c = cv.getContext('2d')!
-    const g = c.createRadialGradient(32, 32, 2, 32, 32, 30)
-    g.addColorStop(0, 'rgba(255,214,120,0.9)')
-    g.addColorStop(1, 'rgba(0,0,0,0)')
-    c.fillStyle = g
-    c.fillRect(0, 0, 64, 64)
-    return track(new THREE.CanvasTexture(cv))
-  })()
+  const orbGlowTex = softGlowTex('rgba(255,214,120,0.9)')
   const orbs: Orb[] = []
+  const bursts: Burst[] = []
   function spawnOrb(lane: number, z: number) {
     const holder = new THREE.Group()
     holder.add(new THREE.Mesh(orbGeo, orbMat))
@@ -206,9 +246,16 @@ export function startLionRun3D(
     scene.add(mesh)
     obstacles.push({ mesh, lane, kind, z, alive: true })
   }
+  function collectBurst(x: number, y: number, z: number) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: orbGlowTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+    sp.position.set(x, y, z)
+    sp.scale.setScalar(1.4)
+    scene.add(sp)
+    bursts.push({ sprite: sp, t: 0 })
+  }
 
   // ---------- game state ----------
-  let state: 'ready' | 'run' | 'dead' = 'ready'
+  let state: 'ready' | 'swoop' | 'run' | 'dying' | 'dead' = 'ready'
   let raf = 0
   let prevT = 0
   let dist = 0
@@ -223,15 +270,26 @@ export function startLionRun3D(
   let nextSpawnZ = -60
   let shownScore = -1
   let shakeT = 0
+  let swoopT = 0
+  let dyingT = 0
+  let stage = 1
+  let fov = 55
+  // adaptive: drop pixel ratio if the phone can't hold frame rate
+  let slowFrames = 0
+  let loweredDpr = false
 
+  const distM = () => dist / 4
+  const stageFor = () => Math.min(STAGES.length, 1 + Math.floor(distM() / STAGE_LEN))
   function score() {
     return Math.floor(dist / 2) + coins * 10
   }
 
   function startOrJump() {
     if (state === 'ready') {
-      state = 'run'
+      state = 'swoop'
+      swoopT = 0
       cb.onStart()
+      cb.onStage?.(1, STAGES[0].name)
       return
     }
     if (state !== 'run') return
@@ -244,24 +302,47 @@ export function startLionRun3D(
   function move(dir: -1 | 1) {
     if (state !== 'run') return
     lane = Math.max(0, Math.min(2, lane + dir))
+    navigator.vibrate?.(8)
   }
 
-  // swipe detection: horizontal swipe = lane, upward swipe or tap = jump
-  let px = 0
-  let py = 0
-  let pt = 0
+  // ---------- mobile-first input ----------
+  // Swipes trigger mid-gesture the moment the threshold is crossed; taps
+  // resolve on release. touch-action none + pointer capture keep the
+  // browser from ever turning the gesture into a scroll.
+  canvas.style.touchAction = 'none'
+  let gestureId = -1
+  let gx0 = 0
+  let gy0 = 0
+  let gt0 = 0
+  let gestureUsed = false
   function onDown(e: PointerEvent) {
     e.preventDefault()
-    px = e.clientX
-    py = e.clientY
-    pt = performance.now()
+    gestureId = e.pointerId
+    gx0 = e.clientX
+    gy0 = e.clientY
+    gt0 = performance.now()
+    gestureUsed = false
+    try { canvas.setPointerCapture(e.pointerId) } catch { /* fine */ }
+  }
+  function onMove(e: PointerEvent) {
+    if (e.pointerId !== gestureId || gestureUsed) return
+    const dx = e.clientX - gx0
+    const dy = e.clientY - gy0
+    if (Math.abs(dx) > 26 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      move(dx > 0 ? 1 : -1)
+      gestureUsed = true
+    } else if (dy < -34 && Math.abs(dy) > Math.abs(dx)) {
+      startOrJump()
+      gestureUsed = true
+    }
   }
   function onUp(e: PointerEvent) {
-    const dx = e.clientX - px
-    const dy = e.clientY - py
-    const fast = performance.now() - pt < 500
-    if (fast && Math.abs(dx) > 24 && Math.abs(dx) > Math.abs(dy)) move(dx > 0 ? 1 : -1)
-    else startOrJump()
+    if (e.pointerId !== gestureId) return
+    gestureId = -1
+    if (!gestureUsed && performance.now() - gt0 < 450) startOrJump()
+  }
+  function onCancel(e: PointerEvent) {
+    if (e.pointerId === gestureId) gestureId = -1
   }
   function onKey(e: KeyboardEvent) {
     if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); startOrJump() }
@@ -269,7 +350,9 @@ export function startLionRun3D(
     if (e.code === 'ArrowRight') { e.preventDefault(); move(1) }
   }
   canvas.addEventListener('pointerdown', onDown)
+  canvas.addEventListener('pointermove', onMove)
   canvas.addEventListener('pointerup', onUp)
+  canvas.addEventListener('pointercancel', onCancel)
   window.addEventListener('keydown', onKey)
 
   function spawnWave() {
@@ -278,101 +361,169 @@ export function startLionRun3D(
       const roll = Math.random()
       const freeLanes = [0, 1, 2]
       if (roll < 0.34) {
-        // one full-width-ish bar row: jump it
         const l2 = Math.floor(Math.random() * 3)
         spawnObstacle(l2, 'bar', z)
+        // stage 4+: bars come in pairs across two lanes
+        if (stage >= 4 && Math.random() < 0.5) {
+          freeLanes.splice(freeLanes.indexOf(l2), 1)
+          spawnObstacle(freeLanes[Math.floor(Math.random() * freeLanes.length)], 'bar', z)
+        }
       } else if (roll < 0.72) {
-        // wall + maybe a crate: dodge
         const l2 = Math.floor(Math.random() * 3)
         spawnObstacle(l2, 'wall', z)
         freeLanes.splice(freeLanes.indexOf(l2), 1)
-        if (elapsed > 15 && Math.random() < 0.5) {
+        // stage 2+: a crate stack narrows the escape to one lane
+        if (stage >= 2 && Math.random() < 0.35 + stage * 0.08) {
           const l3 = freeLanes[Math.floor(Math.random() * freeLanes.length)]
           spawnObstacle(l3, 'stack', z)
           freeLanes.splice(freeLanes.indexOf(l3), 1)
         }
       } else {
-        // orb arc in a random lane
         const l2 = Math.floor(Math.random() * 3)
         for (let k = 0; k < 4; k++) spawnOrb(l2, z - k * 2.2)
       }
-      nextSpawnZ -= 16 + Math.random() * 14 + speed * 0.35
+      nextSpawnZ -= Math.max(12, 16 + Math.random() * 14 - stage * 1.5) + speed * 0.35
     }
+  }
+
+  function crash() {
+    state = 'dying'
+    dyingT = 0
+    shakeT = 0.55
+    navigator.vibrate?.([60, 40, 120])
+  }
+
+  function scrollWorld(dz: number, tSec: number) {
+    nextSpawnZ += dz
+    spawnWave()
+    for (const o of obstacles) {
+      if (!o.alive) continue
+      o.z += dz
+      o.mesh.position.z = o.z
+      if (o.z > 6) { o.alive = false; scene.remove(o.mesh) }
+    }
+    for (const orb of orbs) {
+      if (!orb.alive) continue
+      orb.z += dz
+      orb.holder.position.z = orb.z
+      orb.holder.rotation.y = tSec * 3
+      if (orb.z > 6) { orb.alive = false; scene.remove(orb.holder) }
+    }
+    for (const d of dashes) {
+      d.position.z += dz
+      if (d.position.z > 4) d.position.z -= 24 * 9
+    }
+    towerData.forEach((td) => {
+      td.z += dz * 0.92
+      if (td.z > 10) td.z -= 26 * 12
+    })
+    placeTowers()
+    neonStrips.forEach((ns) => {
+      const td = towerData[ns.idx]
+      ns.mesh.position.set(td.x + (td.x < 0 ? 3.1 : -3.1), td.h * 0.5, td.z)
+      ns.mesh.scale.y = td.h * 0.8
+    })
   }
 
   function frame(t: number) {
     raf = requestAnimationFrame(frame)
-    const dt = Math.min(0.05, (t - prevT) / 1000 || 0.016)
+    const rawDt = Math.min(0.05, (t - prevT) / 1000 || 0.016)
     prevT = t
     const tSec = t / 1000
+    // slow-mo while dying — the crash lands, then WASTED
+    const dt = state === 'dying' ? rawDt * 0.25 : rawDt
 
-    if (state === 'run') {
-      elapsed += dt
-      speed = Math.min(34, 16 + elapsed * 0.55)
+    if (state === 'swoop') {
+      swoopT += rawDt
+      const dz = (6 + 10 * Math.min(1, swoopT / 1.1)) * dt
+      dist += dz
+      scrollWorld(dz, tSec)
+      if (swoopT >= 1.1) state = 'run'
+    }
+
+    if (state === 'run' || state === 'dying') {
+      if (state === 'run') {
+        elapsed += dt
+        const ns = stageFor()
+        if (ns !== stage) {
+          stage = ns
+          cb.onStage?.(stage, STAGES[stage - 1].name)
+          navigator.vibrate?.([30, 30, 30])
+        }
+        speed = Math.min(38, 16 + (stage - 1) * 3.5 + elapsed * 0.35)
+      }
       const dz = speed * dt
       dist += dz
 
-      // physics
       vy -= 24 * dt
       lionY = Math.max(0, lionY + vy * dt)
       if (lionY === 0 && vy < 0) { vy = 0; jumps = 0 }
       lionX += (LANE_X[lane] - lionX) * Math.min(1, dt * 11)
 
-      // world scroll — move everything toward the camera and recycle
-      nextSpawnZ += dz
-      spawnWave()
-      for (const o of obstacles) {
-        if (!o.alive) continue
-        o.z += dz
-        o.mesh.position.z = o.z
-        if (o.z > 6) { o.alive = false; scene.remove(o.mesh) }
-      }
-      for (const orb of orbs) {
-        if (!orb.alive) continue
-        orb.z += dz
-        orb.holder.position.z = orb.z
-        orb.holder.rotation.y = tSec * 3
-        if (orb.z > 6) { orb.alive = false; scene.remove(orb.holder) }
-        else if (Math.abs(orb.z) < 0.9 && orb.lane === lane && lionY < 2.2) {
+      scrollWorld(dz, tSec)
+
+      if (state === 'run') {
+        // orb pickup
+        for (const orb of orbs) {
+          if (!orb.alive || Math.abs(orb.z) > 0.9 || orb.lane !== lane || lionY > 2.2) continue
           orb.alive = false
           scene.remove(orb.holder)
           coins++
+          collectBurst(LANE_X[orb.lane], 1.3, 0)
           navigator.vibrate?.(8)
         }
-      }
-      for (const d of dashes) {
-        d.position.z += dz
-        if (d.position.z > 4) d.position.z -= 24 * 9
-      }
-      towerData.forEach((td) => {
-        td.z += dz * 0.92 // slight parallax
-        if (td.z > 10) td.z -= 26 * 12
-      })
-      placeTowers()
-      neonStrips.forEach((ns) => {
-        const td = towerData[ns.idx]
-        ns.mesh.position.set(td.x + (td.x < 0 ? 3.1 : -3.1), td.h * 0.5, td.z)
-        ns.mesh.scale.y = td.h * 0.8
-      })
-
-      // collision at the lion's plane
-      for (const o of obstacles) {
-        if (!o.alive || Math.abs(o.z) > 0.8 || o.lane !== lane) continue
-        const clears = o.kind === 'bar' ? lionY > 1.05 : o.kind === 'stack' ? lionY > 2.5 : false
-        if (!clears) {
-          state = 'dead'
-          shakeT = 0.5
-          navigator.vibrate?.([60, 40, 120])
-          const result: RunResult = { score: score(), coins, distanceM: Math.round(dist / 4) }
-          setTimeout(() => cb.onOver(result), 550)
-          break
+        // collision at the lion's plane
+        for (const o of obstacles) {
+          if (!o.alive || Math.abs(o.z) > 0.8 || o.lane !== lane) continue
+          const clears = o.kind === 'bar' ? lionY > 1.05 : o.kind === 'stack' ? lionY > 2.5 : false
+          if (!clears) { crash(); break }
+        }
+        const s = score()
+        if (s !== shownScore) {
+          shownScore = s
+          cb.onScore?.(s, coins)
         }
       }
+    }
 
-      const s = score()
-      if (s !== shownScore) {
-        shownScore = s
-        cb.onScore?.(s, coins)
+    if (state === 'dying') {
+      dyingT += rawDt
+      if (dyingT > 0.55) {
+        state = 'dead'
+        const result: RunResult & { stage: number } = { score: score(), coins, distanceM: Math.round(distM()), stage }
+        setTimeout(() => cb.onOver(result), 150)
+      }
+    }
+
+    // stage theme cross-fade
+    const theme = STAGES[stage - 1]
+    bgColor.lerp(new THREE.Color(theme.bg), Math.min(1, rawDt * 1.4))
+    fogColor.lerp(new THREE.Color(theme.fog), Math.min(1, rawDt * 1.4))
+    scene.background = bgColor
+    ;(scene.fog as THREE.Fog).color.copy(state === 'dying' ? new THREE.Color(0x481420) : fogColor)
+    dashMat.color.lerp(new THREE.Color(theme.dash), Math.min(1, rawDt * 1.4))
+    neonStrips.forEach((ns, i) => ns.mat.color.lerp(new THREE.Color(theme.neon[i % 4]), Math.min(1, rawDt * 1.4)))
+    rainMat.opacity += ((stage === 3 ? 0.6 : 0) - rainMat.opacity) * Math.min(1, rawDt * 2)
+    if (rainMat.opacity > 0.02) {
+      const pos = rainGeo.attributes.position
+      for (let i = 0; i < pos.count; i++) {
+        let y = pos.getY(i) - 34 * rawDt
+        if (y < 0) y = 30
+        pos.setY(i, y)
+      }
+      pos.needsUpdate = true
+    }
+
+    // orb-collect bursts
+    for (let i = bursts.length - 1; i >= 0; i--) {
+      const b = bursts[i]
+      b.t += rawDt
+      b.sprite.scale.setScalar(1.4 + b.t * 6)
+      b.sprite.material.opacity = Math.max(0, 1 - b.t / 0.35)
+      if (b.t > 0.35) {
+        scene.remove(b.sprite)
+        b.sprite.material.dispose()
+        bursts.splice(i, 1)
       }
     }
 
@@ -386,13 +537,39 @@ export function startLionRun3D(
     rig.body.scale.y = 1 + (airborne ? 0.04 : Math.sin(tSec * 14) * 0.04)
     rig.tail.rotation.x = Math.sin(tSec * 8) * 0.3
     rig.headGroup.rotation.y = Math.PI / 2
+    // grounding shadow shrinks while airborne
+    shadow.position.x = lionX
+    const sh = Math.max(0.35, 1 - lionY * 0.28)
+    shadow.scale.setScalar(sh)
+    ;(shadow.material as THREE.MeshBasicMaterial).opacity = 0.4 * sh
 
-    // camera follow with crash shake
-    shakeT = Math.max(0, shakeT - dt)
+    // camera: fly-around swoop into a speed-pumped chase cam with crash shake
+    shakeT = Math.max(0, shakeT - rawDt)
     const shake = shakeT > 0 ? Math.sin(tSec * 70) * shakeT * 0.6 : 0
-    camera.position.set(lionX * 0.5 + shake, 5.6 + lionY * 0.25, 11.5)
-    camera.lookAt(lionX * 0.55, 1.3 + lionY * 0.35, -14)
-    scene.fog!.color.set(state === 'dead' && shakeT > 0.2 ? 0x481420 : 0x140f2e)
+    const targetFov = 55 + Math.max(0, speed - 16) * 0.5
+    fov += (Math.min(70, targetFov) - fov) * Math.min(1, rawDt * 3)
+    if (Math.abs(camera.fov - fov) > 0.1) {
+      camera.fov = fov
+      camera.updateProjectionMatrix()
+    }
+    if (state === 'ready' || state === 'swoop') {
+      const k = state === 'ready' ? 0 : Math.min(1, swoopT / 1.1)
+      const e = 1 - (1 - k) * (1 - k) * (1 - k)
+      const ang = -2.1 * (1 - e) // side-front → behind
+      camera.position.set(Math.sin(ang) * 10 + lionX * 0.5, 3.4 + 2.2 * e, Math.cos(ang) * 11.5)
+      camera.lookAt(lionX, 1.6, e * -14)
+    } else {
+      camera.position.set(lionX * 0.5 + shake, 5.6 + lionY * 0.25, 11.5)
+      camera.lookAt(lionX * 0.55, 1.3 + lionY * 0.35, -14)
+    }
+
+    // adaptive pixel ratio for weaker phones
+    if (!loweredDpr && rawDt > 0.045) {
+      if (++slowFrames > 60) {
+        loweredDpr = true
+        renderer.setPixelRatio(1)
+      }
+    } else if (slowFrames > 0 && rawDt < 0.03) slowFrames--
 
     renderer.render(scene, camera)
   }
@@ -415,7 +592,9 @@ export function startLionRun3D(
       cancelAnimationFrame(raf)
       ro.disconnect()
       canvas.removeEventListener('pointerdown', onDown)
+      canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
+      canvas.removeEventListener('pointercancel', onCancel)
       window.removeEventListener('keydown', onKey)
       scene.traverse((o) => {
         const m = o as THREE.Mesh

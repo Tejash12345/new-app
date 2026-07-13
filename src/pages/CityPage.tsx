@@ -123,10 +123,18 @@ export function CityPage() {
 
   const [gameOpen, setGameOpen] = useState(false)
   const [runKey, setRunKey] = useState(0)
-  const [result, setResult] = useState<(RunResult & { xpEarned: number; newBest: boolean }) | null>(null)
+  const [result, setResult] = useState<(RunResult & { xpEarned: number; newBest: boolean; freeRun: boolean; stage?: number }) | null>(null)
   const [runStarted, setRunStarted] = useState(false)
   const [runLive, setRunLive] = useState<{ score: number; coins: number } | null>(null)
+  const [stageFlash, setStageFlash] = useState<{ n: number; name: string } | null>(null)
   const gameRef = useRef<HTMLCanvasElement>(null)
+  // whether the current run consumes a reward token (XP) or is a free replay
+  const eligibleRef = useRef(false)
+  useEffect(() => {
+    if (!stageFlash) return
+    const t = setTimeout(() => setStageFlash(null), 1700)
+    return () => clearTimeout(t)
+  }, [stageFlash])
   // keep live values readable from the engine callbacks without re-creating the engine
   const live = useRef({ runsUsed, runXpToday, best })
   useEffect(() => {
@@ -139,13 +147,20 @@ export function CityPage() {
     const callbacks = {
       onStart: () => {
         setRunStarted(true)
-        const used = live.current.runsUsed + 1
-        setRunsUsed(used)
-        localStorage.setItem(`fl-city-runs-${todayKey()}`, String(used))
+        // reward runs consume a token and can earn XP; once tokens are gone
+        // every further run is a free replay (score and glory only)
+        const eligible = live.current.runsUsed < runsAllowed
+        eligibleRef.current = eligible
+        if (eligible) {
+          const used = live.current.runsUsed + 1
+          setRunsUsed(used)
+          localStorage.setItem(`fl-city-runs-${todayKey()}`, String(used))
+        }
       },
-      onOver: (r: RunResult) => {
+      onOver: (r: RunResult & { stage?: number }) => {
+        const freeRun = !eligibleRef.current
         const capLeft = Math.max(0, MAX_RUN_XP_PER_DAY - live.current.runXpToday)
-        const xpEarned = Math.min(r.coins, MAX_XP_PER_RUN, capLeft)
+        const xpEarned = freeRun ? 0 : Math.min(r.coins, MAX_XP_PER_RUN, capLeft)
         if (xpEarned > 0) {
           void addXp(xpEarned, 'Lion Run — City reward')
           const total = live.current.runXpToday + xpEarned
@@ -157,9 +172,10 @@ export function CityPage() {
           setBest(r.score)
           localStorage.setItem('fl-city-best', String(r.score))
         }
-        setResult({ ...r, xpEarned, newBest })
+        setResult({ ...r, xpEarned, newBest, freeRun })
       },
       onScore: (score: number, coins: number) => setRunLive({ score, coins }),
+      onStage: (n: number, name: string) => setStageFlash({ n, name }),
     }
     // the runner is 3D (three.js, lazy chunk); the 2D engine covers no-WebGL devices
     let destroy: (() => void) | undefined
@@ -180,19 +196,20 @@ export function CityPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameOpen, runKey])
 
+  // replays are unlimited — tokens only decide whether a run can earn XP
   function openGame() {
-    if (tokens <= 0) return
     setResult(null)
     setRunStarted(false)
     setRunLive(null)
+    setStageFlash(null)
     setRunKey((k) => k + 1)
     setGameOpen(true)
   }
   function runAgain() {
-    if (tokens <= 0) return
     setResult(null)
     setRunStarted(false)
     setRunLive(null)
+    setStageFlash(null)
     setRunKey((k) => k + 1)
   }
 
@@ -289,20 +306,14 @@ export function CityPage() {
               </div>
             </div>
           </div>
-          {tokens > 0 ? (
-            <button onClick={openGame}
-              className="flex items-center gap-2 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 px-5 py-3 text-sm font-black uppercase tracking-wide text-white shadow-lg shadow-amber-500/30 transition active:scale-95">
-              <Play size={16} className="fill-white" /> Play
-            </button>
-          ) : (
-            <Link to="/focus"
-              className="flex items-center gap-2 rounded-2xl bg-slate-500/10 px-4 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-500/20 dark:text-slate-300">
-              Focus to earn a run <ChevronRight size={15} />
-            </Link>
-          )}
+          <button onClick={openGame}
+            className="flex items-center gap-2 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 px-5 py-3 text-sm font-black uppercase tracking-wide text-white shadow-lg shadow-amber-500/30 transition active:scale-95">
+            <Play size={16} className="fill-white" /> {tokens > 0 ? 'Play' : 'Free run'}
+          </button>
         </div>
         <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
-          1 free run a day · every completed focus session earns another (max {MAX_RUNS_PER_DAY}) · run XP caps at {MAX_RUN_XP_PER_DAY}/day.
+          Play as much as you like — free runs are for score and glory. XP runs: 1 free daily + 1 per
+          completed focus session (max {MAX_RUNS_PER_DAY}), capped at {MAX_RUN_XP_PER_DAY} XP/day.
         </p>
       </GlassCard>
 
@@ -387,11 +398,17 @@ export function CityPage() {
             <div className="flex items-center justify-between px-4 pb-2 pt-[calc(0.75rem+env(safe-area-inset-top))]">
               <div className="city-display text-lg text-white">LION <span className="text-amber-400">RUN</span></div>
               <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1">
-                  {Array.from({ length: runsAllowed }, (_, i) => (
-                    <span key={i} className={cn('h-2.5 w-2.5 rounded-full', i < tokens ? 'bg-emerald-400' : 'bg-white/20')} />
-                  ))}
-                </span>
+                {tokens > 0 ? (
+                  <span className="flex items-center gap-1">
+                    {Array.from({ length: runsAllowed }, (_, i) => (
+                      <span key={i} className={cn('h-2.5 w-2.5 rounded-full', i < tokens ? 'bg-emerald-400' : 'bg-white/20')} />
+                    ))}
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-amber-400/60 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-300">
+                    Free run
+                  </span>
+                )}
                 <span className="font-mono text-xs font-black text-amber-300">BEST {best.toLocaleString()}</span>
                 <button onClick={() => setGameOpen(false)} aria-label="Close game"
                   className="rounded-full p-2 text-white/70 hover:bg-white/10">
@@ -412,6 +429,27 @@ export function CityPage() {
                   <div className="text-xs font-black text-amber-300">● {runLive.coins}</div>
                 </div>
               )}
+
+              {/* stage banner — flashes when the world shifts */}
+              <AnimatePresence>
+                {stageFlash && !result && (
+                  <motion.div
+                    key={stageFlash.n}
+                    initial={{ opacity: 0, scale: 1.7 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ type: 'spring', damping: 18, stiffness: 260 }}
+                    className="pointer-events-none absolute inset-x-0 top-14 flex flex-col items-center"
+                  >
+                    <div className="city-display text-3xl text-amber-300 [text-shadow:0_0_22px_rgba(255,180,84,0.85),0_2px_0_rgba(0,0,0,0.8)]">
+                      STAGE {stageFlash.n}
+                    </div>
+                    <div className="mt-0.5 text-[10px] font-black uppercase tracking-[0.35em] text-white/75">
+                      {stageFlash.name}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* start hint */}
               {!runStarted && !result && (
@@ -434,38 +472,41 @@ export function CityPage() {
                     {result.newBest && (
                       <div className="city-display mt-2 text-base tracking-widest text-amber-400">★ NEW RECORD ★</div>
                     )}
-                    <div className="mt-5 flex gap-6 text-center font-mono">
+                    <div className="mt-5 flex gap-5 text-center font-mono">
                       <div>
                         <div className="text-xl font-black text-white">{result.score.toLocaleString()}</div>
                         <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/50">Score</div>
                       </div>
+                      {result.stage != null && (
+                        <div>
+                          <div className="text-xl font-black text-purple-300">{result.stage}</div>
+                          <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/50">Stage</div>
+                        </div>
+                      )}
                       <div>
                         <div className="text-xl font-black text-amber-300">{result.coins}</div>
                         <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/50">Orbs</div>
                       </div>
                       <div>
-                        <div className="text-xl font-black text-emerald-300">+{result.xpEarned}</div>
+                        <div className="text-xl font-black text-emerald-300">{result.freeRun ? '—' : `+${result.xpEarned}`}</div>
                         <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/50">XP</div>
                       </div>
                     </div>
-                    {result.xpEarned === 0 && result.coins > 0 && (
+                    {result.freeRun ? (
+                      <div className="mt-2 px-6 text-center text-xs text-white/50">Free run — complete a focus session to earn XP runs.</div>
+                    ) : result.xpEarned === 0 && result.coins > 0 ? (
                       <div className="mt-2 px-6 text-center text-xs text-white/50">Daily run-XP cap reached — orbs are just for glory now.</div>
-                    )}
+                    ) : null}
                     <div className="mt-6 flex gap-3">
-                      {tokens > 0 && (
-                        <button onClick={runAgain}
-                          className="rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 px-5 py-2.5 text-sm font-black uppercase tracking-wide text-white shadow-lg active:scale-95">
-                          Run again
-                        </button>
-                      )}
+                      <button onClick={runAgain}
+                        className="rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 px-5 py-2.5 text-sm font-black uppercase tracking-wide text-white shadow-lg active:scale-95">
+                        Run again
+                      </button>
                       <button onClick={() => setGameOpen(false)}
                         className="rounded-2xl bg-white/10 px-5 py-2.5 text-sm font-bold text-white hover:bg-white/20">
                         Back to city
                       </button>
                     </div>
-                    {tokens === 0 && (
-                      <div className="mt-3 px-6 text-center text-xs text-white/50">Out of runs — complete a focus session to earn another.</div>
-                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
