@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles } from 'lucide-react'
+import { motion, useMotionValue, useTransform } from 'framer-motion'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { smartReplies } from '../lib/ai'
@@ -23,6 +24,20 @@ type DMessage = {
   kind?: 'text' | 'image' | 'audio' | 'file' | 'post'
   file_url?: string | null
   file_name?: string | null
+  // WhatsApp-style reply: id of the quoted message + a snapshot of its
+  // snippet/sender so the quote survives deletion of the original
+  reply_to?: string | null
+  reply_snippet?: string | null
+  reply_name?: string | null
+}
+
+/** One-line preview of a message for reply quotes (media become icons). */
+function snippetOf(m: DMessage) {
+  if (m.kind === 'image') return '📷 Photo'
+  if (m.kind === 'audio') return '🎤 Voice message'
+  if (m.kind === 'file') return `📄 ${m.file_name ?? 'Document'}`
+  if (m.kind === 'post') return '📰 Shared post'
+  return (m.body || '').slice(0, 90)
 }
 type RoomMessage = {
   id: string
@@ -87,6 +102,43 @@ function Avatar({ id, name, url, online, size = 11 }: { id: string; name: string
         </div>
       </StoryRing>
       {online && <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />}
+    </div>
+  )
+}
+
+/**
+ * WhatsApp-style swipe-to-reply. Drag a message a little to the right and a
+ * reply arrow fades in beside it; past the threshold, release to quote it.
+ * touch-action stays pan-y so the message list still scrolls normally —
+ * the horizontal drag only wins once the direction lock picks x.
+ */
+function SwipeReply({ children, onReply }: { children: ReactNode; onReply: () => void }) {
+  const x = useMotionValue(0)
+  const arrowOpacity = useTransform(x, [10, 52], [0, 1])
+  const arrowScale = useTransform(x, [10, 60], [0.5, 1.1])
+  return (
+    <div className="relative">
+      <motion.div style={{ opacity: arrowOpacity, scale: arrowScale }}
+        className="absolute -left-7 top-1/2 -translate-y-1/2 text-brand-500">
+        <Reply size={18} />
+      </motion.div>
+      <motion.div
+        drag="x"
+        dragDirectionLock
+        dragConstraints={{ left: 0, right: 72 }}
+        dragElastic={{ left: 0, right: 0.15 }}
+        dragMomentum={false}
+        dragSnapToOrigin
+        style={{ x, touchAction: 'pan-y' }}
+        onDragEnd={(_, info) => {
+          if (info.offset.x > 48) {
+            onReply()
+            navigator.vibrate?.(10)
+          }
+        }}
+      >
+        {children}
+      </motion.div>
     </div>
   )
 }
@@ -204,6 +256,9 @@ function FriendsChat() {
   const [recording, setRecording] = useState(false)
   const [recSeconds, setRecSeconds] = useState(0)
   const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null)
+  const [replyTo, setReplyTo] = useState<DMessage | null>(null)
+  const [flashId, setFlashId] = useState<string | null>(null)
+  const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [suggestBusy, setSuggestBusy] = useState(false)
   const [, setTick] = useState(0)
@@ -345,6 +400,7 @@ function FriendsChat() {
     if (!user || !active) return
     let cancelled = false
     setMessages([])
+    setReplyTo(null)
 
     supabase
       .from('direct_messages')
@@ -375,21 +431,42 @@ function FriendsChat() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
+  /** Reply columns for the message being composed (empty when not replying). */
+  function replyFields() {
+    if (!replyTo || !user || !active) return {}
+    return {
+      reply_to: replyTo.id.startsWith('tmp-') ? null : replyTo.id,
+      reply_snippet: snippetOf(replyTo),
+      reply_name: replyTo.sender_id === user.id ? 'You' : fname(active),
+    }
+  }
+
   async function send(textOverride?: string) {
     const body = (textOverride ?? input).trim()
     if (!body || !user || !active) return
     setInput('')
     setSuggestions([])
     setSendError(null)
+    const reply = replyFields()
+    setReplyTo(null)
     const optimistic: DMessage = {
       id: `tmp-${Date.now()}`, sender_id: user.id, recipient_id: active.friend_id,
-      body, created_at: new Date().toISOString(),
+      body, created_at: new Date().toISOString(), ...reply,
     }
     setMessages((m) => [...m, optimistic])
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('direct_messages')
-      .insert({ sender_id: user.id, recipient_id: active.friend_id, body })
+      .insert({ sender_id: user.id, recipient_id: active.friend_id, body, ...reply })
       .select().single()
+    if (error && 'reply_to' in reply && /reply_|column|schema/i.test(error.message)) {
+      // reply columns not migrated yet — deliver the message without the
+      // quote instead of losing it, and point at the missing upgrade
+      ;({ data, error } = await supabase
+        .from('direct_messages')
+        .insert({ sender_id: user.id, recipient_id: active.friend_id, body })
+        .select().single())
+      if (!error) setSendError('Sent without the quote — run upgrade-29.sql in the Supabase SQL Editor to enable replies.')
+    }
     if (error) {
       setMessages((m) => m.filter((x) => x.id !== optimistic.id))
       setInput(body) // give the text back so nothing is lost
@@ -405,6 +482,16 @@ function FriendsChat() {
     // instant push to the other side — socket.io first, channel broadcast too
     getSocket()?.emit('dm', real)
     channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
+  }
+
+  /** Jump to the quoted original and flash it, WhatsApp style. */
+  function jumpTo(id?: string | null) {
+    if (!id) return
+    const el = msgRefs.current.get(id)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setFlashId(id)
+    setTimeout(() => setFlashId(null), 1300)
   }
 
   async function remove(id: string) {
@@ -451,14 +538,20 @@ function FriendsChat() {
       return
     }
     const { data: pub } = supabase.storage.from('chat-media').getPublicUrl(path)
-    const { data, error } = await supabase
+    const reply = replyFields()
+    setReplyTo(null)
+    const row = {
+      sender_id: user.id, recipient_id: active.friend_id,
+      body: kind === 'file' ? file.name : '',
+      kind, file_url: pub.publicUrl, file_name: file.name,
+    }
+    let { data, error } = await supabase
       .from('direct_messages')
-      .insert({
-        sender_id: user.id, recipient_id: active.friend_id,
-        body: kind === 'file' ? file.name : '',
-        kind, file_url: pub.publicUrl, file_name: file.name,
-      })
+      .insert({ ...row, ...reply })
       .select().single()
+    if (error && 'reply_to' in reply && /reply_|column|schema/i.test(error.message)) {
+      ;({ data, error } = await supabase.from('direct_messages').insert(row).select().single())
+    }
     setUploading(false)
     if (error) {
       setSendError(
@@ -690,6 +783,23 @@ function FriendsChat() {
               ) : messages.map((m, i) => {
                 const mine = m.sender_id === user?.id
                 const time = msgTime(m.created_at)
+                // reply quote: prefer the live original (for You/name + jump),
+                // fall back to the snapshot stored on the message itself
+                const orig = m.reply_to ? messages.find((x) => x.id === m.reply_to) : undefined
+                const quoted = m.reply_snippet || m.reply_to
+                  ? {
+                      name: orig ? (orig.sender_id === user?.id ? 'You' : fname(active)) : m.reply_name || 'Message',
+                      text: m.reply_snippet || (orig ? snippetOf(orig) : 'Original message unavailable'),
+                    }
+                  : null
+                const quoteBlock = quoted && (
+                  <button type="button" onClick={() => jumpTo(m.reply_to)}
+                    className={cn('mb-1 block w-full overflow-hidden rounded-lg border-l-4 px-2.5 py-1.5 text-left text-xs',
+                      mine ? 'border-white/70 bg-white/20 text-white/85' : 'border-brand-400 bg-brand-500/10 text-slate-600 dark:text-slate-300')}>
+                    <div className={cn('font-bold', mine ? 'text-white' : 'text-brand-500')}>{quoted.name}</div>
+                    <div className="line-clamp-2 break-words">{quoted.text}</div>
+                  </button>
+                )
                 return (
                   <Fragment key={m.id}>
                     {isNewDay(messages[i - 1]?.created_at, m.created_at) && (
@@ -699,15 +809,26 @@ function FriendsChat() {
                         </span>
                       </div>
                     )}
+                    <div
+                      ref={(el) => { if (el) msgRefs.current.set(m.id, el); else msgRefs.current.delete(m.id) }}
+                      className={cn('rounded-2xl transition-shadow duration-300', flashId === m.id && 'ring-2 ring-brand-400')}
+                    >
+                    <SwipeReply onReply={() => setReplyTo(m)}>
                     <div className={cn('group flex items-end gap-1.5', mine ? 'justify-end' : 'justify-start')}>
                     {!mine && <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} size={7} />}
                     <div className="flex items-center gap-1.5">
+                      {/* always visible on touch — hover-reveal only works on
+                          desktop, so a hidden control is unreachable on Android */}
                       {mine && (
-                        // always visible on touch — hover-reveal only works on
-                        // desktop, so a hidden control is unreachable on Android
                         <button onClick={() => confirmRemove(m)} aria-label="Delete message"
                           className="shrink-0 p-1.5 text-slate-400 transition hover:text-rose-500 lg:opacity-0 lg:group-hover:opacity-100">
                           <Trash2 size={14} />
+                        </button>
+                      )}
+                      {mine && (
+                        <button onClick={() => setReplyTo(m)} aria-label="Reply to message"
+                          className="shrink-0 p-1.5 text-slate-400 transition hover:text-brand-500 lg:opacity-0 lg:group-hover:opacity-100">
+                          <Reply size={14} />
                         </button>
                       )}
                       {m.kind === 'post' ? (
@@ -720,6 +841,7 @@ function FriendsChat() {
                         m.kind === 'image' && m.file_url ? 'overflow-hidden p-1' : 'px-3.5 py-2',
                         mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
                              : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
+                        {quoteBlock}
                         {m.kind === 'image' && m.file_url ? (
                           <>
                             {/* in-app viewer — a plain link navigates the whole
@@ -753,7 +875,15 @@ function FriendsChat() {
                         )}
                       </div>
                       )}
+                      {!mine && (
+                        <button onClick={() => setReplyTo(m)} aria-label="Reply to message"
+                          className="shrink-0 p-1.5 text-slate-400 transition hover:text-brand-500 lg:opacity-0 lg:group-hover:opacity-100">
+                          <Reply size={14} />
+                        </button>
+                      )}
                     </div>
+                    </div>
+                    </SwipeReply>
                     </div>
                   </Fragment>
                 )
@@ -778,6 +908,22 @@ function FriendsChat() {
                     {s}
                   </button>
                 ))}
+              </div>
+            )}
+            {/* reply preview — WhatsApp-style bar pinned above the composer */}
+            {replyTo && (
+              <div className="mt-3 flex items-center gap-2.5 rounded-2xl border-l-4 border-brand-500 bg-brand-500/10 px-3 py-2">
+                <Reply size={15} className="shrink-0 text-brand-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-brand-600 dark:text-brand-300">
+                    {replyTo.sender_id === user?.id ? 'You' : fname(active)}
+                  </div>
+                  <div className="truncate text-xs text-slate-500 dark:text-slate-300">{snippetOf(replyTo)}</div>
+                </div>
+                <button onClick={() => setReplyTo(null)} aria-label="Cancel reply"
+                  className="shrink-0 rounded-full p-1.5 text-slate-400 hover:bg-slate-500/10">
+                  <X size={15} />
+                </button>
               </div>
             )}
             {recording ? (
