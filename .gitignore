@@ -27,3 +27,8 @@ supabase/.temp/
 *.njsproj
 *.sln
 *.sw?
+
+# dev-only visual harness for Lion City renderers (needs puppeteer-core + local Chrome)
+_city-harness.html
+_shot.mjs
+_city-*.png

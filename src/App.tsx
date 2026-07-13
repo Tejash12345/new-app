@@ -23,6 +23,7 @@ import { StartupPage } from './pages/StartupPage'
 import { NotesPage } from './pages/NotesPage'
 import { AnalyticsPage } from './pages/AnalyticsPage'
 import { ArenaPage } from './pages/ArenaPage'
+import { CityPage } from './pages/CityPage'
 import { CoachPage } from './pages/CoachPage'
 import { ReportPage } from './pages/ReportPage'
 import { ChatPage } from './pages/ChatPage'
@@ -67,6 +68,7 @@ function Gate() {
         <Route path="notes" element={<NotesPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="arena" element={<ArenaPage />} />
+        <Route path="city" element={<CityPage />} />
         <Route path="coach" element={<CoachPage />} />
         <Route path="report" element={<ReportPage />} />
         <Route path="feed" element={<FeedPage />} />

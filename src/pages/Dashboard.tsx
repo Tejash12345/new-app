@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Flame, Timer, CheckCircle2, Star, ArrowRight, Shield } from 'lucide-react'
+import { Flame, Timer, CheckCircle2, Star, ArrowRight, Shield, Gamepad2 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { Habit, SocialLimit, SocialSession, StudySession, Task, TimetableBlock } from '../lib/types'
@@ -58,6 +58,35 @@ export function Dashboard() {
 
       {/* daily AI mission */}
       <DailyMissionCard />
+
+      {/* Lion City — game hub teaser */}
+      <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mb-5">
+        <Link to="/city" className="group relative block overflow-hidden rounded-3xl bg-[#12101f] p-5 ring-1 ring-white/10 transition hover:ring-amber-400/40">
+          {/* mini skyline glow along the bottom edge */}
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-14 opacity-70"
+            style={{
+              background:
+                'linear-gradient(to top, rgba(255,180,84,0.25), transparent), ' +
+                'repeating-linear-gradient(90deg, rgba(255,255,255,0.12) 0 12px, transparent 12px 20px, rgba(255,255,255,0.07) 20px 38px, transparent 38px 50px)',
+              maskImage: 'linear-gradient(to top, black 30%, transparent)',
+              WebkitMaskImage: 'linear-gradient(to top, black 30%, transparent)',
+            }}
+          />
+          <div className="relative flex items-center gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-lg shadow-amber-500/30">
+              <Gamepad2 size={24} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="city-display text-lg text-white">LION CITY</div>
+              <p className="truncate text-sm text-white/60">
+                Lv {level} skyline · missions, runs and rank — your study world in 3D
+              </p>
+            </div>
+            <ArrowRight size={20} className="shrink-0 text-amber-400 transition group-hover:translate-x-1" />
+          </div>
+        </Link>
+      </motion.div>
 
       {/* exam countdown */}
       {(() => {
