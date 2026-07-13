@@ -591,7 +591,15 @@ function FriendsChat() {
         const m = payload as DMessage
         setMessages((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev, m])
         // the thread is open, so anything that arrives is instantly read
-        if (m.sender_id !== user.id) markRead()
+        if (m.sender_id !== user.id) {
+          markRead()
+          // a watch-together card doubles as the live invite — more reliable
+          // than the tg-open broadcast if events arrive out of order
+          if (m.kind === 'tg') {
+            const s = tgSessionFrom(m)
+            if (s) setTgInvite(s)
+          }
+        }
       })
       .on('broadcast', { event: 'del' }, ({ payload }) => {
         setMessages((prev) => prev.filter((x) => x.id !== (payload as { id: string }).id))
@@ -1799,7 +1807,39 @@ function FriendsChat() {
           registerTgHandler={(fn) => { tgOverlayHandler.current = fn }}
           resolveMediaUrl={resolveTgMedia}
           onClose={() => setTg(null)}
-          callNode={<div className="px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"><VoiceCallBar call={call} partnerName={fname(active).split(' ')[0]} /></div>}
+          chatNode={
+            <div className="flex min-h-0 flex-1 flex-col px-3">
+              <div className="flex-1 space-y-1.5 overflow-y-auto py-1.5">
+                {visible.slice(-40).map((m) => {
+                  const mineMsg = m.sender_id === user.id
+                  return (
+                    <div key={m.id} className={cn('flex', mineMsg ? 'justify-end' : 'justify-start')}>
+                      <span className={cn('max-w-[80%] break-words rounded-2xl px-3 py-1.5 text-sm [overflow-wrap:anywhere]',
+                        mineMsg ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white' : 'rounded-bl-md bg-white/10 text-white/90')}>
+                        {!m.kind || m.kind === 'text' ? m.body : snippetOf(m)}
+                      </span>
+                    </div>
+                  )
+                })}
+                <div ref={(el) => el?.scrollIntoView({ block: 'nearest' })} />
+              </div>
+              <div className="flex shrink-0 items-center gap-2 pb-2">
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && send()}
+                  maxLength={500}
+                  placeholder="Message…"
+                  className="min-w-0 flex-1 rounded-full bg-white/10 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/40"
+                />
+                <button onPointerDown={(e) => e.preventDefault()} onClick={() => send()} aria-label="Send message"
+                  className="shrink-0 rounded-full bg-gradient-to-r from-brand-500 to-brand-400 p-2.5 text-white shadow active:scale-95">
+                  <Send size={16} />
+                </button>
+              </div>
+            </div>
+          }
+          callNode={<div className="shrink-0 px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))]"><VoiceCallBar call={call} partnerName={fname(active).split(' ')[0]} /></div>}
         />
       )}
 

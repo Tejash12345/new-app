@@ -86,7 +86,7 @@ function loadYouTubeApi(): Promise<void> {
 
 // ---------- synced playback overlay ----------
 export function TogetherOverlay({
-  session, meId, partnerName, sendTg, registerTgHandler, resolveMediaUrl, onClose, callNode,
+  session, meId, partnerName, sendTg, registerTgHandler, resolveMediaUrl, onClose, callNode, chatNode,
 }: {
   session: TogetherSession
   meId: string
@@ -96,6 +96,7 @@ export function TogetherOverlay({
   resolveMediaUrl: (msgId: string) => Promise<string | null>
   onClose: () => void
   callNode?: React.ReactNode
+  chatNode?: React.ReactNode
 }) {
   const ytRef = useRef<YTPlayer | null>(null)
   const mediaRef = useRef<HTMLVideoElement | null>(null)
@@ -105,6 +106,12 @@ export function TogetherOverlay({
   const [partnerHere, setPartnerHere] = useState(false)
   // Drive files that refuse direct playback drop to Drive's own player iframe
   const [driveFallback, setDriveFallback] = useState(false)
+  // mobile browsers refuse playback started by ANOTHER phone until this
+  // device gets one real tap — gate everything behind "Tap to play"
+  const [needsTap, setNeedsTap] = useState(true)
+  const needsTapRef = useRef(true)
+  useEffect(() => { needsTapRef.current = needsTap })
+  const pendingState = useRef<{ playing: boolean; t: number; at: number } | null>(null)
   // floating emoji reactions, mirrored on both screens
   const [emotes, setEmotes] = useState<{ id: number; e: string; x: number }[]>([])
   const emoteSeq = useRef(0)
@@ -129,6 +136,12 @@ export function TogetherOverlay({
       }
       if (p.a !== 'state' || p.t == null || p.at == null) return
       setPartnerHere(true)
+      // before this device's first tap, playback is blocked anyway — remember
+      // where the partner is and catch up when the user taps play
+      if (needsTapRef.current) {
+        pendingState.current = { playing: !!p.playing, t: p.t, at: p.at }
+        return
+      }
       const expected = p.playing ? p.t + (Date.now() - p.at) / 1000 : p.t
       applyingRemote.current = Date.now() + 900
       const yt = ytRef.current
@@ -157,7 +170,7 @@ export function TogetherOverlay({
         videoId: session.videoId,
         width: '100%',
         height: '100%',
-        playerVars: { playsinline: 1, rel: 0 },
+        playerVars: { playsinline: 1, rel: 0, origin: window.location.origin },
         events: {
           onStateChange: (e: { data: number }) => {
             const yt = ytRef.current
@@ -203,6 +216,24 @@ export function TogetherOverlay({
 
   const isVideo = session.kind === 'youtube' || session.kind === 'drive' || (session.kind === 'media' && session.isVideo)
   const title = ('name' in session && session.name) ? session.name : 'Watching together'
+
+  /** First real tap on this device — unblocks playback and catches up to the partner. */
+  function tapStart() {
+    setNeedsTap(false)
+    const pend = pendingState.current
+    const expected = pend ? (pend.playing ? pend.t + (Date.now() - pend.at) / 1000 : pend.t) : 0
+    if (pend) applyingRemote.current = Date.now() + 900 // catching up — don't echo back
+    const yt = ytRef.current
+    if (yt) {
+      if (expected > 1) yt.seekTo(expected, true)
+      yt.playVideo()
+    }
+    const el = mediaRef.current
+    if (el) {
+      if (expected > 1) el.currentTime = expected
+      void el.play().catch(() => {})
+    }
+  }
   const mediaEvents = {
     onPlay: (e: React.SyntheticEvent<HTMLVideoElement>) => broadcastState(true, e.currentTarget.currentTime),
     onPause: (e: React.SyntheticEvent<HTMLVideoElement>) => broadcastState(false, e.currentTarget.currentTime),
@@ -210,7 +241,7 @@ export function TogetherOverlay({
   }
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-      className="fixed inset-0 z-[85] flex flex-col overflow-y-auto bg-[#06050d]/95 backdrop-blur-sm">
+      className="fixed inset-0 z-[85] flex flex-col bg-[#06050d]/95 backdrop-blur-sm">
       <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:px-4">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-white">
           {session.kind === 'media' && !session.isVideo
@@ -266,8 +297,19 @@ export function TogetherOverlay({
             <div className="h-14 w-full animate-pulse rounded-xl bg-white/10" />
           )
         )}
+        {/* one real tap unblocks playback on this device */}
+        {needsTap && !(session.kind === 'drive' && driveFallback) && !(session.kind === 'media' && mediaGone) && (
+          <button onClick={tapStart}
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/55 text-white">
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-purple-500 text-2xl shadow-lg">
+              ▶
+            </span>
+            <span className="text-sm font-bold">Tap to play</span>
+            <span className="px-6 text-center text-[11px] text-white/60">each phone taps once — then you stay in sync</span>
+          </button>
+        )}
         {/* floating live reactions from both sides */}
-        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
           {emotes.map((em) => (
             <motion.div key={em.id}
               initial={{ opacity: 1, y: 0, scale: 0.8 }}
@@ -281,19 +323,22 @@ export function TogetherOverlay({
         </div>
       </div>
 
-      <div className="px-4 py-2 text-center text-xs text-white/50">
+      <div className="shrink-0 px-4 py-1.5 text-center text-[11px] text-white/50">
         {session.kind === 'drive' && driveFallback
           ? 'Drive player mode — press play on both phones.'
           : partnerHere
-            ? `In sync with ${partnerName} — play, pause and seek together. 🎧`
+            ? `In sync with ${partnerName} 🎧`
             : `Waiting for ${partnerName} to join…`}
       </div>
 
+      {/* chat rides along under the player */}
+      {chatNode}
+
       {/* live emote bar */}
-      <div className="flex flex-wrap items-center justify-center gap-1 px-4 pb-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-center gap-1 px-4 pb-1.5">
         {['❤️', '😂', '🔥', '😮', '👏', '💯'].map((e) => (
           <button key={e} onClick={() => { pushEmote(e); sendTg({ a: 'emote', e }) }}
-            className="rounded-full bg-white/10 px-2.5 py-1.5 text-lg transition hover:bg-white/20 active:scale-90">
+            className="rounded-full bg-white/10 px-2.5 py-1 text-lg transition hover:bg-white/20 active:scale-90">
             {e}
           </button>
         ))}
