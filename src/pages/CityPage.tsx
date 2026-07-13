@@ -210,11 +210,12 @@ export function CityPage() {
         <canvas ref={cityRef} className="absolute inset-0 h-full w-full" />
 
         {/* rank plate */}
-        <div className="absolute left-3 top-3 rounded-2xl bg-black/45 px-3.5 py-2.5 backdrop-blur-md">
+        {/* rank stacks vertically so long titles (STRATEGIST…) never collide
+            with the XP plate on narrow phones */}
+        <div className="absolute left-3 top-3 max-w-[52%] rounded-2xl bg-black/45 px-3.5 py-2.5 backdrop-blur-md">
           <div className="text-[9px] font-bold uppercase tracking-[0.25em] text-white/60">Rank</div>
-          <div className="city-display text-2xl leading-none text-white">
-            LV {level} <span className="text-amber-400">{levelTitle(level).toUpperCase()}</span>
-          </div>
+          <div className="city-display text-2xl leading-none text-white">LV {level}</div>
+          <div className="city-display truncate text-sm leading-tight text-amber-400">{levelTitle(level).toUpperCase()}</div>
           <div className="mt-1 flex gap-0.5">
             {Array.from({ length: 5 }, (_, i) => (
               <Star key={i} size={13}
@@ -265,23 +266,27 @@ export function CityPage() {
       {/* ---- Lion Run ---- */}
       <GlassCard className="mb-5 overflow-hidden !border-amber-400/30 bg-gradient-to-br from-amber-400/10 via-transparent to-purple-500/10">
         <div className="flex flex-wrap items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-lg">
-            <Gamepad2 size={26} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="city-display text-xl text-slate-900 dark:text-white">LION RUN</div>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              3D night sprint through a neon canyon — swipe between lanes, jump the barriers, grab XP orbs.
-            </p>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold">
-              <span className="flex items-center gap-1 text-amber-500"><Trophy size={13} /> Best {best.toLocaleString()}</span>
-              <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400">
-                Runs
-                {Array.from({ length: runsAllowed }, (_, i) => (
-                  <span key={i} className={cn('h-2.5 w-2.5 rounded-full', i < tokens ? 'bg-emerald-400' : 'bg-slate-400/30')} />
-                ))}
-              </span>
-              <span className="flex items-center gap-1 text-emerald-500"><Zap size={13} /> up to +{MAX_XP_PER_RUN} XP a run</span>
+          {/* icon + copy travel together; the Play button wraps to its own
+              row on narrow phones instead of crushing the text column */}
+          <div className="flex min-w-0 flex-[1_1_14rem] items-center gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-lg">
+              <Gamepad2 size={26} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="city-display text-xl text-slate-900 dark:text-white">LION RUN</div>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                3D night sprint through a neon canyon — swipe between lanes, jump the barriers, grab XP orbs.
+              </p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold">
+                <span className="flex items-center gap-1 text-amber-500"><Trophy size={13} /> Best {best.toLocaleString()}</span>
+                <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400">
+                  Runs
+                  {Array.from({ length: runsAllowed }, (_, i) => (
+                    <span key={i} className={cn('h-2.5 w-2.5 rounded-full', i < tokens ? 'bg-emerald-400' : 'bg-slate-400/30')} />
+                  ))}
+                </span>
+                <span className="flex items-center gap-1 text-emerald-500"><Zap size={13} /> up to +{MAX_XP_PER_RUN} XP a run</span>
+              </div>
             </div>
           </div>
           {tokens > 0 ? (
@@ -333,7 +338,7 @@ export function CityPage() {
             </div>
           </div>
           {mission?.done && (
-            <div className="city-display pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 rotate-[-12deg] rounded-lg border-2 border-emerald-400/80 px-2 py-0.5 text-sm text-emerald-300/90">
+            <div className="city-display pointer-events-none absolute right-4 top-1/2 hidden -translate-y-1/2 rotate-[-12deg] rounded-lg border-2 border-emerald-400/80 px-2 py-0.5 text-sm text-emerald-300/90 sm:block">
               MISSION PASSED
             </div>
           )}
@@ -410,7 +415,7 @@ export function CityPage() {
 
               {/* start hint */}
               {!runStarted && !result && (
-                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-black/25">
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-black/25 px-6 text-center">
                   <div className="city-display text-3xl text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">TAP TO RUN</div>
                   <div className="mt-2 text-xs font-semibold text-white/70">
                     swipe ← → to change lane · tap to jump · tap again = double jump
@@ -444,7 +449,7 @@ export function CityPage() {
                       </div>
                     </div>
                     {result.xpEarned === 0 && result.coins > 0 && (
-                      <div className="mt-2 text-xs text-white/50">Daily run-XP cap reached — orbs are just for glory now.</div>
+                      <div className="mt-2 px-6 text-center text-xs text-white/50">Daily run-XP cap reached — orbs are just for glory now.</div>
                     )}
                     <div className="mt-6 flex gap-3">
                       {tokens > 0 && (
@@ -459,7 +464,7 @@ export function CityPage() {
                       </button>
                     </div>
                     {tokens === 0 && (
-                      <div className="mt-3 text-xs text-white/50">Out of runs — complete a focus session to earn another.</div>
+                      <div className="mt-3 px-6 text-center text-xs text-white/50">Out of runs — complete a focus session to earn another.</div>
                     )}
                   </motion.div>
                 )}
