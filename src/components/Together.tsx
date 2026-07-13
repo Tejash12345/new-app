@@ -652,7 +652,7 @@ export type RtcPayload = {
   sdp?: RTCSessionDescriptionInit
   cand?: RTCIceCandidateInit
 }
-export type CallState = 'idle' | 'incoming' | 'connecting' | 'live' | 'failed' | 'mic'
+export type CallState = 'idle' | 'incoming' | 'connecting' | 'answered' | 'live' | 'failed' | 'mic'
 
 export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; sendRtc: (p: Omit<RtcPayload, 'from'>) => void }) {
   const [state, setState] = useState<CallState>('idle')
@@ -698,7 +698,8 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   const makePc = useCallback(async () => {
     const pc = new RTCPeerConnection({
       iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
+        // several STUNs — different carriers blacklist different ones
+        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
         // free public TURN relay — mobile carriers usually block direct
         // peer-to-peer, so calls ride this relay when punching through fails
         {
@@ -707,6 +708,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
           credential: 'openrelayproject',
         },
       ],
+      iceCandidatePoolSize: 4,
     })
     pc.onicecandidate = (e) => { if (e.candidate) sendRtc({ t: 'ice', cand: e.candidate.toJSON() }) }
     pc.ontrack = (e) => {
@@ -758,7 +760,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
       sendRtc({ t: 'answer', sdp: answer })
-      setState('connecting')
+      setState('answered')
     } catch (e) {
       setState(failState(e))
     }
@@ -780,13 +782,29 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
       setState('incoming')
       navigator.vibrate?.([80, 60, 80])
     }
-    if (p.t === 'answer' && p.sdp) void pcRef.current?.setRemoteDescription(p.sdp).catch(() => {})
+    if (p.t === 'answer' && p.sdp) {
+      // the caller hears about the ACCEPT immediately — before this, the
+      // UI sat on "Calling…" until audio connected, looking broken
+      setState('answered')
+      void pcRef.current?.setRemoteDescription(p.sdp).catch(() => {})
+    }
     if (p.t === 'ice' && p.cand) {
       if (pcRef.current?.remoteDescription) void pcRef.current.addIceCandidate(p.cand).catch(() => {})
       else candBuffer.current.push(p.cand)
     }
     if (p.t === 'end') { cleanup(); setState('idle') }
   }, [meId, cleanup])
+
+  // watchdog: accepted/dialing but no audio within 25s → fail with Retry
+  // (dead relays used to leave both sides on "connecting" forever)
+  useEffect(() => {
+    if (state !== 'connecting' && state !== 'answered') return
+    const t = setTimeout(() => {
+      cleanup()
+      setState('failed')
+    }, 25_000)
+    return () => clearTimeout(t)
+  }, [state, cleanup])
 
   // hang up if the component unmounts (leaving the conversation)
   useEffect(() => () => { cleanup() }, [cleanup])
@@ -810,11 +828,18 @@ export function VoiceCallBar({ call, partnerName }: {
         call.state === 'live' ? 'text-emerald-500' : call.state === 'failed' || call.state === 'mic' ? 'text-rose-500' : 'animate-pulse text-brand-500')} />
       <span className="min-w-0 flex-1 text-sm font-semibold leading-snug text-slate-800 dark:text-slate-100">
         {call.state === 'incoming' && `${partnerName} is calling…`}
-        {call.state === 'connecting' && `Calling ${partnerName}… (can take ~10s on mobile data)`}
+        {call.state === 'connecting' && `Calling ${partnerName}…`}
+        {call.state === 'answered' && 'Call accepted ✓ — connecting audio…'}
         {call.state === 'live' && `Voice call with ${partnerName}`}
-        {call.state === 'failed' && 'Call couldn’t connect — check you’re both online and try again.'}
+        {call.state === 'failed' && 'No audio path — the network blocked the call.'}
         {call.state === 'mic' && 'Microphone is blocked — allow mic access for FocusLion in your phone settings, then try again.'}
       </span>
+      {call.state === 'failed' && (
+        <button onClick={() => void call.startCall()}
+          className="shrink-0 rounded-full bg-brand-500 px-3 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
+          Retry
+        </button>
+      )}
       {call.state === 'incoming' && (
         <button onClick={call.acceptCall}
           className="rounded-full bg-emerald-500 px-3.5 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
