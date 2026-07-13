@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { smartReplies } from '../lib/ai'
@@ -50,6 +50,18 @@ function ttlLabel(s: number) {
 }
 
 const REACTION_SET = ['❤️', '😂', '👍', '😮', '😢', '🔥']
+
+// the full grid behind the + button — any of these can be a reaction
+const MORE_REACTIONS = [
+  '😀', '😁', '🤣', '😊', '😍', '🥰', '😘', '😎',
+  '🤩', '🥳', '😇', '🤗', '🤔', '🤫', '😏', '😅',
+  '😬', '🙄', '😴', '🤯', '🥺', '😤', '😭', '💀',
+  '👎', '👏', '🙏', '🤝', '💪', '✌️', '🤞', '👌',
+  '🫶', '🧡', '💛', '💚', '💙', '💜', '🖤', '💔',
+  '💯', '⭐', '✨', '⚡', '🎉', '🎊', '🏆', '🥇',
+  '🎯', '📚', '✏️', '🧠', '💡', '⏰', '🚀', '🦁',
+  '🌙', '☀️', '🌈', '🍀', '🎵', '💤', '❓', '❗',
+]
 
 function reactionCounts(r: Record<string, string>) {
   const out: Record<string, number> = {}
@@ -342,6 +354,7 @@ function FriendsChat() {
   const [replyTo, setReplyTo] = useState<DMessage | null>(null)
   const [flashId, setFlashId] = useState<string | null>(null)
   const [reactFor, setReactFor] = useState<DMessage | null>(null)
+  const [reactMore, setReactMore] = useState(false)
   const [peerReadAt, setPeerReadAt] = useState<string | null>(null)
   const [ttl, setTtl] = useState(0)
   const [ttlMenuOpen, setTtlMenuOpen] = useState(false)
@@ -665,6 +678,7 @@ function FriendsChat() {
     if (next[user.id] === emoji) delete next[user.id]
     else next[user.id] = emoji
     setReactFor(null)
+    setReactMore(false)
     setMessages((list) => list.map((x) => (x.id === m.id ? { ...x, reactions: next } : x)))
     const { error } = await supabase.from('direct_messages').update({ reactions: next }).eq('id', m.id)
     if (!error) channelRef.current?.send({ type: 'broadcast', event: 'react', payload: { id: m.id, reactions: next } })
@@ -675,6 +689,7 @@ function FriendsChat() {
   function pressStart(m: DMessage, e: React.PointerEvent) {
     pressCancel()
     const t = setTimeout(() => {
+      setReactMore(false)
       setReactFor(m)
       navigator.vibrate?.(10)
     }, 430)
@@ -1120,19 +1135,40 @@ function FriendsChat() {
                     {/* reaction picker — long-press (or double-click) a bubble */}
                     {reactFor?.id === m.id && (
                       <>
-                        <div className="fixed inset-0 z-20" onClick={() => setReactFor(null)} />
+                        <div className="fixed inset-0 z-20" onClick={() => { setReactFor(null); setReactMore(false) }} />
                         <motion.div
                           initial={{ opacity: 0, scale: 0.8, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
                           transition={{ type: 'spring', damping: 20, stiffness: 380 }}
-                          className={cn('glass-strong relative z-30 mb-1 flex w-fit gap-0.5 rounded-full px-2 py-1', mine && 'ml-auto')}
+                          className={cn('glass-strong relative z-30 mb-1',
+                            reactMore ? 'w-72 max-w-[78vw] rounded-3xl p-2' : 'flex w-fit gap-0.5 rounded-full px-2 py-1',
+                            mine && 'ml-auto')}
                         >
-                          {REACTION_SET.map((e) => (
-                            <button key={e} onPointerDown={(ev) => ev.preventDefault()} onClick={() => react(m, e)}
-                              className={cn('rounded-full px-1.5 py-0.5 text-xl transition hover:scale-125 active:scale-90',
-                                m.reactions?.[user?.id ?? ''] === e && 'bg-brand-500/25')}>
-                              {e}
-                            </button>
-                          ))}
+                          {reactMore ? (
+                            // the full grid behind the + — react with anything
+                            <div className="grid max-h-44 grid-cols-8 gap-0.5 overflow-y-auto">
+                              {MORE_REACTIONS.map((e) => (
+                                <button key={e} onPointerDown={(ev) => ev.preventDefault()} onClick={() => react(m, e)}
+                                  className={cn('rounded-xl py-0.5 text-xl transition hover:scale-125 active:scale-90',
+                                    m.reactions?.[user?.id ?? ''] === e && 'bg-brand-500/25')}>
+                                  {e}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <>
+                              {REACTION_SET.map((e) => (
+                                <button key={e} onPointerDown={(ev) => ev.preventDefault()} onClick={() => react(m, e)}
+                                  className={cn('rounded-full px-1.5 py-0.5 text-xl transition hover:scale-125 active:scale-90',
+                                    m.reactions?.[user?.id ?? ''] === e && 'bg-brand-500/25')}>
+                                  {e}
+                                </button>
+                              ))}
+                              <button aria-label="More emojis" onPointerDown={(ev) => ev.preventDefault()} onClick={() => setReactMore(true)}
+                                className="ml-0.5 flex h-8 w-8 items-center justify-center self-center rounded-full bg-slate-500/15 text-slate-600 transition hover:bg-slate-500/25 active:scale-90 dark:bg-white/10 dark:text-slate-200">
+                                <Plus size={17} />
+                              </button>
+                            </>
+                          )}
                         </motion.div>
                       </>
                     )}
