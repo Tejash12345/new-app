@@ -49,6 +49,10 @@ type AppState = {
   setChatUnread: (m: Record<string, number>) => void
   addChatUnread: (senderId: string) => void
   clearChatUnread: (senderId: string) => void
+  // global voice calling (CallHost registers itself here) — any page can
+  // start a call, and incoming calls ring no matter where you are
+  callApi: { start: (peerId: string, peerName: string) => void } | null
+  setCallApi: (api: { start: (peerId: string, peerName: string) => void } | null) => void
 }
 
 const prefersDark =
@@ -134,6 +138,8 @@ export const useApp = create<AppState>((set) => ({
       delete next[senderId]
       return { chatUnread: next }
     }),
+  callApi: null,
+  setCallApi: (api) => set({ callApi: api }),
 }))
 
 /**

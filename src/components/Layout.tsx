@@ -16,6 +16,7 @@ import { Onboarding } from './Onboarding'
 import { PresenceTracker } from './PresenceTracker'
 import { StoryRing, useStories } from './Stories'
 import { LionAI } from './LionAI'
+import { CallHost } from './CallHost'
 import { MascotImg } from './ui'
 import { useNotificationEngine, useDMNotifications, useFriendRequestNotifications, requestNotifPermission } from '../hooks/useNotifications'
 import { cn, levelForXp } from '../lib/utils'
@@ -85,6 +86,8 @@ export function Layout() {
       <Onboarding />
       <PresenceTracker />
       <LionAI />
+      {/* voice calls ring on every page, WhatsApp-style */}
+      <CallHost />
 
       {/* ---- desktop sidebar ---- */}
       <aside className="fixed left-4 top-4 bottom-4 z-40 hidden w-60 flex-col lg:flex">

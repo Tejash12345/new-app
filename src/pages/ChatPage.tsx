@@ -15,7 +15,7 @@ import { useOnlineCheck } from '../hooks/useOnline'
 import { GlassCard, Page, Input, Button, Empty, ProgressRing } from '../components/ui'
 import { cn } from '../lib/utils'
 import { chatMediaPath, deleteMediaBlob, getMediaBlob, objectUrlFor, putMediaBlob } from '../lib/mediaStore'
-import { TogetherOverlay, VoiceCallBar, useVoiceCall, ytIdFrom, driveIdFrom, playableKind, type TogetherSession, type TgPayload, type RtcPayload } from '../components/Together'
+import { TogetherOverlay, ytIdFrom, driveIdFrom, playableKind, type TogetherSession, type TgPayload } from '../components/Together'
 
 type DMessage = {
   id: string
@@ -401,14 +401,9 @@ function FriendsChat() {
   const sendTg = (p: Omit<TgPayload, 'from'>) => {
     if (user) channelRef.current?.send({ type: 'broadcast', event: 'tg', payload: { ...p, from: user.id } })
   }
-  const call = useVoiceCall({
-    meId: user?.id,
-    sendRtc: (p) => {
-      if (user) channelRef.current?.send({ type: 'broadcast', event: 'rtc', payload: { ...p, from: user.id } })
-    },
-  })
-  const callRef = useRef(call)
-  useEffect(() => { callRef.current = call })
+  // calls are handled app-wide by CallHost (rings on any page); chat only
+  // needs the start button
+  const callApi = useApp((s) => s.callApi)
   const [, setDuoTick] = useState(0)
   const duoRef = useRef<DuoState | null>(null)
   useEffect(() => { duoRef.current = duo })
@@ -631,9 +626,6 @@ function FriendsChat() {
         if (p.a === 'close') setTgInvite(null)
         // forward sync, emotes and join/leave presence into the open overlay
         if (p.a === 'state' || p.a === 'emote' || p.a === 'join' || p.a === 'close') tgOverlayHandler.current(p)
-      })
-      .on('broadcast', { event: 'rtc' }, ({ payload }) => {
-        callRef.current.handleRtc(payload as RtcPayload)
       })
       .on('broadcast', { event: 'focus' }, ({ payload }) => {
         const p = payload as { a: 'start' | 'quit' | 'done'; from: string; start?: number; min?: number }
@@ -1261,7 +1253,7 @@ function FriendsChat() {
               {/* Together — synced YouTube / music + live voice call */}
               <div className="relative ml-auto">
                 <button onClick={() => setTgMenuOpen((o) => !o)} aria-label="Together menu"
-                  className={cn('rounded-full p-2 transition hover:bg-slate-500/10', tg || call.state !== 'idle' ? 'text-brand-500' : 'text-slate-400')}>
+                  className={cn('rounded-full p-2 transition hover:bg-slate-500/10', tg ? 'text-brand-500' : 'text-slate-400')}>
                   <MonitorPlay size={18} />
                 </button>
                 {tgMenuOpen && (
@@ -1271,7 +1263,7 @@ function FriendsChat() {
                       <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
                         Together
                       </div>
-                      <button onClick={() => { setTgMenuOpen(false); void call.startCall() }}
+                      <button onClick={() => { setTgMenuOpen(false); callApi?.start(active.friend_id, fname(active)) }}
                         className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
                         <Phone size={15} className="text-emerald-500" /> Voice call
                       </button>
@@ -1344,9 +1336,6 @@ function FriendsChat() {
                 )}
               </div>
             </div>
-
-            {/* live voice call strip (moves into the Together overlay when open) */}
-            {!tg && <VoiceCallBar call={call} partnerName={fname(active).split(' ')[0]} />}
 
             {/* incoming watch-together invite — accept to join in sync */}
             {tgInvite && !tg && (
@@ -1840,7 +1829,6 @@ function FriendsChat() {
               </div>
             </div>
           }
-          callNode={<div className="shrink-0 px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))]"><VoiceCallBar call={call} partnerName={fname(active).split(' ')[0]} /></div>}
         />
       )}
 
