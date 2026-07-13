@@ -406,9 +406,11 @@ function FriendsChat() {
       .from('direct_messages')
       .select('*')
       .or(`and(sender_id.eq.${user.id},recipient_id.eq.${active.friend_id}),and(sender_id.eq.${active.friend_id},recipient_id.eq.${user.id})`)
-      .order('created_at', { ascending: true })
+      // newest first + limit keeps the LATEST 200 — ascending+limit returned
+      // the oldest 200, so long conversations reopened with new messages missing
+      .order('created_at', { ascending: false })
       .limit(200)
-      .then(({ data }) => { if (!cancelled) setMessages((data as DMessage[]) ?? []) })
+      .then(({ data }) => { if (!cancelled) setMessages(((data as DMessage[]) ?? []).reverse()) })
 
     const channel = supabase.channel(`dm-${pairKey}`)
     channel
@@ -1014,9 +1016,10 @@ function RoomsChat() {
     let cancelled = false
     setMessages([])
 
+    // newest 100, flipped for display — same latest-N fix as the DM history
     supabase.from('chat_messages').select('*').eq('room', room)
-      .order('created_at', { ascending: true }).limit(100)
-      .then(({ data }) => { if (!cancelled) setMessages((data as RoomMessage[]) ?? []) })
+      .order('created_at', { ascending: false }).limit(100)
+      .then(({ data }) => { if (!cancelled) setMessages(((data as RoomMessage[]) ?? []).reverse()) })
 
     const channel = supabase.channel(`room-${room}`, { config: { presence: { key: user.id } } })
     channel
