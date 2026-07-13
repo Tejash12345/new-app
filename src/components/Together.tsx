@@ -22,7 +22,7 @@ export type TogetherSession =
   | { kind: 'drive'; fileId: string; name?: string }
 
 export type TgPayload = {
-  a: 'open' | 'state' | 'close' | 'emote'
+  a: 'open' | 'state' | 'close' | 'emote' | 'join'
   from: string
   kind?: TogetherSession['kind']
   videoId?: string
@@ -128,6 +128,21 @@ export function TogetherOverlay({
     const iv = setInterval(() => setElapsed((e) => e + 1), 1000)
     return () => clearInterval(iv)
   }, [])
+  // "X joined / left the room" announcements
+  const [notices, setNotices] = useState<{ id: number; text: string }[]>([])
+  const noticeSeq = useRef(0)
+  const pushNotice = useCallback((text: string) => {
+    const id = ++noticeSeq.current
+    setNotices((list) => [...list.slice(-2), { id, text }])
+    setTimeout(() => setNotices((list) => list.filter((n) => n.id !== id)), 3200)
+  }, [])
+  // announce ourselves so the partner's room greets us by name
+  const sendTgRef = useRef(sendTg)
+  useEffect(() => { sendTgRef.current = sendTg })
+  useEffect(() => {
+    sendTgRef.current({ a: 'join' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // floating emoji reactions, mirrored on both screens
   const [emotes, setEmotes] = useState<{ id: number; e: string; x: number }[]>([])
   const emoteSeq = useRef(0)
@@ -149,6 +164,27 @@ export function TogetherOverlay({
       if (p.from === meId) return
       if (p.a === 'emote' && p.e) {
         pushEmote(p.e)
+        return
+      }
+      if (p.a === 'join') {
+        setPartnerHere(true)
+        pushNotice(`🎉 ${partnerName} joined the room`)
+        navigator.vibrate?.(15)
+        // greet the newcomer with our position so they sync instantly
+        if (iDrive.current) {
+          const yt = ytRef.current
+          const el = mediaRef.current
+          if (yt && window.YT && yt.getPlayerState() === window.YT.PlayerState.PLAYING) {
+            sendTgRef.current({ a: 'state', playing: true, t: yt.getCurrentTime(), at: Date.now() })
+          } else if (el && !el.paused) {
+            sendTgRef.current({ a: 'state', playing: true, t: el.currentTime, at: Date.now() })
+          }
+        }
+        return
+      }
+      if (p.a === 'close') {
+        setPartnerHere(false)
+        pushNotice(`👋 ${partnerName} left the room`)
         return
       }
       if (p.a !== 'state' || p.t == null || p.at == null) return
@@ -203,7 +239,7 @@ export function TogetherOverlay({
       }
     })
     return () => registerTgHandler(() => {})
-  }, [registerTgHandler, meId, pushEmote])
+  }, [registerTgHandler, meId, pushEmote, pushNotice, partnerName])
 
   // youtube player
   useEffect(() => {
@@ -385,6 +421,17 @@ export function TogetherOverlay({
             🔊 Tap for sound
           </button>
         )}
+        {/* join / leave announcements */}
+        <div className="pointer-events-none absolute inset-x-0 top-2 z-30 flex flex-col items-center gap-1">
+          {notices.map((n) => (
+            <motion.div key={n.id}
+              initial={{ opacity: 0, y: -10, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              className="rounded-full bg-white px-3.5 py-1.5 text-xs font-bold text-slate-900 shadow-xl">
+              {n.text}
+            </motion.div>
+          ))}
+        </div>
         {/* floating live reactions from both sides */}
         <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
           {emotes.map((em) => (

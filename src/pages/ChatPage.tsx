@@ -629,8 +629,8 @@ function FriendsChat() {
           navigator.vibrate?.([40, 40, 40])
         }
         if (p.a === 'close') setTgInvite(null)
-        // forward playback sync AND floating emotes into the open overlay
-        if (p.a === 'state' || p.a === 'emote') tgOverlayHandler.current(p)
+        // forward sync, emotes and join/leave presence into the open overlay
+        if (p.a === 'state' || p.a === 'emote' || p.a === 'join' || p.a === 'close') tgOverlayHandler.current(p)
       })
       .on('broadcast', { event: 'rtc' }, ({ payload }) => {
         callRef.current.handleRtc(payload as RtcPayload)
