@@ -629,7 +629,8 @@ function FriendsChat() {
           navigator.vibrate?.([40, 40, 40])
         }
         if (p.a === 'close') setTgInvite(null)
-        if (p.a === 'state') tgOverlayHandler.current(p)
+        // forward playback sync AND floating emotes into the open overlay
+        if (p.a === 'state' || p.a === 'emote') tgOverlayHandler.current(p)
       })
       .on('broadcast', { event: 'rtc' }, ({ payload }) => {
         callRef.current.handleRtc(payload as RtcPayload)

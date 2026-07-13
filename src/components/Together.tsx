@@ -68,6 +68,8 @@ type YTPlayer = {
   seekTo: (s: number, allow: boolean) => void
   getCurrentTime: () => number
   getPlayerState: () => number
+  mute: () => void
+  unMute: () => void
   destroy: () => void
 }
 let ytReady: Promise<void> | null = null
@@ -100,7 +102,12 @@ export function TogetherOverlay({
 }) {
   const ytRef = useRef<YTPlayer | null>(null)
   const mediaRef = useRef<HTMLVideoElement | null>(null)
-  const applyingRemote = useRef(0) // ignore our own player events briefly after applying theirs
+  // Echo control — the cure for play/pause ping-pong between the phones:
+  // whoever touched the controls last "drives"; the follower applies remote
+  // state silently (never re-broadcasts it) and only heartbeats when driving.
+  const applyingRemote = useRef(0)
+  const iDrive = useRef(false)
+  const ECHO_MS = 2500 // > mobile buffering delay, so buffer-induced events stay quiet
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [mediaGone, setMediaGone] = useState(false)
   const [partnerHere, setPartnerHere] = useState(false)
@@ -112,6 +119,15 @@ export function TogetherOverlay({
   const needsTapRef = useRef(true)
   useEffect(() => { needsTapRef.current = needsTap })
   const pendingState = useRef<{ playing: boolean; t: number; at: number } | null>(null)
+  // follower autoplay: playback starts MUTED automatically (YouTube-style);
+  // one tap turns the sound on — browsers only allow silent autoplay
+  const [soundGate, setSoundGate] = useState(false)
+  // how long this hangout has been running
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    const iv = setInterval(() => setElapsed((e) => e + 1), 1000)
+    return () => clearInterval(iv)
+  }, [])
   // floating emoji reactions, mirrored on both screens
   const [emotes, setEmotes] = useState<{ id: number; e: string; x: number }[]>([])
   const emoteSeq = useRef(0)
@@ -123,6 +139,7 @@ export function TogetherOverlay({
 
   const broadcastState = useCallback((playing: boolean, t: number) => {
     if (Date.now() < applyingRemote.current) return
+    iDrive.current = true
     sendTg({ a: 'state', playing, t, at: Date.now() })
   }, [sendTg])
 
@@ -136,23 +153,51 @@ export function TogetherOverlay({
       }
       if (p.a !== 'state' || p.t == null || p.at == null) return
       setPartnerHere(true)
-      // before this device's first tap, playback is blocked anyway — remember
-      // where the partner is and catch up when the user taps play
+      // before this device's first tap: start muted automatically (silent
+      // autoplay is allowed) and offer a tap-for-sound pill instead
       if (needsTapRef.current) {
         pendingState.current = { playing: !!p.playing, t: p.t, at: p.at }
+        const yt2 = ytRef.current
+        const el2 = mediaRef.current
+        if (p.playing && (yt2 || el2)) {
+          iDrive.current = false
+          applyingRemote.current = Date.now() + ECHO_MS
+          const exp = p.t + (Date.now() - p.at) / 1000
+          if (yt2) {
+            yt2.mute()
+            if (exp > 1) yt2.seekTo(exp, true)
+            yt2.playVideo()
+          }
+          if (el2) {
+            el2.muted = true
+            if (exp > 1) el2.currentTime = exp
+            void el2.play().catch(() => {})
+          }
+          setNeedsTap(false)
+          setSoundGate(true)
+        }
         return
       }
+      // the partner acted — they drive now, we follow silently
+      iDrive.current = false
       const expected = p.playing ? p.t + (Date.now() - p.at) / 1000 : p.t
-      applyingRemote.current = Date.now() + 900
       const yt = ytRef.current
+      const el = mediaRef.current
+      const localT = yt ? yt.getCurrentTime() : el ? el.currentTime : 0
+      const localPlaying = yt
+        ? (window.YT ? yt.getPlayerState() === window.YT.PlayerState.PLAYING : false)
+        : el ? !el.paused : false
+      // already aligned → touch nothing (re-applying is what caused the
+      // stop/resume stutter: every apply kicked off buffering + echo events)
+      if (localPlaying === !!p.playing && Math.abs(localT - expected) < 3) return
+      applyingRemote.current = Date.now() + ECHO_MS
       if (yt) {
-        if (Math.abs(yt.getCurrentTime() - expected) > 1.5) yt.seekTo(expected, true)
+        if (Math.abs(localT - expected) >= 3) yt.seekTo(expected, true)
         if (p.playing) yt.playVideo()
         else yt.pauseVideo()
       }
-      const el = mediaRef.current
       if (el) {
-        if (Math.abs(el.currentTime - expected) > 1.5) el.currentTime = expected
+        if (Math.abs(localT - expected) >= 3) el.currentTime = expected
         if (p.playing) void el.play().catch(() => {})
         else el.pause()
       }
@@ -200,9 +245,11 @@ export function TogetherOverlay({
     return () => { dead = true }
   }, [session.kind, session.kind === 'media' ? session.msgId : '', resolveMediaUrl])
 
-  // gentle heartbeat so a missed event can't leave the two sides apart
+  // gentle heartbeat so a missed event can't leave the two sides apart —
+  // only the driving side speaks, so heartbeats can't ping-pong
   useEffect(() => {
     const iv = setInterval(() => {
+      if (!iDrive.current) return
       const yt = ytRef.current
       const el = mediaRef.current
       if (yt && window.YT && yt.getPlayerState() === window.YT.PlayerState.PLAYING) {
@@ -222,7 +269,11 @@ export function TogetherOverlay({
     setNeedsTap(false)
     const pend = pendingState.current
     const expected = pend ? (pend.playing ? pend.t + (Date.now() - pend.at) / 1000 : pend.t) : 0
-    if (pend) applyingRemote.current = Date.now() + 900 // catching up — don't echo back
+    if (pend) {
+      // catching up to the partner — we're the follower, stay quiet
+      iDrive.current = false
+      applyingRemote.current = Date.now() + ECHO_MS
+    }
     const yt = ytRef.current
     if (yt) {
       if (expected > 1) yt.seekTo(expected, true)
@@ -231,6 +282,22 @@ export function TogetherOverlay({
     const el = mediaRef.current
     if (el) {
       if (expected > 1) el.currentTime = expected
+      void el.play().catch(() => {})
+    }
+  }
+
+  /** The tap that turns sound on after a muted autoplay start. */
+  function tapSound() {
+    setSoundGate(false)
+    applyingRemote.current = Date.now() + ECHO_MS
+    const yt = ytRef.current
+    if (yt) {
+      yt.unMute()
+      yt.playVideo()
+    }
+    const el = mediaRef.current
+    if (el) {
+      el.muted = false
       void el.play().catch(() => {})
     }
   }
@@ -248,6 +315,9 @@ export function TogetherOverlay({
             ? <Music size={18} className="shrink-0 text-amber-400" />
             : <Clapperboard size={18} className="shrink-0 text-red-400" />}
           <span className="truncate text-sm font-bold">{title} · with {partnerName}</span>
+          <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-white/70">
+            {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}
+          </span>
         </div>
         <button onClick={() => { sendTg({ a: 'close' }); onClose() }} aria-label="Leave together session"
           className="shrink-0 rounded-full p-2 text-white/70 hover:bg-white/10">
@@ -306,6 +376,13 @@ export function TogetherOverlay({
             </span>
             <span className="text-sm font-bold">Tap to play</span>
             <span className="px-6 text-center text-[11px] text-white/60">each phone taps once — then you stay in sync</span>
+          </button>
+        )}
+        {/* muted-autoplay started — one tap for sound */}
+        {soundGate && (
+          <button onClick={tapSound}
+            className="absolute bottom-3 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-4 py-2 text-sm font-black text-slate-900 shadow-xl active:scale-95">
+            🔊 Tap for sound
           </button>
         )}
         {/* floating live reactions from both sides */}
