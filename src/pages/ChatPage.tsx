@@ -1079,8 +1079,13 @@ function FriendsChat() {
                 const time = (m.expires_at ? '⏱ ' : '') + msgTime(m.created_at)
                 // WhatsApp ticks on my bubbles: ✓ sent → ✓✓ once they read it
                 const read = mine && !!peerReadAt && new Date(m.created_at) <= new Date(peerReadAt)
+                // read = unmistakably blue, WhatsApp style; a soft glow keeps
+                // the blue visible even on the blue outgoing bubble
                 const tick = mine && !m.id.startsWith('tmp-')
-                  ? <span className={cn('ml-1 text-[10px] font-bold leading-none', read ? 'text-cyan-200' : 'text-white/60')}>{read ? '✓✓' : '✓'}</span>
+                  ? <span className={cn('ml-1 text-[11px] font-black leading-none',
+                      read ? 'text-cyan-300 drop-shadow-[0_0_3px_rgba(34,211,238,0.9)]' : 'text-white/50')}>
+                      {read ? '✓✓' : '✓'}
+                    </span>
                   : null
                 // reply quote: prefer the live original (for You/name + jump),
                 // fall back to the snapshot stored on the message itself
