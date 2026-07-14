@@ -212,6 +212,7 @@ export function TogetherOverlay({
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [mediaGone, setMediaGone] = useState(false)
   const [partnerHere, setPartnerHere] = useState(false)
+  const [driveLoading, setDriveLoading] = useState(true)
   // mobile browsers refuse playback started by ANOTHER phone until this
   // device gets one real tap — gate everything behind "Tap to play"
   const [needsTap, setNeedsTap] = useState(true)
@@ -537,6 +538,10 @@ export function TogetherOverlay({
     })
     return () => { dead = true }
   }, [current.kind, current.kind === 'media' ? current.msgId : '', resolveMediaUrl])
+  // show the loading spinner again whenever a new Drive video comes on
+  useEffect(() => {
+    if (current.kind === 'drive') setDriveLoading(true)
+  }, [current.kind, current.kind === 'drive' ? current.fileId : ''])
 
   // gentle heartbeat so a missed event can't leave the two sides apart —
   // only the driving side speaks, so heartbeats can't ping-pong
@@ -677,20 +682,31 @@ export function TogetherOverlay({
       </div>
 
       <div ref={boxRef}
-        className={cn('relative mx-3 shrink-0 overflow-hidden bg-black', fs ? 'h-full rounded-none' : 'rounded-3xl ring-1 ring-white/15', isVideo ? (fs ? '' : 'aspect-video') : 'h-32')}>
+        className={cn('relative shrink-0 overflow-hidden bg-black',
+          fs ? 'h-full w-full rounded-none' : 'mx-3 rounded-3xl ring-1 ring-white/15',
+          isVideo ? (fs ? '' : 'aspect-video') : 'h-32')}>
         {current.kind === 'youtube' && <div id="tg-yt" className="h-full w-full" />}
         {current.kind === 'drive' && (
           // Drive's own /preview player is the reliable embed — the direct
           // uc?export=download URL serves a virus-scan warning page for most
           // files, so a raw <video> showed a dead/stuck play button. This fills
           // the box and plays with Drive's own controls (no custom sync).
-          <iframe
-            src={`https://drive.google.com/file/d/${current.fileId}/preview`}
-            className="h-full w-full border-0"
-            allow="autoplay; fullscreen"
-            allowFullScreen
-            title="Google Drive player"
-          />
+          <>
+            <iframe
+              src={`https://drive.google.com/file/d/${current.fileId}/preview`}
+              className="absolute inset-0 h-full w-full border-0"
+              allow="autoplay; fullscreen"
+              allowFullScreen
+              onLoad={() => setDriveLoading(false)}
+              title="Google Drive player"
+            />
+            {driveLoading && (
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black">
+                <div className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-white/90" />
+                <span className="text-xs text-white/60">Loading Drive video…</span>
+              </div>
+            )}
+          </>
         )}
         {current.kind === 'media' && (
           mediaGone ? (
@@ -723,8 +739,9 @@ export function TogetherOverlay({
             standalone fullscreen toggle — the app's fullscreen button otherwise
             lives in that bar. Fullscreening boxRef makes the iframe fill screen. */}
         {current.kind === 'drive' && (
+          // top-LEFT so it doesn't clash with Drive's own popout icon (top-right)
           <button onClick={toggleFs} aria-label={fs ? 'Exit fullscreen' : 'Fullscreen'}
-            className="absolute right-2 top-2 z-[8] rounded-full bg-black/55 p-2 text-white/90 backdrop-blur active:scale-90">
+            className="absolute left-2 top-2 z-[8] rounded-full bg-black/55 p-2 text-white/90 backdrop-blur active:scale-90">
             {fs ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
           </button>
         )}
