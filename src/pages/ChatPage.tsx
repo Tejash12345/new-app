@@ -1801,6 +1801,13 @@ function FriendsChat() {
           registerTgHandler={(fn) => { tgOverlayHandler.current = fn }}
           resolveMediaUrl={resolveTgMedia}
           onClose={() => setTg(null)}
+          callInfo={callApi ? {
+            state: callApi.state,
+            muted: callApi.muted,
+            start: () => callApi.start(active.friend_id, fname(active)),
+            end: callApi.end,
+            toggleMute: callApi.toggleMute,
+          } : undefined}
           chatNode={
             <div className="flex min-h-0 flex-1 flex-col px-3">
               <div className="flex-1 space-y-1.5 overflow-y-auto py-1.5">

@@ -50,9 +50,17 @@ type AppState = {
   addChatUnread: (senderId: string) => void
   clearChatUnread: (senderId: string) => void
   // global voice calling (CallHost registers itself here) — any page can
-  // start a call, and incoming calls ring no matter where you are
-  callApi: { start: (peerId: string, peerName: string) => void } | null
-  setCallApi: (api: { start: (peerId: string, peerName: string) => void } | null) => void
+  // start/control a call, and incoming calls ring no matter where you are.
+  // state/muted mirror CallHost so embedded UIs (e.g. the fullscreen watch
+  // player) can render live call controls.
+  callApi: {
+    start: (peerId: string, peerName: string) => void
+    end: () => void
+    toggleMute: () => void
+    state: string
+    muted: boolean
+  } | null
+  setCallApi: (api: AppState['callApi']) => void
 }
 
 const prefersDark =

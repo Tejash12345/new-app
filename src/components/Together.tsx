@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Clapperboard, Maximize2, Mic, MicOff, Minimize2, Music, Phone, PhoneOff, Plus, X } from 'lucide-react'
+import { Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, Music, Phone, PhoneOff, Plus, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 export type TogetherSession =
@@ -116,7 +116,7 @@ function loadYouTubeApi(): Promise<void> {
 
 // ---------- synced playback overlay ----------
 export function TogetherOverlay({
-  session, meId, partnerName, sendTg, registerTgHandler, resolveMediaUrl, onClose, callNode, chatNode,
+  session, meId, partnerName, sendTg, registerTgHandler, resolveMediaUrl, onClose, callNode, chatNode, callInfo,
 }: {
   session: TogetherSession
   meId: string
@@ -127,6 +127,8 @@ export function TogetherOverlay({
   onClose: () => void
   callNode?: React.ReactNode
   chatNode?: React.ReactNode
+  // live call controls so fullscreen can start / mute / end without leaving
+  callInfo?: { state: string; muted: boolean; start: () => void; end: () => void; toggleMute: () => void }
 }) {
   const ytRef = useRef<YTPlayer | null>(null)
   const mediaRef = useRef<HTMLVideoElement | null>(null)
@@ -179,8 +181,15 @@ export function TogetherOverlay({
   // fullscreen for the player box (works for iframe and <video> alike)
   const boxRef = useRef<HTMLDivElement>(null)
   const [fs, setFs] = useState(false)
+  // chat slides up OVER the video while fullscreen (everything outside the
+  // fullscreened element is invisible, so it must live inside the box)
+  const [fsChat, setFsChat] = useState(false)
   useEffect(() => {
-    const f = () => setFs(!!document.fullscreenElement)
+    const f = () => {
+      const on = !!document.fullscreenElement
+      setFs(on)
+      if (!on) setFsChat(false)
+    }
     document.addEventListener('fullscreenchange', f)
     return () => document.removeEventListener('fullscreenchange', f)
   }, [])
@@ -685,6 +694,54 @@ export function TogetherOverlay({
                 {fs ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
               </button>
             )}
+            {/* fullscreen-only: chat + live voice-call controls stay reachable */}
+            {fs && (
+              <button onClick={() => setFsChat((o) => !o)} aria-label="Chat"
+                className={cn('shrink-0 rounded-full p-1.5 active:scale-90', fsChat ? 'bg-white/25 text-white' : 'text-white/85')}>
+                <MessageCircle size={15} />
+              </button>
+            )}
+            {fs && callInfo && (
+              callInfo.state === 'idle' ? (
+                <button onClick={callInfo.start} aria-label="Start voice call"
+                  className="shrink-0 rounded-full p-1.5 text-emerald-400 active:scale-90">
+                  <Phone size={15} />
+                </button>
+              ) : (
+                <>
+                  <button onClick={callInfo.toggleMute} aria-label={callInfo.muted ? 'Unmute' : 'Mute'}
+                    className={cn('shrink-0 rounded-full p-1.5 active:scale-90', callInfo.muted ? 'text-rose-400' : 'text-white/85')}>
+                    {callInfo.muted ? <MicOff size={15} /> : <Mic size={15} />}
+                  </button>
+                  <button onClick={callInfo.end} aria-label="End call"
+                    className="shrink-0 rounded-full bg-rose-500 p-1.5 text-white active:scale-90">
+                    <PhoneOff size={15} />
+                  </button>
+                </>
+              )
+            )}
+          </div>
+        )}
+
+        {/* fullscreen call status pill */}
+        {fs && callInfo && callInfo.state !== 'idle' && (
+          <div className="pointer-events-none absolute left-2 top-2 z-[9] rounded-full bg-black/60 px-3 py-1 text-[11px] font-bold text-white/90">
+            {callInfo.state === 'live' ? `🎙 In call with ${partnerName}` : callInfo.state === 'incoming' ? `📞 ${partnerName} is calling — exit fullscreen to answer` : '📞 Connecting…'}
+          </div>
+        )}
+
+        {/* fullscreen chat sheet — the conversation, over the video */}
+        {fs && fsChat && (
+          <div className="absolute inset-x-0 bottom-[52px] z-[9] flex h-[46%] flex-col rounded-t-2xl bg-black/80 backdrop-blur-sm">
+            <div className="flex shrink-0 items-center justify-center gap-1 py-1">
+              {['❤️', '😂', '🔥', '😮', '👏', '💯'].map((e) => (
+                <button key={e} onClick={() => { pushEmote(e); sendTg({ a: 'emote', e }) }}
+                  className="rounded-full bg-white/10 px-2 py-0.5 text-base active:scale-90">
+                  {e}
+                </button>
+              ))}
+            </div>
+            {chatNode}
           </div>
         )}
 
@@ -776,8 +833,9 @@ export function TogetherOverlay({
         )}
       </div>
 
-      {/* chat rides along under the player */}
-      {chatNode}
+      {/* chat rides along under the player (single instance — moves into
+          the fullscreen sheet when that's open) */}
+      {!(fs && fsChat) && chatNode}
 
       {/* live emote bar */}
       <div className="flex shrink-0 flex-wrap items-center justify-center gap-1 px-4 pb-1.5">

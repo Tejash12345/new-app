@@ -75,7 +75,8 @@ export function CallHost() {
     return () => { void supabase.removeChannel(ch) }
   }, [user?.id])
 
-  // let any page start a call (chat menu, future profile buttons…)
+  // let any page start AND control the call (chat menu, fullscreen player…);
+  // re-registered on every state change so embedded UIs stay live
   useEffect(() => {
     setCallApi({
       start: (peerId, peerName) => {
@@ -84,10 +85,14 @@ export function CallHost() {
         peerRef.current = { id: peerId, name: peerName.split(' ')[0] }
         void callRef.current.startCall()
       },
+      end: () => callRef.current.endCall(true),
+      toggleMute: () => callRef.current.toggleMute(),
+      state: call.state,
+      muted: call.muted,
     })
-    return () => setCallApi(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [call.state, call.muted])
+  useEffect(() => () => setCallApi(null), [setCallApi])
 
   // tidy the send channel when a call fully ends
   useEffect(() => {
