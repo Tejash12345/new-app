@@ -13,8 +13,9 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorOff, MonitorUp, Music, Phone, PhoneOff, Plus, SwitchCamera, Video, VideoOff, X } from 'lucide-react'
+import { ChevronDown, Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorOff, MonitorUp, Music, Phone, PhoneOff, Plus, SwitchCamera, Video, VideoOff, Volume1, Volume2, X } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { callAudioStart, callAudioSpeaker, callAudioEnd } from '../lib/callAudio'
 
 export type TogetherSession =
   | { kind: 'youtube'; videoId: string }
@@ -1056,6 +1057,9 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   const [screenOn, setScreenOn] = useState(false)
   const [remoteScreenOn, setRemoteScreenOn] = useState(false)
   const [screenError, setScreenError] = useState<string | null>(null)
+  // audio output: false = earpiece (default for voice), true = loudspeaker
+  const [speakerOn, setSpeakerOn] = useState(false)
+  const audioStarted = useRef(false)
   const screenStreamRef = useRef<MediaStream | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -1285,6 +1289,15 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     setMuted(next)
   }, [muted])
 
+  /** Earpiece ↔ loudspeaker (native Android routing; no-op in a browser). */
+  const toggleSpeaker = useCallback(() => {
+    setSpeakerOn((on) => {
+      const next = !on
+      callAudioSpeaker(next)
+      return next
+    })
+  }, [])
+
   // Put a video track (camera OR screen) onto the ONE video sender. The first
   // time a call ever sends video this adds the m-line and renegotiates in
   // place; after that it's a zero-cost replaceTrack. replaceTrack(null) keeps
@@ -1459,38 +1472,59 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     return () => clearInterval(iv)
   }, [state, sendRtc])
 
+  // route call audio natively: on connect, a video call starts on the
+  // loudspeaker (hands-free) and a voice call on the earpiece; end restores
+  // normal media routing. Browser = no-op (no earpiece concept).
+  useEffect(() => {
+    if (state === 'live' && !audioStarted.current) {
+      audioStarted.current = true
+      const speaker = camOn || remoteCamOn
+      setSpeakerOn(speaker)
+      callAudioStart(speaker)
+    }
+    if (state === 'idle' && audioStarted.current) {
+      audioStarted.current = false
+      callAudioEnd()
+    }
+  }, [state, camOn, remoteCamOn])
+
   // hang up if the component unmounts (leaving the conversation)
-  useEffect(() => () => { cleanup() }, [cleanup])
+  useEffect(() => () => { cleanup(); if (audioStarted.current) { audioStarted.current = false; callAudioEnd() } }, [cleanup])
 
   const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function'
-  return { state, muted, camOn, remoteCamOn, screenOn, remoteScreenOn, screenError, canScreenShare, startCall, acceptCall, endCall, toggleMute, toggleCam, flipCam, toggleScreen, handleRtc, attachEl, attachLocalVideo, attachRemoteVideo }
+  return { state, muted, camOn, remoteCamOn, screenOn, remoteScreenOn, screenError, canScreenShare, speakerOn, startCall, acceptCall, endCall, toggleMute, toggleCam, flipCam, toggleScreen, toggleSpeaker, handleRtc, attachEl, attachLocalVideo, attachRemoteVideo }
 }
 
 /** The in-chat call strip: incoming / connecting / live, with mute + hang up. */
-export function VoiceCallBar({ call, partnerName }: {
+export function VoiceCallBar({ call, partnerName, onExpand }: {
   call: ReturnType<typeof useVoiceCall>
   partnerName: string
+  onExpand?: () => void
 }) {
   // NOTE: the remote <audio> sink is owned by CallHost (always mounted) —
   // this bar is pure UI
   if (call.state === 'idle') return null
   const live = call.state === 'live'
   const kind = call.screenOn || call.remoteScreenOn ? 'Screen share' : call.camOn || call.remoteCamOn ? 'Video call' : 'Voice call'
+  const StatusTag = onExpand ? 'button' : 'div'
   return (
     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
       className={cn('mb-2 rounded-2xl border bg-white/95 px-3 py-2 shadow-lg backdrop-blur dark:bg-slate-900/95 sm:px-3.5',
         call.state === 'incoming' ? 'border-emerald-400/70' : call.state === 'failed' || call.state === 'mic' ? 'border-rose-400/60' : 'border-brand-400/50')}>
       <div className="flex items-center gap-2">
-        <Phone size={16} className={cn('shrink-0',
-          live ? 'text-emerald-500' : call.state === 'failed' || call.state === 'mic' ? 'text-rose-500' : 'animate-pulse text-brand-500')} />
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
-          {call.state === 'incoming' && `${partnerName} is calling…`}
-          {call.state === 'connecting' && `Calling ${partnerName}…`}
-          {call.state === 'answered' && 'Connecting…'}
-          {live && `${kind} · ${partnerName}`}
-          {call.state === 'failed' && 'Call failed — the network blocked it.'}
-          {call.state === 'mic' && 'Mic blocked — enable it in phone settings.'}
-        </span>
+        {/* tapping the status area re-opens the full-screen call */}
+        <StatusTag onClick={onExpand} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <Phone size={16} className={cn('shrink-0',
+            live ? 'text-emerald-500' : call.state === 'failed' || call.state === 'mic' ? 'text-rose-500' : 'animate-pulse text-brand-500')} />
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
+            {call.state === 'incoming' && `${partnerName} is calling…`}
+            {call.state === 'connecting' && `Calling ${partnerName}…`}
+            {call.state === 'answered' && 'Connecting…'}
+            {live && `${kind} · ${partnerName}`}
+            {call.state === 'failed' && 'Call failed — the network blocked it.'}
+            {call.state === 'mic' && 'Mic blocked — enable it in phone settings.'}
+          </span>
+        </StatusTag>
         {call.state === 'failed' && (
           <button onClick={() => void call.startCall()}
             className="shrink-0 rounded-full bg-brand-500 px-3 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
@@ -1520,6 +1554,11 @@ export function VoiceCallBar({ call, partnerName }: {
                 {call.screenOn ? <MonitorOff size={15} /> : <MonitorUp size={15} />}
               </button>
             )}
+            <button onClick={call.toggleSpeaker} aria-label={call.speakerOn ? 'Switch to earpiece' : 'Switch to speaker'}
+              className={cn('rounded-full p-2 transition active:scale-90',
+                call.speakerOn ? 'bg-amber-500/15 text-amber-500' : 'bg-slate-500/10 text-slate-500 dark:text-slate-300')}>
+              {call.speakerOn ? <Volume2 size={15} /> : <Volume1 size={15} />}
+            </button>
             <button onClick={call.toggleMute} aria-label={call.muted ? 'Unmute' : 'Mute'}
               className={cn('rounded-full p-2 transition active:scale-90',
                 call.muted ? 'bg-rose-500/15 text-rose-500' : 'bg-slate-500/10 text-slate-500 dark:text-slate-300')}>
@@ -1546,3 +1585,126 @@ export function VoiceCallBar({ call, partnerName }: {
     </motion.div>
   )
 }
+
+/** A round control button for the full-screen call screen. */
+function CallBtn({ onClick, on, active, danger, label, children }: {
+  onClick: () => void; on?: boolean; active?: boolean; danger?: boolean; label: string; children: React.ReactNode
+}) {
+  return (
+    <button onClick={onClick} aria-label={label}
+      className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-full backdrop-blur transition active:scale-90 sm:h-14 sm:w-14',
+        danger ? 'bg-rose-500 text-white shadow-lg'
+          : active ? 'bg-white text-slate-900'
+          : on ? 'bg-white/25 text-white' : 'bg-white/10 text-white')}>
+      {children}
+    </button>
+  )
+}
+
+/**
+ * Full-screen call screen (dialer-style), shown once a call is accepted — for
+ * BOTH voice and video. Video/screen fills the screen; a voice call shows the
+ * partner's avatar on a gradient. Minimizes to the floating bar so the app
+ * stays usable. Mobile-first / responsive with safe-area insets.
+ */
+/* eslint-disable react-hooks/refs -- `call` carries callback refs (attach*Video)
+   that are MEANT to be wired in render; the rule taints the whole hook return. */
+export function CallScreen({ call, peerName, avatarUrl, onMinimize }: {
+  call: ReturnType<typeof useVoiceCall>
+  peerName: string
+  avatarUrl?: string
+  onMinimize: () => void
+}) {
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (call.state !== 'live') return
+    const iv = setInterval(() => setElapsed((e) => e + 1), 1000)
+    return () => clearInterval(iv)
+  }, [call.state])
+
+  const showRemoteVideo = call.remoteScreenOn || call.remoteCamOn
+  const status = call.state === 'connecting' ? 'Calling…'
+    : call.state === 'answered' ? 'Connecting…'
+    : call.state === 'live' ? `${fmtTime(elapsed)}${call.remoteScreenOn ? ' · sharing screen' : ''}`
+    : call.state === 'failed' ? 'Call failed — network blocked it'
+    : call.state === 'mic' ? 'Microphone is blocked' : ''
+  const live = call.state === 'live'
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      className="fixed inset-0 z-[115] flex flex-col overflow-hidden bg-gradient-to-b from-[#131a2e] via-[#0d1120] to-black">
+      {/* remote video / screen fills the screen; voice call shows the avatar */}
+      {showRemoteVideo ? (
+        <video ref={call.attachRemoteVideo} autoPlay playsInline muted
+          className={cn('absolute inset-0 h-full w-full', call.remoteScreenOn ? 'object-contain' : 'object-cover')} />
+      ) : (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
+          <div className="relative">
+            <span className={cn('absolute inset-0 -m-3 rounded-full bg-brand-400/30', !live && 'animate-ping')} />
+            <div className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-purple-500 text-4xl font-bold text-white shadow-2xl sm:h-32 sm:w-32">
+              {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : peerName.slice(0, 1).toUpperCase()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* local camera preview — small, draggable-looking PIP, top-right */}
+      {call.camOn && (
+        <button onClick={() => void call.flipCam()} aria-label="Flip camera"
+          className="absolute right-3 top-[calc(4rem+env(safe-area-inset-top))] z-10 active:scale-95">
+          <video ref={call.attachLocalVideo} autoPlay playsInline muted
+            className="aspect-[3/4] w-24 -scale-x-100 rounded-2xl bg-black object-cover shadow-xl ring-1 ring-white/25 sm:w-28" />
+          <SwitchCamera size={15} className="absolute bottom-1.5 right-1.5 text-white/85" />
+        </button>
+      )}
+
+      {/* top bar: minimize + name + status (over a scrim so it reads on video) */}
+      <div className="relative z-10 flex items-center gap-2 bg-gradient-to-b from-black/60 to-transparent px-3 pb-6 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+        <button onClick={onMinimize} aria-label="Minimize call"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur active:scale-90">
+          <ChevronDown size={20} />
+        </button>
+        <div className="min-w-0 flex-1 text-white">
+          <div className="truncate text-lg font-bold leading-tight">{peerName}</div>
+          <div className="truncate text-sm text-white/70">{status}</div>
+        </div>
+      </div>
+
+      <div className="flex-1" />
+
+      {/* bottom controls — wrap-safe, fits 360px */}
+      <div className="relative z-10 bg-gradient-to-t from-black/70 to-transparent px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-8">
+        {call.screenError && (
+          <div className="mx-auto mb-3 w-fit max-w-full rounded-lg bg-rose-500/20 px-3 py-1.5 text-center text-xs font-medium text-rose-200">
+            {call.screenError}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          {live && (
+            <>
+              <CallBtn onClick={call.toggleSpeaker} on={call.speakerOn} label={call.speakerOn ? 'Switch to earpiece' : 'Switch to speaker'}>
+                {call.speakerOn ? <Volume2 size={22} /> : <Volume1 size={22} />}
+              </CallBtn>
+              <CallBtn onClick={call.toggleMute} active={call.muted} label={call.muted ? 'Unmute' : 'Mute'}>
+                {call.muted ? <MicOff size={22} /> : <Mic size={22} />}
+              </CallBtn>
+              <CallBtn onClick={() => void call.toggleCam()} on={call.camOn} label={call.camOn ? 'Turn camera off' : 'Turn camera on'}>
+                {call.camOn ? <Video size={22} /> : <VideoOff size={22} />}
+              </CallBtn>
+              {call.canScreenShare && (
+                <CallBtn onClick={() => void call.toggleScreen()} on={call.screenOn} label={call.screenOn ? 'Stop sharing screen' : 'Share screen'}>
+                  {call.screenOn ? <MonitorOff size={22} /> : <MonitorUp size={22} />}
+                </CallBtn>
+              )}
+            </>
+          )}
+          {call.state === 'failed' && (
+            <CallBtn onClick={() => void call.startCall()} on label="Retry"><Phone size={22} /></CallBtn>
+          )}
+          <CallBtn onClick={() => call.endCall(true)} danger label="End call"><PhoneOff size={24} /></CallBtn>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+/* eslint-enable react-hooks/refs */

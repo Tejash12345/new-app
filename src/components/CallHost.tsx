@@ -20,7 +20,7 @@ import { cn } from '../lib/utils'
 import { useAuth } from '../hooks/useAuth'
 import { useApp } from '../store/app'
 import { useAvatars } from '../hooks/useAvatars'
-import { useVoiceCall, VoiceCallBar, type RtcPayload } from './Together'
+import { useVoiceCall, VoiceCallBar, CallScreen, type RtcPayload } from './Together'
 
 export function CallHost() {
   const { user, profile } = useAuth()
@@ -30,6 +30,8 @@ export function CallHost() {
   const [peer, setPeer] = useState<{ id: string; name: string; video?: boolean } | null>(null)
   const peerRef = useRef(peer)
   useEffect(() => { peerRef.current = peer })
+  // full-screen call UI by default; the user can minimize to the floating bar
+  const [minimized, setMinimized] = useState(false)
 
   // one send-channel per peer, created lazily and awaited before first use
   const sendChannel = useRef<{ peerId: string; ch: RealtimeChannel; ready: Promise<void> } | null>(null)
@@ -77,6 +79,7 @@ export function CallHost() {
           const s = callRef.current.state
           if (s === 'idle' || s === 'incoming' || s === 'failed' || s === 'mic') {
             setPeer({ id: p.from, name: p.fromName || 'A friend', video: p.video })
+            setMinimized(false) // an incoming call opens full-screen
           }
         }
         callRef.current.handleRtc(p)
@@ -91,6 +94,7 @@ export function CallHost() {
     setCallApi({
       start: (peerId, peerName, video) => {
         setPeer({ id: peerId, name: peerName.split(' ')[0], video })
+        setMinimized(false) // each new call opens full-screen
         // peerRef must be set before the offer goes out
         peerRef.current = { id: peerId, name: peerName.split(' ')[0] }
         void callRef.current.startCall(video ? { video: true } : undefined)
@@ -211,19 +215,30 @@ export function CallHost() {
     )
   }
 
-  // connecting / live / failed / mic — floating strip on every page
+  // connecting / live / failed / mic
   if (call.state !== 'idle' && peer) {
+    // full-screen dialer-style call UI (voice + video) unless the user
+    // minimized it or a watch-together overlay is already the surface
+    if (!minimized && !tgOpen) {
+      return (
+        <>
+          {sink}
+          <CallScreen call={call} peerName={peer.name} avatarUrl={avatarFor(peer.id)}
+            onMinimize={() => setMinimized(true)} />
+        </>
+      )
+    }
+    // minimized (or watching together): compact floating strip + tiles.
+    // eslint-disable react-hooks/refs — `call` carries callback refs wired in
+    // render; the rule taints the whole hook return through them.
+    /* eslint-disable react-hooks/refs */
     return (
       <>
         {sink}
         <div className="fixed inset-x-3 top-[calc(0.5rem+env(safe-area-inset-top))] z-[110]">
-          <VoiceCallBar call={call} partnerName={peer.name} />
+          <VoiceCallBar call={call} partnerName={peer.name}
+            onExpand={tgOpen ? undefined : () => setMinimized(false)} />
         </div>
-        {/* Media floats on every page. The watch-together overlay owns the
-            tiles while it's open (tgOpen); native fullscreen renders its own.
-            eslint-disable react-hooks/refs — callback refs ARE the render-time
-            attach point; the rule taints the whole hook return through them. */}
-        {/* eslint-disable react-hooks/refs */}
         {!tgOpen && call.remoteScreenOn && (
           // partner is sharing their screen → show it BIG (contain), not a tile
           <div className="fixed inset-x-3 top-[calc(4rem+env(safe-area-inset-top))] z-[105] overflow-hidden rounded-2xl bg-black shadow-2xl ring-1 ring-white/25">
