@@ -85,6 +85,40 @@ function fmtTime(s: number) {
   return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 }
 
+// YouTube Data API — powers "More like this" + endless auto-play. A client
+// key is normal for this API; it should be restricted to YouTube Data API +
+// the app's domains in Google Cloud Console.
+const YT_KEY = (import.meta.env.VITE_YT_API_KEY as string | undefined) ?? 'AIzaSyAdUDhzkBCpt_Qk8cAMWTHzpgqgjPsr88s'
+
+export type YtSuggestion = { videoId: string; title: string; thumb: string }
+const sugCache = new Map<string, YtSuggestion[]>()
+async function fetchSuggestions(videoId: string): Promise<YtSuggestion[]> {
+  const hit = sugCache.get(videoId)
+  if (hit) return hit
+  try {
+    // related-videos API is gone — search by the current title instead,
+    // which lands on the same artist/topic well enough
+    const title = await fetchYtTitle(videoId)
+    if (!title) return []
+    const q = title.replace(/[([].*?[)\]]/g, '').slice(0, 60) // drop "(Official Video)" noise
+    const r = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=9&q=${encodeURIComponent(q)}&key=${YT_KEY}`)
+    if (!r.ok) return []
+    const j = (await r.json()) as { items?: { id?: { videoId?: string }; snippet?: { title?: string; thumbnails?: { medium?: { url?: string } } } }[] }
+    const out = (j.items ?? [])
+      .filter((i) => i.id?.videoId && i.id.videoId !== videoId && i.snippet?.title)
+      .map((i) => ({
+        videoId: i.id!.videoId!,
+        title: i.snippet!.title!.replace(/&amp;/g, '&').replace(/&#39;/g, '’').replace(/&quot;/g, '"'),
+        thumb: i.snippet!.thumbnails?.medium?.url ?? '',
+      }))
+      .slice(0, 8)
+    sugCache.set(videoId, out)
+    return out
+  } catch {
+    return []
+  }
+}
+
 // real video titles via YouTube's keyless oEmbed (CORS-open), cached per id
 const ytTitleCache = new Map<string, string>()
 async function fetchYtTitle(videoId: string): Promise<string | null> {
@@ -285,17 +319,42 @@ export function TogetherOverlay({
     pushNotice(`▶ Up next: ${item.label}`)
     if (broadcast) sendTgRef.current({ a: 'next', item, items: remaining })
   }, [pushNotice])
-  /** The video finished — roll into the next one together, no pause. */
+  // "More like this" — refreshed for every video that comes on screen
+  const [sugs, setSugs] = useState<YtSuggestion[]>([])
+  const sugsRef = useRef(sugs)
+  useEffect(() => { sugsRef.current = sugs })
+  useEffect(() => {
+    setSugs([])
+    if (current.kind !== 'youtube') return
+    let dead = false
+    void fetchSuggestions(current.videoId).then((s) => { if (!dead) setSugs(s) })
+    return () => { dead = true }
+  }, [current.kind, current.kind === 'youtube' ? current.videoId : ''])
+
+  /** The video finished — queue first, else roll straight into a similar
+   *  video (endless auto-play), never a dead stop. */
   const handleEnded = useCallback(() => {
     if (Date.now() < advanceLock.current) return
     const next = queueRef.current[0]
-    if (!next) {
-      setUiPlaying(false)
+    if (next) {
+      advanceLock.current = Date.now() + 3000
+      applyNext(next, true)
       return
     }
-    advanceLock.current = Date.now() + 3000
-    applyNext(next, true)
+    const sug = sugsRef.current[0]
+    if (sug) {
+      advanceLock.current = Date.now() + 3000
+      applyNext({ qid: `s${Date.now()}`, kind: 'youtube', videoId: sug.videoId, label: sug.title.slice(0, 48) }, true)
+      return
+    }
+    setUiPlaying(false)
   }, [applyNext])
+  function pushQueueItem(item: QueueItem) {
+    const items = [...queueRef.current, item]
+    setQueue(items)
+    sendTgRef.current({ a: 'queue', items })
+    pushNotice('🎬 Added to Up Next — for both of you')
+  }
   async function addToQueue() {
     const yt = ytIdFrom(addUrl)
     const drive = yt ? null : driveIdFrom(addUrl)
@@ -304,13 +363,9 @@ export function TogetherOverlay({
     setAddOpen(false)
     // queue entries carry the real video title so Up Next reads like a playlist
     const label = yt ? (await fetchYtTitle(yt))?.slice(0, 48) ?? 'YouTube video' : 'Drive video'
-    const item: QueueItem = yt
+    pushQueueItem(yt
       ? { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: yt, label }
-      : { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'drive', fileId: drive!, label }
-    const items = [...queueRef.current, item]
-    setQueue(items)
-    sendTgRef.current({ a: 'queue', items })
-    pushNotice('🎬 Added to Up Next — for both of you')
+      : { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'drive', fileId: drive!, label })
   }
   function removeFromQueue(qid: string) {
     const items = queueRef.current.filter((q) => q.qid !== qid)
@@ -832,6 +887,26 @@ export function TogetherOverlay({
           </div>
         )}
       </div>
+
+      {/* More like this — tap to queue; when the queue is empty the first
+          suggestion auto-plays at the end, YouTube-style, for both */}
+      {sugs.length > 0 && (
+        <div className="shrink-0 px-3 pb-1.5">
+          <div className="mb-1 flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-white/40">
+            More like this <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-emerald-300">auto-play on</span>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {sugs.map((s) => (
+              <button key={s.videoId}
+                onClick={() => pushQueueItem({ qid: `q${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: s.videoId, label: s.title.slice(0, 48) })}
+                className="w-32 shrink-0 text-left active:scale-95">
+                {s.thumb && <img src={s.thumb} alt="" loading="lazy" className="aspect-video w-full rounded-lg object-cover ring-1 ring-white/10" />}
+                <span className="mt-0.5 line-clamp-2 text-[10px] font-semibold leading-tight text-white/80">{s.title}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* chat rides along under the player (single instance — moves into
           the fullscreen sheet when that's open) */}
