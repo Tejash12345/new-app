@@ -992,11 +992,26 @@ export type RtcPayload = {
 }
 export type CallState = 'idle' | 'incoming' | 'connecting' | 'answered' | 'live' | 'failed' | 'mic'
 
-// ICE servers: several STUN for the direct path (WiFi / same-NAT), plus free
-// TURN relays for when carriers block peer-to-peer (most mobile-data calls).
-// Drop in a stronger credentialed relay later WITHOUT a code change by setting
-// VITE_TURN_URLS (comma-separated) + VITE_TURN_USERNAME + VITE_TURN_CREDENTIAL
-// at build time — they're appended ahead of the free relays.
+// ===========================================================================
+// TURN / STUN relay config.
+//
+// Cross-carrier calls (Jio↔Airtel↔Vi) sit behind carrier-grade NAT on BOTH
+// ends, so they can ONLY connect through a TURN relay. Free public relays are
+// all dead (verified 2026-07-14), so a credentialed relay is REQUIRED for the
+// mobile-data scenario. STUN alone covers same-WiFi and most different-WiFi.
+//
+// TWO ways to supply the relay — either works, no other code change needed:
+//   1. Build-time env: VITE_TURN_URLS (comma-sep) + VITE_TURN_USERNAME +
+//      VITE_TURN_CREDENTIAL  (best for Vercel — set in project env vars).
+//   2. Hardcode below in MANAGED_TURN (simplest — paste and rebuild).
+//
+// Fill ONE of them with a Metered.ca free-tier relay or a self-hosted Coturn
+// (see coturn/ in this repo). The relay is placed FIRST so ICE prefers it.
+// ===========================================================================
+const MANAGED_TURN: RTCIceServer | null = null
+// e.g.  { urls: ['turn:relay.metered.ca:80','turn:relay.metered.ca:443','turns:relay.metered.ca:443?transport=tcp'],
+//         username: 'PASTE_USERNAME', credential: 'PASTE_CREDENTIAL' }
+
 function buildIceServers(): RTCIceServer[] {
   const servers: RTCIceServer[] = [
     {
@@ -1007,19 +1022,13 @@ function buildIceServers(): RTCIceServer[] {
         'stun:stun.cloudflare.com:3478',
       ],
     },
-    // free OpenRelay TURN — udp + tcp on :80 (its :443 endpoints refuse
-    // connections, so they're left out to avoid wasting ICE-gather time)
-    {
-      urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:80?transport=tcp'],
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
   ]
   const env = import.meta.env as Record<string, string | undefined>
   const urls = env.VITE_TURN_URLS?.split(',').map((s) => s.trim()).filter(Boolean)
   if (urls?.length && env.VITE_TURN_USERNAME && env.VITE_TURN_CREDENTIAL) {
-    // user-supplied relay goes FIRST so ICE prefers it over the free one
-    servers.splice(1, 0, { urls, username: env.VITE_TURN_USERNAME, credential: env.VITE_TURN_CREDENTIAL })
+    servers.unshift({ urls, username: env.VITE_TURN_USERNAME, credential: env.VITE_TURN_CREDENTIAL })
+  } else if (MANAGED_TURN) {
+    servers.unshift(MANAGED_TURN)
   }
   return servers
 }

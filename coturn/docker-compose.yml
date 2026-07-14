@@ -1,0 +1,11 @@
+# Run Coturn on any VM with a public IP. host networking is REQUIRED so the
+# relay port range (49152-65535/udp) is reachable — Docker's per-port mapping
+# can't forward a range that large.
+services:
+  coturn:
+    image: coturn/coturn:4.6
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
