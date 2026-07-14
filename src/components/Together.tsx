@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, Music, Phone, PhoneOff, Plus, X } from 'lucide-react'
+import { Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, Music, Phone, PhoneOff, Plus, SwitchCamera, Video, VideoOff, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 export type TogetherSession =
@@ -161,8 +161,24 @@ export function TogetherOverlay({
   onClose: () => void
   callNode?: React.ReactNode
   chatNode?: React.ReactNode
-  // live call controls so fullscreen can start / mute / end without leaving
-  callInfo?: { state: string; muted: boolean; start: () => void; end: () => void; toggleMute: () => void }
+  // live call controls so fullscreen can start / mute / end without leaving —
+  // plus the camera switch and video-tile hookups, so faces stay on screen
+  // while the video plays (the floating panel outside can't render inside a
+  // fullscreened element)
+  callInfo?: {
+    state: string
+    muted: boolean
+    camOn: boolean
+    remoteCamOn: boolean
+    start: () => void
+    startVideo: () => void
+    end: () => void
+    toggleMute: () => void
+    toggleCam: () => void
+    flipCam: () => void
+    attachLocalVideo: (el: HTMLVideoElement | null) => void
+    attachRemoteVideo: (el: HTMLVideoElement | null) => void
+  }
 }) {
   const ytRef = useRef<YTPlayer | null>(null)
   const mediaRef = useRef<HTMLVideoElement | null>(null)
@@ -756,34 +772,71 @@ export function TogetherOverlay({
                 <MessageCircle size={15} />
               </button>
             )}
-            {fs && callInfo && (
-              callInfo.state === 'idle' ? (
-                <button onClick={callInfo.start} aria-label="Start voice call"
-                  className="shrink-0 rounded-full p-1.5 text-emerald-400 active:scale-90">
-                  <Phone size={15} />
-                </button>
-              ) : (
-                <>
-                  <button onClick={callInfo.toggleMute} aria-label={callInfo.muted ? 'Unmute' : 'Mute'}
-                    className={cn('shrink-0 rounded-full p-1.5 active:scale-90', callInfo.muted ? 'text-rose-400' : 'text-white/85')}>
-                    {callInfo.muted ? <MicOff size={15} /> : <Mic size={15} />}
-                  </button>
-                  <button onClick={callInfo.end} aria-label="End call"
-                    className="shrink-0 rounded-full bg-rose-500 p-1.5 text-white active:scale-90">
-                    <PhoneOff size={15} />
-                  </button>
-                </>
-              )
-            )}
+            {/* call buttons live in the top-right call corner — 11 controls
+                in this row crushed the scrub bar to nothing on 360px */}
           </div>
         )}
 
         {/* fullscreen call status pill */}
         {fs && callInfo && callInfo.state !== 'idle' && (
           <div className="pointer-events-none absolute left-2 top-2 z-[9] rounded-full bg-black/60 px-3 py-1 text-[11px] font-bold text-white/90">
-            {callInfo.state === 'live' ? `🎙 In call with ${partnerName}` : callInfo.state === 'incoming' ? `📞 ${partnerName} is calling — exit fullscreen to answer` : '📞 Connecting…'}
+            {callInfo.state === 'live' ? `${callInfo.camOn || callInfo.remoteCamOn ? '🎥' : '🎙'} In call with ${partnerName}` : callInfo.state === 'incoming' ? `📞 ${partnerName} is calling — exit fullscreen to answer` : '📞 Connecting…'}
           </div>
         )}
+
+        {/* the call corner — faces ride the video's top-right in BOTH modes
+            (watch-party style; the global floating panel steps aside via
+            tgOpen, and native fullscreen only renders inside this box).
+            Fullscreen adds the call buttons here — the transport row is full. */}
+        {/* eslint-disable react-hooks/refs -- callback refs ARE the render-time
+            attach point; the rule taints the whole hook return through them */}
+        {callInfo && (fs || callInfo.remoteCamOn || callInfo.camOn) && (
+          <div className="absolute right-2 top-2 z-[9] flex flex-col items-end gap-1.5">
+            {callInfo.remoteCamOn && (
+              <video ref={callInfo.attachRemoteVideo} autoPlay playsInline muted
+                className={cn('pointer-events-none aspect-[3/4] rounded-xl bg-black/60 object-cover shadow-lg ring-1 ring-white/20', fs ? 'w-28' : 'w-16')} />
+            )}
+            {callInfo.camOn && (
+              <button onClick={callInfo.flipCam} aria-label="Flip camera" className="relative active:scale-95">
+                <video ref={callInfo.attachLocalVideo} autoPlay playsInline muted
+                  className={cn('aspect-[3/4] -scale-x-100 rounded-xl bg-black/60 object-cover shadow-lg ring-1 ring-white/20', fs ? 'w-20' : 'w-12')} />
+                <SwitchCamera size={12} className="absolute bottom-1 right-1 text-white/80" />
+              </button>
+            )}
+            {fs && (
+              <div className="flex gap-1.5">
+                {callInfo.state === 'idle' ? (
+                  <>
+                    <button onClick={callInfo.start} aria-label="Start voice call"
+                      className="rounded-full bg-black/55 p-2 text-emerald-400 active:scale-90">
+                      <Phone size={15} />
+                    </button>
+                    <button onClick={callInfo.startVideo} aria-label="Start video call"
+                      className="rounded-full bg-black/55 p-2 text-sky-400 active:scale-90">
+                      <Video size={15} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={callInfo.toggleCam} aria-label={callInfo.camOn ? 'Turn camera off' : 'Turn camera on'}
+                      className={cn('rounded-full bg-black/55 p-2 active:scale-90', callInfo.camOn ? 'text-sky-400' : 'text-white/85')}>
+                      {callInfo.camOn ? <Video size={15} /> : <VideoOff size={15} />}
+                    </button>
+                    <button onClick={callInfo.toggleMute} aria-label={callInfo.muted ? 'Unmute' : 'Mute'}
+                      className={cn('rounded-full bg-black/55 p-2 active:scale-90', callInfo.muted ? 'text-rose-400' : 'text-white/85')}>
+                      {callInfo.muted ? <MicOff size={15} /> : <Mic size={15} />}
+                    </button>
+                    <button onClick={callInfo.end} aria-label="End call"
+                      className="rounded-full bg-rose-500 p-2 text-white active:scale-90">
+                      <PhoneOff size={15} />
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {/* eslint-enable react-hooks/refs */}
 
         {/* fullscreen chat sheet — the conversation, over the video */}
         {fs && fsChat && (
@@ -926,22 +979,37 @@ export function TogetherOverlay({
   )
 }
 
-// ---------- live voice call (WebRTC over the chat channel) ----------
+// ---------- live voice / video call (WebRTC over the chat channel) ----------
 export type RtcPayload = {
-  t: 'offer' | 'answer' | 'ice' | 'end'
+  t: 'offer' | 'answer' | 'ice' | 'end' | 'cam'
   from: string
   sdp?: RTCSessionDescriptionInit
   cand?: RTCIceCandidateInit
+  // offer only: ring as a VIDEO call (camera goes on for both on accept)
+  video?: boolean
+  // 'cam' only: my camera just switched on / off mid-call
+  on?: boolean
 }
 export type CallState = 'idle' | 'incoming' | 'connecting' | 'answered' | 'live' | 'failed' | 'mic'
 
 export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; sendRtc: (p: Omit<RtcPayload, 'from'>) => void }) {
   const [state, setState] = useState<CallState>('idle')
   const [muted, setMuted] = useState(false)
+  // camera: OFF by default — every call starts as voice, video is a switch
+  const [camOn, setCamOn] = useState(false)
+  const [remoteCamOn, setRemoteCamOn] = useState(false)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const camStreamRef = useRef<MediaStream | null>(null)
+  const videoSenderRef = useRef<RTCRtpSender | null>(null)
+  const facingRef = useRef<'user' | 'environment'>('user')
+  const incomingVideoRef = useRef(false)
   const remoteStream = useRef<MediaStream | null>(null)
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null)
+  // video tiles live in MORE than one place at once (floating panel, the
+  // fullscreen watch player) — every mounted element gets the same stream
+  const localVideoEls = useRef(new Set<HTMLVideoElement>())
+  const remoteVideoEls = useRef(new Set<HTMLVideoElement>())
   const pendingOffer = useRef<RTCSessionDescriptionInit | null>(null)
   const candBuffer = useRef<RTCIceCandidateInit[]>([])
   const roleRef = useRef<'caller' | 'callee' | null>(null)
@@ -959,12 +1027,50 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     }
   }, [])
 
+  /** Ref for MY camera preview tiles (mirrored, muted). */
+  const attachLocalVideo = useCallback((el: HTMLVideoElement | null) => {
+    // unmounts arrive as null — prune whatever left the DOM
+    localVideoEls.current.forEach((e) => { if (!e.isConnected) localVideoEls.current.delete(e) })
+    if (!el) return
+    el.muted = true
+    localVideoEls.current.add(el)
+    if (camStreamRef.current) {
+      el.srcObject = camStreamRef.current
+      void el.play().catch(() => {})
+    }
+  }, [])
+
+  /** Ref for the PARTNER's video tiles — muted, sound stays on the audio sink. */
+  const attachRemoteVideo = useCallback((el: HTMLVideoElement | null) => {
+    remoteVideoEls.current.forEach((e) => { if (!e.isConnected) remoteVideoEls.current.delete(e) })
+    if (!el) return
+    el.muted = true
+    remoteVideoEls.current.add(el)
+    if (remoteStream.current) {
+      el.srcObject = remoteStream.current
+      void el.play().catch(() => {})
+    }
+  }, [])
+
+  const stopCam = useCallback(() => {
+    camStreamRef.current?.getTracks().forEach((t) => t.stop())
+    camStreamRef.current = null
+    localVideoEls.current.forEach((el) => { el.srcObject = null })
+    setCamOn(false)
+  }, [])
+
   const cleanup = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
+    stopCam()
+    videoSenderRef.current = null
+    facingRef.current = 'user'
+    incomingVideoRef.current = false
+    setRemoteCamOn(false)
     // drop the dead stream too, or the next call re-attaches silence
     remoteStream.current = null
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null
+    remoteVideoEls.current.forEach((el) => { el.srcObject = null })
     pcRef.current?.close()
     pcRef.current = null
     pendingOffer.current = null
@@ -972,7 +1078,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     roleRef.current = null
     restarted.current = false
     setMuted(false)
-  }, [])
+  }, [stopCam])
 
   // one in-call second chance: renegotiate with fresh network candidates
   // before declaring the call dead (transient mobile-network failures)
@@ -1022,6 +1128,19 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
         el.volume = 1
         void el.play().catch(() => {})
       }
+      remoteVideoEls.current.forEach((v) => {
+        v.srcObject = e.streams[0]
+        void v.play().catch(() => {})
+      })
+      if (e.track.kind === 'video') {
+        // the partner's camera: replaceTrack(null) on their side mutes the
+        // track here, so mute/unmute doubles as the on/off signal even when
+        // the explicit 'cam' event is lost
+        setRemoteCamOn(true)
+        e.track.onmute = () => setRemoteCamOn(false)
+        e.track.onunmute = () => setRemoteCamOn(true)
+        e.track.onended = () => setRemoteCamOn(false)
+      }
     }
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') setState('live')
@@ -1039,33 +1158,60 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     streamRef.current = stream
     stream.getTracks().forEach((t) => pc.addTrack(t, stream))
+    // camera already rolling (video call being placed) — ship it in the
+    // SAME stream so the remote side keeps one stream for audio AND video
+    const camTrack = camStreamRef.current?.getVideoTracks()[0]
+    if (camTrack) videoSenderRef.current = pc.addTrack(camTrack, stream)
     pcRef.current = pc
     return pc
   }, [cleanup, sendRtc])
+
+  /** Turn the camera on and preview it locally; the caller wires it to the pc. */
+  const acquireCam = useCallback(async () => {
+    const cam = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facingRef.current, width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 24 } },
+    })
+    camStreamRef.current = cam
+    localVideoEls.current.forEach((el) => {
+      el.srcObject = cam
+      void el.play().catch(() => {})
+    })
+    setCamOn(true)
+    return cam.getVideoTracks()[0]
+  }, [])
 
   const failState = (e: unknown): CallState =>
     e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'NotFoundError' || e.name === 'SecurityError')
       ? 'mic'
       : 'failed'
 
-  const startCall = useCallback(async () => {
+  const startCall = useCallback(async (opts?: { video?: boolean }) => {
     try {
       roleRef.current = 'caller'
+      if (opts?.video && !camStreamRef.current) {
+        // camera blocked → still place the call, as voice
+        try { await acquireCam() } catch { /* voice-only it is */ }
+      }
       const pc = await makePc()
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
-      sendRtc({ t: 'offer', sdp: offer })
+      sendRtc({ t: 'offer', sdp: offer, video: !!camStreamRef.current })
       setState('connecting')
     } catch (e) {
       setState(failState(e))
     }
-  }, [makePc, sendRtc])
+  }, [acquireCam, makePc, sendRtc])
 
   const acceptCall = useCallback(async () => {
     const offer = pendingOffer.current
     if (!offer) return
     try {
       roleRef.current = 'callee'
+      // answering a VIDEO call turns our camera on too (WhatsApp-style);
+      // if the camera is blocked the call still connects with voice
+      if (incomingVideoRef.current && !camStreamRef.current) {
+        try { await acquireCam() } catch { /* voice-only it is */ }
+      }
       const pc = await makePc()
       await pc.setRemoteDescription(offer)
       for (const c of candBuffer.current) await pc.addIceCandidate(c).catch(() => {})
@@ -1077,7 +1223,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     } catch (e) {
       setState(failState(e))
     }
-  }, [makePc, sendRtc])
+  }, [acquireCam, makePc, sendRtc])
 
   const toggleMute = useCallback(() => {
     const s = streamRef.current
@@ -1086,6 +1232,58 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     s.getAudioTracks().forEach((t) => { t.enabled = !next })
     setMuted(next)
   }, [muted])
+
+  /** The video switch — camera on/off any time during a call. */
+  const toggleCam = useCallback(async () => {
+    if (camStreamRef.current) {
+      // keep the sender alive (replaceTrack(null) needs no renegotiation);
+      // the remote side sees the track mute and hides our tile
+      void videoSenderRef.current?.replaceTrack(null).catch(() => {})
+      stopCam()
+      sendRtc({ t: 'cam', on: false })
+      return
+    }
+    const pc = pcRef.current
+    if (!pc) return // camera is a mid-call switch — nothing to send it into
+    try {
+      const track = await acquireCam()
+      if (videoSenderRef.current) {
+        await videoSenderRef.current.replaceTrack(track)
+      } else {
+        videoSenderRef.current = pc.addTrack(track, streamRef.current ?? camStreamRef.current!)
+        // first video track adds an m-line — renegotiate in place (the
+        // remote's offer handler answers live calls without re-ringing)
+        const offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+        sendRtc({ t: 'offer', sdp: offer })
+      }
+      sendRtc({ t: 'cam', on: true })
+    } catch {
+      stopCam() // camera blocked / busy — the call carries on with voice
+    }
+  }, [acquireCam, sendRtc, stopCam])
+
+  /** Front ↔ back camera; replaceTrack keeps the call untouched. */
+  const flipCam = useCallback(async () => {
+    if (!camStreamRef.current) return
+    const old = camStreamRef.current
+    facingRef.current = facingRef.current === 'user' ? 'environment' : 'user'
+    try {
+      const cam = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facingRef.current, width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 24 } },
+      })
+      old.getTracks().forEach((t) => t.stop())
+      camStreamRef.current = cam
+      localVideoEls.current.forEach((el) => {
+        el.srcObject = cam
+        void el.play().catch(() => {})
+      })
+      await videoSenderRef.current?.replaceTrack(cam.getVideoTracks()[0])
+    } catch {
+      // single-camera device — stay where we were
+      facingRef.current = facingRef.current === 'user' ? 'environment' : 'user'
+    }
+  }, [])
 
   /** Feed 'rtc' broadcast events here (registered by the chat's channel). */
   const handleRtc = useCallback((p: RtcPayload) => {
@@ -1106,9 +1304,11 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
         return
       }
       pendingOffer.current = p.sdp
+      incomingVideoRef.current = !!p.video
       setState('incoming')
       navigator.vibrate?.([80, 60, 80])
     }
+    if (p.t === 'cam') setRemoteCamOn(!!p.on)
     if (p.t === 'answer' && p.sdp) {
       // the caller hears about the ACCEPT immediately — before this, the
       // UI sat on "Calling…" until audio connected, looking broken
@@ -1143,7 +1343,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   // hang up if the component unmounts (leaving the conversation)
   useEffect(() => () => { cleanup() }, [cleanup])
 
-  return { state, muted, startCall, acceptCall, endCall, toggleMute, handleRtc, attachEl }
+  return { state, muted, camOn, remoteCamOn, startCall, acceptCall, endCall, toggleMute, toggleCam, flipCam, handleRtc, attachEl, attachLocalVideo, attachRemoteVideo }
 }
 
 /** The in-chat call strip: incoming / connecting / live, with mute + hang up. */
@@ -1164,7 +1364,7 @@ export function VoiceCallBar({ call, partnerName }: {
         {call.state === 'incoming' && `${partnerName} is calling…`}
         {call.state === 'connecting' && `Calling ${partnerName}…`}
         {call.state === 'answered' && 'Call accepted ✓ — connecting audio…'}
-        {call.state === 'live' && `Voice call with ${partnerName}`}
+        {call.state === 'live' && `${call.camOn || call.remoteCamOn ? 'Video' : 'Voice'} call with ${partnerName}`}
         {call.state === 'failed' && 'No audio path — the network blocked the call.'}
         {call.state === 'mic' && 'Microphone is blocked — allow mic access for FocusLion in your phone settings, then try again.'}
       </span>
@@ -1178,6 +1378,12 @@ export function VoiceCallBar({ call, partnerName }: {
         <button onClick={call.acceptCall}
           className="rounded-full bg-emerald-500 px-3.5 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
           Accept
+        </button>
+      )}
+      {call.state === 'live' && (
+        <button onClick={() => void call.toggleCam()} aria-label={call.camOn ? 'Turn camera off' : 'Turn camera on'}
+          className={cn('rounded-full p-2', call.camOn ? 'bg-sky-500/15 text-sky-500' : 'bg-slate-500/10 text-slate-500 dark:text-slate-300')}>
+          {call.camOn ? <Video size={15} /> : <VideoOff size={15} />}
         </button>
       )}
       {call.state === 'live' && (

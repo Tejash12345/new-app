@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Phone, PhoneOff } from 'lucide-react'
+import { Phone, PhoneOff, SwitchCamera, Video } from 'lucide-react'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
@@ -25,7 +25,8 @@ export function CallHost() {
   const { user, profile } = useAuth()
   const avatarFor = useAvatars()
   const setCallApi = useApp((s) => s.setCallApi)
-  const [peer, setPeer] = useState<{ id: string; name: string } | null>(null)
+  const tgOpen = useApp((s) => s.tgOpen)
+  const [peer, setPeer] = useState<{ id: string; name: string; video?: boolean } | null>(null)
   const peerRef = useRef(peer)
   useEffect(() => { peerRef.current = peer })
 
@@ -68,7 +69,15 @@ export function CallHost() {
       .on('broadcast', { event: 'rtc' }, ({ payload }) => {
         const p = payload as RtcPayload & { fromName?: string }
         if (p.from === user.id) return
-        if (p.t === 'offer') setPeer({ id: p.from, name: p.fromName || 'A friend' })
+        // a fresh offer while idle/ringing IS the ring — but offers that
+        // arrive mid-call are renegotiation (camera on, ICE restart) and
+        // must not touch who/what the ring screen shows
+        if (p.t === 'offer') {
+          const s = callRef.current.state
+          if (s === 'idle' || s === 'incoming' || s === 'failed' || s === 'mic') {
+            setPeer({ id: p.from, name: p.fromName || 'A friend', video: p.video })
+          }
+        }
         callRef.current.handleRtc(p)
       })
       .subscribe()
@@ -79,19 +88,25 @@ export function CallHost() {
   // re-registered on every state change so embedded UIs stay live
   useEffect(() => {
     setCallApi({
-      start: (peerId, peerName) => {
-        setPeer({ id: peerId, name: peerName.split(' ')[0] })
+      start: (peerId, peerName, video) => {
+        setPeer({ id: peerId, name: peerName.split(' ')[0], video })
         // peerRef must be set before the offer goes out
         peerRef.current = { id: peerId, name: peerName.split(' ')[0] }
-        void callRef.current.startCall()
+        void callRef.current.startCall(video ? { video: true } : undefined)
       },
       end: () => callRef.current.endCall(true),
       toggleMute: () => callRef.current.toggleMute(),
+      toggleCam: () => void callRef.current.toggleCam(),
+      flipCam: () => void callRef.current.flipCam(),
+      attachLocalVideo: callRef.current.attachLocalVideo,
+      attachRemoteVideo: callRef.current.attachRemoteVideo,
       state: call.state,
       muted: call.muted,
+      camOn: call.camOn,
+      remoteCamOn: call.remoteCamOn,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [call.state, call.muted])
+  }, [call.state, call.muted, call.camOn, call.remoteCamOn])
   useEffect(() => () => setCallApi(null), [setCallApi])
 
   // tidy the send channel when a call fully ends
@@ -167,7 +182,9 @@ export function CallHost() {
             </div>
           </div>
           <div className="mt-4 text-lg font-extrabold text-slate-900 dark:text-white">{peer.name}</div>
-          <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">FocusLion voice call…</div>
+          <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+            {peer.video ? 'FocusLion video call…' : 'FocusLion voice call…'}
+          </div>
           <div className="mt-7 flex items-center gap-6">
             <button onClick={() => call.endCall(true)} aria-label="Decline call"
               className="flex h-14 w-14 items-center justify-center rounded-full bg-rose-500 text-white shadow-lg active:scale-90">
@@ -175,7 +192,7 @@ export function CallHost() {
             </button>
             <button onClick={() => void call.acceptCall()} aria-label="Accept call"
               className="flex h-16 w-16 animate-bounce items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg active:scale-90">
-              <Phone size={26} />
+              {peer.video ? <Video size={26} /> : <Phone size={26} />}
             </button>
           </div>
         </motion.div>
@@ -192,6 +209,28 @@ export function CallHost() {
         <div className="fixed inset-x-3 top-[calc(0.5rem+env(safe-area-inset-top))] z-[110]">
           <VoiceCallBar call={call} partnerName={peer.name} />
         </div>
+        {/* video tiles float on every page, TOP-right under the call strip —
+            bottom-right sat on the chat composer and the nav bar. While a
+            watch-together overlay is open ITS video box owns the tiles
+            (tgOpen), and native fullscreen renders its own inside the box. */}
+        {/* eslint-disable react-hooks/refs -- callback refs ARE the render-time
+            attach point; the rule taints the whole hook return through them */}
+        {(call.camOn || call.remoteCamOn) && !tgOpen && (
+          <div className="fixed right-3 top-[calc(4.5rem+env(safe-area-inset-top))] z-[105] flex flex-col items-end gap-2">
+            {call.remoteCamOn && (
+              <video ref={call.attachRemoteVideo} autoPlay playsInline muted
+                className="aspect-[3/4] w-28 rounded-2xl bg-black object-cover shadow-xl ring-1 ring-white/25 sm:w-36" />
+            )}
+            {call.camOn && (
+              <button onClick={() => void call.flipCam()} aria-label="Flip camera" className="relative active:scale-95">
+                <video ref={call.attachLocalVideo} autoPlay playsInline muted
+                  className="aspect-[3/4] w-16 -scale-x-100 rounded-2xl bg-black object-cover shadow-xl ring-1 ring-white/25 sm:w-24" />
+                <SwitchCamera size={14} className="absolute bottom-1.5 right-1.5 text-white/85" />
+              </button>
+            )}
+          </div>
+        )}
+        {/* eslint-enable react-hooks/refs */}
       </>
     )
   }

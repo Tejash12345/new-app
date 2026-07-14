@@ -49,18 +49,28 @@ type AppState = {
   setChatUnread: (m: Record<string, number>) => void
   addChatUnread: (senderId: string) => void
   clearChatUnread: (senderId: string) => void
-  // global voice calling (CallHost registers itself here) — any page can
-  // start/control a call, and incoming calls ring no matter where you are.
-  // state/muted mirror CallHost so embedded UIs (e.g. the fullscreen watch
-  // player) can render live call controls.
+  // global voice / video calling (CallHost registers itself here) — any page
+  // can start/control a call, and incoming calls ring no matter where you are.
+  // state/muted/camOn mirror CallHost so embedded UIs (e.g. the fullscreen
+  // watch player) can render live call controls and video tiles.
   callApi: {
-    start: (peerId: string, peerName: string) => void
+    start: (peerId: string, peerName: string, video?: boolean) => void
     end: () => void
     toggleMute: () => void
+    toggleCam: () => void
+    flipCam: () => void
+    attachLocalVideo: (el: HTMLVideoElement | null) => void
+    attachRemoteVideo: (el: HTMLVideoElement | null) => void
     state: string
     muted: boolean
+    camOn: boolean
+    remoteCamOn: boolean
   } | null
   setCallApi: (api: AppState['callApi']) => void
+  // a watch-together overlay is open — it renders the call tiles inside its
+  // own video box, so the global floating panel steps aside
+  tgOpen: boolean
+  setTgOpen: (open: boolean) => void
 }
 
 const prefersDark =
@@ -148,6 +158,8 @@ export const useApp = create<AppState>((set) => ({
     }),
   callApi: null,
   setCallApi: (api) => set({ callApi: api }),
+  tgOpen: false,
+  setTgOpen: (open) => set({ tgOpen: open }),
 }))
 
 /**

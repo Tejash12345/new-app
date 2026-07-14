@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { smartReplies } from '../lib/ai'
@@ -404,6 +404,12 @@ function FriendsChat() {
   // calls are handled app-wide by CallHost (rings on any page); chat only
   // needs the start button
   const callApi = useApp((s) => s.callApi)
+  // while the overlay is up its video box hosts the call tiles — the global
+  // floating panel would sit on the mini chat
+  useEffect(() => {
+    useApp.getState().setTgOpen(!!tg)
+    return () => { useApp.getState().setTgOpen(false) }
+  }, [tg])
   const [, setDuoTick] = useState(0)
   const duoRef = useRef<DuoState | null>(null)
   useEffect(() => { duoRef.current = duo })
@@ -1271,6 +1277,10 @@ function FriendsChat() {
                         className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
                         <Phone size={15} className="text-emerald-500" /> Voice call
                       </button>
+                      <button onClick={() => { setTgMenuOpen(false); callApi?.start(active.friend_id, fname(active), true) }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
+                        <Video size={15} className="text-sky-500" /> Video call
+                      </button>
                       <button onClick={() => { setTgMenuOpen(false); setYtUrl(''); setPasteFail(false); setLinkPrompt('yt') }}
                         className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
                         <Clapperboard size={15} className="text-red-500" /> Watch YouTube together
@@ -1804,9 +1814,16 @@ function FriendsChat() {
           callInfo={callApi ? {
             state: callApi.state,
             muted: callApi.muted,
+            camOn: callApi.camOn,
+            remoteCamOn: callApi.remoteCamOn,
             start: () => callApi.start(active.friend_id, fname(active)),
+            startVideo: () => callApi.start(active.friend_id, fname(active), true),
             end: callApi.end,
             toggleMute: callApi.toggleMute,
+            toggleCam: callApi.toggleCam,
+            flipCam: callApi.flipCam,
+            attachLocalVideo: callApi.attachLocalVideo,
+            attachRemoteVideo: callApi.attachRemoteVideo,
           } : undefined}
           chatNode={
             <div className="flex min-h-0 flex-1 flex-col px-3">
