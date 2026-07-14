@@ -229,6 +229,10 @@ export function TogetherOverlay({
   const [driveFallback, setDriveFallback] = useState(false)
   const driveLoadingRef = useRef(true)
   useEffect(() => { driveLoadingRef.current = driveLoading })
+  // last time the Drive stream made download progress — the fallback only
+  // fires after a real STALL (no bytes for a while), never mid-download, so a
+  // slow large file over mobile data isn't abandoned prematurely
+  const driveProgressRef = useRef(0)
   // mobile browsers refuse playback started by ANOTHER phone until this
   // device gets one real tap — gate everything behind "Tap to play"
   const [needsTap, setNeedsTap] = useState(true)
@@ -563,13 +567,17 @@ export function TogetherOverlay({
     current.kind === 'youtube' ? current.videoId
       : current.kind === 'drive' ? current.fileId
       : current.kind === 'media' ? current.msgId : ''])
-  // if the direct <video> hasn't loaded within 8s (Drive served an HTML page
-  // instead of the file, or the codec isn't supported), drop to the iframe.
-  // A plain onError often never fires for the HTML-page case — hence a timer.
+  // fall back to Drive's iframe only after a real STALL — no download progress
+  // for 20s — not on a fixed timer (a large file over mobile buffers slowly but
+  // is still coming). onProgress keeps resetting driveProgressRef.
   useEffect(() => {
     if (current.kind !== 'drive' || driveFallback) return
-    const t = setTimeout(() => { if (driveLoadingRef.current) setDriveFallback(true) }, 12000)
-    return () => clearTimeout(t)
+    driveProgressRef.current = Date.now()
+    const iv = setInterval(() => {
+      if (!driveLoadingRef.current) return // already playing
+      if (Date.now() - driveProgressRef.current > 20000) setDriveFallback(true)
+    }, 2000)
+    return () => clearInterval(iv)
   }, [current.kind, current.kind === 'drive' ? current.fileId : '', driveFallback])
 
   // gentle heartbeat so a missed event can't leave the two sides apart —
@@ -721,15 +729,23 @@ export function TogetherOverlay({
         {current.kind === 'youtube' && <div id="tg-yt" className="h-full w-full" />}
         {current.kind === 'drive' && (
           driveFallback ? (
-            // Drive won't stream this file directly → its own /preview player.
-            // Displays reliably, but can't be synced (cross-origin, no API).
-            <iframe
-              src={`https://drive.google.com/file/d/${current.fileId}/preview`}
-              className="absolute inset-0 h-full w-full border-0"
-              allow="autoplay; fullscreen"
-              allowFullScreen
-              title="Google Drive player"
-            />
+            // The synced stream couldn't load — Drive's own /preview player as
+            // a last resort (unreliable for some files + no sync), with a Retry
+            // that re-attempts the synced stream without leaving the session.
+            <>
+              <iframe
+                src={`https://drive.google.com/file/d/${current.fileId}/preview`}
+                className="absolute inset-0 h-full w-full border-0"
+                allow="autoplay; fullscreen"
+                allowFullScreen
+                title="Google Drive player"
+              />
+              <button
+                onClick={() => { setDriveFallback(false); setDriveLoading(true) }}
+                className="absolute bottom-2 right-2 z-[9] rounded-full bg-black/70 px-3 py-1.5 text-[11px] font-bold text-white backdrop-blur active:scale-95">
+                ↻ Retry synced
+              </button>
+            </>
           ) : (
             // direct stream in a real <video> → goes through the SAME synced
             // transport as device media (play/pause/seek stay in lockstep)
@@ -738,12 +754,15 @@ export function TogetherOverlay({
                 ref={mediaRef}
                 src={driveStreamUrl(current.fileId)}
                 playsInline
+                preload="auto"
                 className="absolute inset-0 h-full w-full object-contain"
+                onLoadStart={() => { driveProgressRef.current = Date.now() }}
+                onProgress={() => { driveProgressRef.current = Date.now() }}
                 onLoadedMetadata={(e) => {
-                  setDriveLoading(false)
                   const v = e.currentTarget
                   if (v.videoWidth && v.videoHeight) setVideoAspect(v.videoWidth / v.videoHeight)
                 }}
+                onCanPlay={() => setDriveLoading(false)}
                 onError={() => setDriveFallback(true)}
                 onPlay={() => setUiPlaying(true)}
                 onPause={() => setUiPlaying(false)}
