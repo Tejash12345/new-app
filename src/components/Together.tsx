@@ -84,6 +84,22 @@ function fmtTime(s: number) {
   const m = Math.floor(s / 60)
   return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 }
+
+// real video titles via YouTube's keyless oEmbed (CORS-open), cached per id
+const ytTitleCache = new Map<string, string>()
+async function fetchYtTitle(videoId: string): Promise<string | null> {
+  const hit = ytTitleCache.get(videoId)
+  if (hit) return hit
+  try {
+    const r = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://youtu.be/${videoId}`)}&format=json`)
+    if (!r.ok) return null
+    const j = (await r.json()) as { title?: string }
+    if (j.title) ytTitleCache.set(videoId, j.title)
+    return j.title ?? null
+  } catch {
+    return null
+  }
+}
 let ytReady: Promise<void> | null = null
 function loadYouTubeApi(): Promise<void> {
   if (window.YT?.Player) return Promise.resolve()
@@ -271,17 +287,19 @@ export function TogetherOverlay({
     advanceLock.current = Date.now() + 3000
     applyNext(next, true)
   }, [applyNext])
-  function addToQueue() {
+  async function addToQueue() {
     const yt = ytIdFrom(addUrl)
     const drive = yt ? null : driveIdFrom(addUrl)
     if (!yt && !drive) return
-    const item: QueueItem = yt
-      ? { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: yt, label: `YouTube · ${yt.slice(0, 6)}` }
-      : { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'drive', fileId: drive!, label: 'Drive video' }
-    const items = [...queueRef.current, item]
-    setQueue(items)
     setAddUrl('')
     setAddOpen(false)
+    // queue entries carry the real video title so Up Next reads like a playlist
+    const label = yt ? (await fetchYtTitle(yt))?.slice(0, 48) ?? 'YouTube video' : 'Drive video'
+    const item: QueueItem = yt
+      ? { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: yt, label }
+      : { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'drive', fileId: drive!, label }
+    const items = [...queueRef.current, item]
+    setQueue(items)
     sendTgRef.current({ a: 'queue', items })
     pushNotice('🎬 Added to Up Next — for both of you')
   }
@@ -467,7 +485,18 @@ export function TogetherOverlay({
   }, [player])
 
   const isVideo = current.kind === 'youtube' || current.kind === 'drive' || (current.kind === 'media' && current.isVideo)
-  const title = ('name' in current && current.name) ? current.name : 'Watching together'
+  // show the REAL video title in the header (keyless oEmbed lookup)
+  const [ytTitle, setYtTitle] = useState<string | null>(null)
+  useEffect(() => {
+    setYtTitle(null)
+    if (current.kind !== 'youtube') return
+    let dead = false
+    void fetchYtTitle(current.videoId).then((t) => { if (!dead && t) setYtTitle(t) })
+    return () => { dead = true }
+  }, [current.kind, current.kind === 'youtube' ? current.videoId : ''])
+  const title = current.kind === 'youtube'
+    ? (ytTitle ?? 'YouTube video')
+    : ('name' in current && current.name) ? current.name : 'Watching together'
 
   /** First real tap on this device — unblocks playback and catches up to the partner. */
   function tapStart() {
