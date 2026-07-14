@@ -94,6 +94,10 @@ export function CallHost() {
         // peerRef must be set before the offer goes out
         peerRef.current = { id: peerId, name: peerName.split(' ')[0] }
         void callRef.current.startCall(video ? { video: true } : undefined)
+        // ALSO push-ring the callee so their phone rings even if the app is
+        // closed/killed (realtime alone only reaches an open app). Fire-and-
+        // forget: the realtime ring still works if the push path is down.
+        void supabase.rpc('ring_call', { p_callee: peerId, p_video: !!video }).then(() => {}, () => {})
       },
       end: () => callRef.current.endCall(true),
       toggleMute: () => callRef.current.toggleMute(),

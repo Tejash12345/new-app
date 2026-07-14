@@ -1445,6 +1445,20 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     }
   }, [state, cleanup, tryIceRestart])
 
+  // Re-send the offer while ringing. Realtime broadcasts aren't persisted, so
+  // a callee whose app was CLOSED misses the one-shot offer; the push wakes
+  // them, and when they open the app (subscribing to their ring channel) they
+  // catch the next re-offer within ~2.5s and the call connects. Stops the
+  // moment they answer (state leaves 'connecting').
+  useEffect(() => {
+    if (state !== 'connecting' || roleRef.current !== 'caller') return
+    const iv = setInterval(() => {
+      const pc = pcRef.current
+      if (pc?.localDescription) sendRtc({ t: 'offer', sdp: pc.localDescription, video: !!camStreamRef.current })
+    }, 2500)
+    return () => clearInterval(iv)
+  }, [state, sendRtc])
+
   // hang up if the component unmounts (leaving the conversation)
   useEffect(() => () => { cleanup() }, [cleanup])
 

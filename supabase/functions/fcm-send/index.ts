@@ -110,14 +110,26 @@ async function sendOne(
   tag: string | null,
   data: Record<string, string>,
 ): Promise<boolean> {
+  // let a sender pick the Android channel (e.g. the loud "calls" channel for
+  // incoming calls); default to the general app channel. channel_id travels in
+  // `data` but is NOT itself a data field the client needs, so strip it out.
+  const channelId = data.channel_id || "focuslion_app";
+  const outData = { ...data };
+  delete outData.channel_id;
   const message = {
     message: {
       token,
       notification: { title, body },
-      data,
+      data: outData,
       android: {
         priority: "HIGH",
-        notification: { channel_id: "focuslion_app", ...(tag ? { tag } : {}) },
+        notification: {
+          channel_id: channelId,
+          ...(tag ? { tag } : {}),
+          ...(channelId === "focuslion_calls"
+            ? { notification_priority: "PRIORITY_MAX", default_sound: true, default_vibrate_timings: true }
+            : {}),
+        },
       },
     },
   };
