@@ -633,7 +633,7 @@ function FriendsChat() {
         // forward sync, emotes and join/leave presence into the open overlay;
         // never let an overlay error break the realtime pipeline (a thrown
         // handler killed message processing in prod)
-        if (p.a === 'state' || p.a === 'emote' || p.a === 'join' || p.a === 'close') {
+        if (p.a === 'state' || p.a === 'emote' || p.a === 'join' || p.a === 'close' || p.a === 'float') {
           try { tgOverlayHandler.current(p) } catch { /* overlay mid-boot */ }
         }
       })
@@ -681,6 +681,12 @@ function FriendsChat() {
       body, created_at: new Date().toISOString(), ...reply,
     }
     setMessages((m) => [...m, optimistic])
+    // while a watch-together overlay is open, drift the message up over the
+    // video (live-stream style) locally + on the partner's screen
+    if (tg) {
+      try { tgOverlayHandler.current({ a: 'float', from: 'local', text: body, mine: true }) } catch { /* overlay mid-boot */ }
+      sendTg({ a: 'float', text: body })
+    }
     let { data, error } = await supabase
       .from('direct_messages')
       .insert({ sender_id: user.id, recipient_id: active.friend_id, body, ...reply })

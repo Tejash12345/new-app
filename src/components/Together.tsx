@@ -32,7 +32,7 @@ export type TogetherSession =
 export type QueueItem = { qid: string; kind: 'youtube' | 'drive'; videoId?: string; fileId?: string; label: string }
 
 export type TgPayload = {
-  a: 'open' | 'state' | 'close' | 'emote' | 'join' | 'queue' | 'next'
+  a: 'open' | 'state' | 'close' | 'emote' | 'join' | 'queue' | 'next' | 'float'
   from: string
   kind?: TogetherSession['kind']
   videoId?: string
@@ -46,7 +46,17 @@ export type TgPayload = {
   e?: string
   items?: QueueItem[]
   item?: QueueItem
+  text?: string   // 'float' — chat message text to drift over the video
+  mine?: boolean  // 'float' — true when it's the local user's own message
 }
+
+// reaction emojis for the watch-together bar (tap → floats up on both screens)
+export const TG_EMOJIS = [
+  '❤️', '😘', '😍', '🥰', '💋', '😗', '😙', '😚', '🤗', '😻',
+  '😂', '🤣', '🔥', '😮', '👏', '💯', '🥳', '😭', '🤯', '🙌',
+  '✨', '👍', '😎', '🎉', '💀', '🫶', '💗', '💕', '😅', '🤩',
+  '😢', '🥺', '😡', '👀', '🙏', '💪', '🤔', '🫠', '😴', '🤤',
+]
 
 export function ytIdFrom(text?: string | null): string | null {
   if (!text) return null
@@ -298,6 +308,17 @@ export function TogetherOverlay({
     setEmotes((list) => [...list.slice(-14), { id, e, x: 8 + Math.random() * 84 }])
     setTimeout(() => setEmotes((list) => list.filter((x) => x.id !== id)), 2600)
   }, [])
+  // floating chat messages — live-stream style bubbles that drift up over the
+  // video (mine on the right, partner's on the left), mirrored on both screens
+  const [floatMsgs, setFloatMsgs] = useState<{ id: number; text: string; mine: boolean }[]>([])
+  const floatSeq = useRef(0)
+  const pushFloatMsg = useCallback((text: string, mine: boolean) => {
+    const t = text.trim()
+    if (!t) return
+    const id = ++floatSeq.current
+    setFloatMsgs((list) => [...list.slice(-6), { id, text: t.slice(0, 120), mine }])
+    setTimeout(() => setFloatMsgs((list) => list.filter((x) => x.id !== id)), 5200)
+  }, [])
 
   /** One face for both player types — every control goes through here. */
   const player = useCallback(() => {
@@ -418,6 +439,11 @@ export function TogetherOverlay({
         pushEmote(p.e)
         return
       }
+      if (p.a === 'float' && p.text) {
+        // a chat message from the other side (or a local echo) → float it
+        pushFloatMsg(p.text, !!p.mine)
+        return
+      }
       if (p.a === 'queue') {
         setQueue(p.items ?? [])
         pushNotice('🎬 Up Next updated')
@@ -485,7 +511,7 @@ export function TogetherOverlay({
     })
     return () => registerTgHandler(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registerTgHandler, meId, pushEmote, pushNotice, partnerName, applyNext, player])
+  }, [registerTgHandler, meId, pushEmote, pushFloatMsg, pushNotice, partnerName, applyNext, player])
 
   // youtube player — constructed once per youtube stint; videoId changes
   // (queue advance) reuse the same player via loadVideoById
@@ -931,10 +957,10 @@ export function TogetherOverlay({
         {/* fullscreen chat sheet — the conversation, over the video */}
         {fs && fsChat && (
           <div className="absolute inset-x-0 bottom-[52px] z-[9] flex h-[46%] flex-col rounded-t-2xl bg-black/80 backdrop-blur-sm">
-            <div className="flex shrink-0 items-center justify-center gap-1 py-1">
-              {['❤️', '😂', '🔥', '😮', '👏', '💯'].map((e) => (
+            <div className="flex shrink-0 items-center gap-1 overflow-x-auto px-2 py-1">
+              {TG_EMOJIS.map((e) => (
                 <button key={e} onClick={() => { pushEmote(e); sendTg({ a: 'emote', e }) }}
-                  className="rounded-full bg-white/10 px-2 py-0.5 text-base active:scale-90">
+                  className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-base active:scale-90">
                   {e}
                 </button>
               ))}
@@ -982,6 +1008,22 @@ export function TogetherOverlay({
               className="absolute bottom-2 text-2xl"
               style={{ left: `${em.x}%` }}>
               {em.e}
+            </motion.div>
+          ))}
+        </div>
+        {/* floating chat messages — drift up over the video, mine right/blue,
+            partner's left/glass (live-stream style) */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-14 z-20 flex flex-col items-stretch gap-1 overflow-hidden px-3">
+          {floatMsgs.map((m) => (
+            <motion.div key={m.id}
+              initial={{ opacity: 0, y: 24, scale: 0.9 }}
+              animate={{ opacity: [0, 1, 1, 0], y: -60, scale: 1 }}
+              transition={{ duration: 5, ease: 'easeOut', times: [0, 0.08, 0.8, 1] }}
+              className={cn('flex', m.mine ? 'justify-end' : 'justify-start')}>
+              <span className={cn('max-w-[80%] break-words rounded-2xl px-3 py-1.5 text-sm font-semibold shadow-lg [overflow-wrap:anywhere]',
+                m.mine ? 'bg-gradient-to-r from-brand-500 to-brand-400 text-white' : 'bg-white/90 text-slate-900')}>
+                {m.text}
+              </span>
             </motion.div>
           ))}
         </div>
@@ -1055,11 +1097,11 @@ export function TogetherOverlay({
           the fullscreen sheet when that's open) */}
       {!(fs && fsChat) && chatNode}
 
-      {/* live emote bar */}
-      <div className="flex shrink-0 flex-wrap items-center justify-center gap-1 px-4 pb-1.5">
-        {['❤️', '😂', '🔥', '😮', '👏', '💯'].map((e) => (
+      {/* live emote bar — scrolls horizontally through the full set */}
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto px-3 pb-1.5">
+        {TG_EMOJIS.map((e) => (
           <button key={e} onClick={() => { pushEmote(e); sendTg({ a: 'emote', e }) }}
-            className="rounded-full bg-white/10 px-2.5 py-1 text-lg transition hover:bg-white/20 active:scale-90">
+            className="shrink-0 rounded-full bg-white/10 px-2.5 py-1 text-lg transition hover:bg-white/20 active:scale-90">
             {e}
           </button>
         ))}
