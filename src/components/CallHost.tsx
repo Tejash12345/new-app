@@ -16,6 +16,7 @@ import { motion } from 'framer-motion'
 import { Phone, PhoneOff, SwitchCamera, Video } from 'lucide-react'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { cn } from '../lib/utils'
 import { useAuth } from '../hooks/useAuth'
 import { useApp } from '../store/app'
 import { useAvatars } from '../hooks/useAvatars'
@@ -98,15 +99,20 @@ export function CallHost() {
       toggleMute: () => callRef.current.toggleMute(),
       toggleCam: () => void callRef.current.toggleCam(),
       flipCam: () => void callRef.current.flipCam(),
+      toggleScreen: () => void callRef.current.toggleScreen(),
       attachLocalVideo: callRef.current.attachLocalVideo,
       attachRemoteVideo: callRef.current.attachRemoteVideo,
       state: call.state,
       muted: call.muted,
       camOn: call.camOn,
       remoteCamOn: call.remoteCamOn,
+      screenOn: call.screenOn,
+      remoteScreenOn: call.remoteScreenOn,
+      canScreenShare: call.canScreenShare,
+      screenError: call.screenError,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [call.state, call.muted, call.camOn, call.remoteCamOn])
+  }, [call.state, call.muted, call.camOn, call.remoteCamOn, call.screenOn, call.remoteScreenOn, call.screenError])
   useEffect(() => () => setCallApi(null), [setCallApi])
 
   // tidy the send channel when a call fully ends
@@ -209,17 +215,32 @@ export function CallHost() {
         <div className="fixed inset-x-3 top-[calc(0.5rem+env(safe-area-inset-top))] z-[110]">
           <VoiceCallBar call={call} partnerName={peer.name} />
         </div>
-        {/* video tiles float on every page, TOP-right under the call strip —
-            bottom-right sat on the chat composer and the nav bar. While a
-            watch-together overlay is open ITS video box owns the tiles
-            (tgOpen), and native fullscreen renders its own inside the box. */}
-        {/* eslint-disable react-hooks/refs -- callback refs ARE the render-time
-            attach point; the rule taints the whole hook return through them */}
-        {(call.camOn || call.remoteCamOn) && !tgOpen && (
-          <div className="fixed right-3 top-[calc(4.5rem+env(safe-area-inset-top))] z-[105] flex flex-col items-end gap-2">
-            {call.remoteCamOn && (
+        {/* Media floats on every page. The watch-together overlay owns the
+            tiles while it's open (tgOpen); native fullscreen renders its own.
+            eslint-disable react-hooks/refs — callback refs ARE the render-time
+            attach point; the rule taints the whole hook return through them. */}
+        {/* eslint-disable react-hooks/refs */}
+        {!tgOpen && call.remoteScreenOn && (
+          // partner is sharing their screen → show it BIG (contain), not a tile
+          <div className="fixed inset-x-3 top-[calc(4rem+env(safe-area-inset-top))] z-[105] overflow-hidden rounded-2xl bg-black shadow-2xl ring-1 ring-white/25">
+            <video ref={call.attachRemoteVideo} autoPlay playsInline muted
+              className="max-h-[46vh] w-full object-contain" />
+            <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-bold text-white/90">
+              🖥 {peer.name}’s screen
+            </span>
+          </div>
+        )}
+        {!tgOpen && (call.camOn || call.screenOn || (call.remoteCamOn && !call.remoteScreenOn)) && (
+          <div className={cn('fixed right-3 z-[105] flex flex-col items-end gap-2',
+            call.remoteScreenOn ? 'bottom-24' : 'top-[calc(4.5rem+env(safe-area-inset-top))]')}>
+            {call.remoteCamOn && !call.remoteScreenOn && (
               <video ref={call.attachRemoteVideo} autoPlay playsInline muted
                 className="aspect-[3/4] w-28 rounded-2xl bg-black object-cover shadow-xl ring-1 ring-white/25 sm:w-36" />
+            )}
+            {call.screenOn && (
+              <span className="rounded-full bg-violet-500/90 px-3 py-1.5 text-[11px] font-bold text-white shadow-lg">
+                🖥 You’re sharing your screen
+              </span>
             )}
             {call.camOn && (
               <button onClick={() => void call.flipCam()} aria-label="Flip camera" className="relative active:scale-95">

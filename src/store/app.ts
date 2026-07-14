@@ -59,12 +59,17 @@ type AppState = {
     toggleMute: () => void
     toggleCam: () => void
     flipCam: () => void
+    toggleScreen: () => void
     attachLocalVideo: (el: HTMLVideoElement | null) => void
     attachRemoteVideo: (el: HTMLVideoElement | null) => void
     state: string
     muted: boolean
     camOn: boolean
     remoteCamOn: boolean
+    screenOn: boolean
+    remoteScreenOn: boolean
+    canScreenShare: boolean
+    screenError: string | null
   } | null
   setCallApi: (api: AppState['callApi']) => void
   // a watch-together overlay is open — it renders the call tiles inside its

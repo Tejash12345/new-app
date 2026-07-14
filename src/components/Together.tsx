@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, Music, Phone, PhoneOff, Plus, SwitchCamera, Video, VideoOff, X } from 'lucide-react'
+import { Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorOff, MonitorUp, Music, Phone, PhoneOff, Plus, SwitchCamera, Video, VideoOff, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 export type TogetherSession =
@@ -981,16 +981,48 @@ export function TogetherOverlay({
 
 // ---------- live voice / video call (WebRTC over the chat channel) ----------
 export type RtcPayload = {
-  t: 'offer' | 'answer' | 'ice' | 'end' | 'cam'
+  t: 'offer' | 'answer' | 'ice' | 'end' | 'cam' | 'screen'
   from: string
   sdp?: RTCSessionDescriptionInit
   cand?: RTCIceCandidateInit
   // offer only: ring as a VIDEO call (camera goes on for both on accept)
   video?: boolean
-  // 'cam' only: my camera just switched on / off mid-call
+  // 'cam' / 'screen' only: that source just switched on / off mid-call
   on?: boolean
 }
 export type CallState = 'idle' | 'incoming' | 'connecting' | 'answered' | 'live' | 'failed' | 'mic'
+
+// ICE servers: several STUN for the direct path (WiFi / same-NAT), plus free
+// TURN relays for when carriers block peer-to-peer (most mobile-data calls).
+// Drop in a stronger credentialed relay later WITHOUT a code change by setting
+// VITE_TURN_URLS (comma-separated) + VITE_TURN_USERNAME + VITE_TURN_CREDENTIAL
+// at build time — they're appended ahead of the free relays.
+function buildIceServers(): RTCIceServer[] {
+  const servers: RTCIceServer[] = [
+    {
+      urls: [
+        'stun:stun.l.google.com:19302',
+        'stun:stun1.l.google.com:19302',
+        'stun:stun2.l.google.com:19302',
+        'stun:stun.cloudflare.com:3478',
+      ],
+    },
+    // free OpenRelay TURN — udp + tcp on :80 (its :443 endpoints refuse
+    // connections, so they're left out to avoid wasting ICE-gather time)
+    {
+      urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:80?transport=tcp'],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ]
+  const env = import.meta.env as Record<string, string | undefined>
+  const urls = env.VITE_TURN_URLS?.split(',').map((s) => s.trim()).filter(Boolean)
+  if (urls?.length && env.VITE_TURN_USERNAME && env.VITE_TURN_CREDENTIAL) {
+    // user-supplied relay goes FIRST so ICE prefers it over the free one
+    servers.splice(1, 0, { urls, username: env.VITE_TURN_USERNAME, credential: env.VITE_TURN_CREDENTIAL })
+  }
+  return servers
+}
 
 export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; sendRtc: (p: Omit<RtcPayload, 'from'>) => void }) {
   const [state, setState] = useState<CallState>('idle')
@@ -998,6 +1030,13 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   // camera: OFF by default — every call starts as voice, video is a switch
   const [camOn, setCamOn] = useState(false)
   const [remoteCamOn, setRemoteCamOn] = useState(false)
+  // screen share rides the SAME single video sender as the camera (mutually
+  // exclusive on the wire — you send either your face or your screen), so no
+  // second m-line and no track-identification guesswork on the receiver
+  const [screenOn, setScreenOn] = useState(false)
+  const [remoteScreenOn, setRemoteScreenOn] = useState(false)
+  const [screenError, setScreenError] = useState<string | null>(null)
+  const screenStreamRef = useRef<MediaStream | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const camStreamRef = useRef<MediaStream | null>(null)
@@ -1063,6 +1102,11 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
     stopCam()
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop())
+    screenStreamRef.current = null
+    setScreenOn(false)
+    setRemoteScreenOn(false)
+    setScreenError(null)
     videoSenderRef.current = null
     facingRef.current = 'user'
     incomingVideoRef.current = false
@@ -1104,19 +1148,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
 
   const makePc = useCallback(async () => {
     const pc = new RTCPeerConnection({
-      iceServers: [
-        // several STUNs — different carriers blacklist different ones
-        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
-        // free public TURN relay — mobile carriers usually block direct
-        // peer-to-peer, so calls ride this relay when punching through
-        // fails. NOTE: this relay's :443 endpoints are DEAD (refused) —
-        // only :80 udp/tcp are alive, so don't list 443 as false hope.
-        {
-          urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:80?transport=tcp'],
-          username: 'openrelayproject',
-          credential: 'openrelayproject',
-        },
-      ],
+      iceServers: buildIceServers(),
       iceCandidatePoolSize: 4,
     })
     pc.onicecandidate = (e) => { if (e.candidate) sendRtc({ t: 'ice', cand: e.candidate.toJSON() }) }
@@ -1233,35 +1265,87 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     setMuted(next)
   }, [muted])
 
+  // Put a video track (camera OR screen) onto the ONE video sender. The first
+  // time a call ever sends video this adds the m-line and renegotiates in
+  // place; after that it's a zero-cost replaceTrack. replaceTrack(null) keeps
+  // the sender alive and mutes the remote track — the on/off signal.
+  const setVideoTrack = useCallback(async (track: MediaStreamTrack | null) => {
+    const pc = pcRef.current
+    if (!pc) return
+    if (videoSenderRef.current) {
+      await videoSenderRef.current.replaceTrack(track).catch(() => {})
+      return
+    }
+    if (!track) return
+    videoSenderRef.current = pc.addTrack(track, streamRef.current ?? new MediaStream([track]))
+    // remote's offer handler answers live calls in place (no re-ring)
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+    sendRtc({ t: 'offer', sdp: offer })
+  }, [sendRtc])
+
   /** The video switch — camera on/off any time during a call. */
   const toggleCam = useCallback(async () => {
+    if (screenStreamRef.current) return // sharing screen — camera is paused
     if (camStreamRef.current) {
-      // keep the sender alive (replaceTrack(null) needs no renegotiation);
-      // the remote side sees the track mute and hides our tile
-      void videoSenderRef.current?.replaceTrack(null).catch(() => {})
+      await setVideoTrack(null)
       stopCam()
       sendRtc({ t: 'cam', on: false })
       return
     }
-    const pc = pcRef.current
-    if (!pc) return // camera is a mid-call switch — nothing to send it into
+    if (!pcRef.current) return // camera is a mid-call switch — nothing to send it into
     try {
       const track = await acquireCam()
-      if (videoSenderRef.current) {
-        await videoSenderRef.current.replaceTrack(track)
-      } else {
-        videoSenderRef.current = pc.addTrack(track, streamRef.current ?? camStreamRef.current!)
-        // first video track adds an m-line — renegotiate in place (the
-        // remote's offer handler answers live calls without re-ringing)
-        const offer = await pc.createOffer()
-        await pc.setLocalDescription(offer)
-        sendRtc({ t: 'offer', sdp: offer })
-      }
+      await setVideoTrack(track)
       sendRtc({ t: 'cam', on: true })
     } catch {
       stopCam() // camera blocked / busy — the call carries on with voice
     }
-  }, [acquireCam, sendRtc, stopCam])
+  }, [acquireCam, sendRtc, setVideoTrack, stopCam])
+
+  /** Stop screen sharing — restore the camera to the wire if it was on. */
+  const stopScreen = useCallback(async () => {
+    if (!screenStreamRef.current) return
+    screenStreamRef.current.getTracks().forEach((t) => t.stop())
+    screenStreamRef.current = null
+    setScreenOn(false)
+    // back to the camera if it's still on, else clear our video entirely
+    const cam = camStreamRef.current?.getVideoTracks()[0] ?? null
+    await setVideoTrack(cam)
+    sendRtc({ t: 'screen', on: false })
+    if (cam) sendRtc({ t: 'cam', on: true }) // remote relabels screen → face
+  }, [sendRtc, setVideoTrack])
+
+  /** Share this device's screen (or a browser tab) to the other side. */
+  const startScreen = useCallback(async () => {
+    if (!pcRef.current) return
+    const gdm = navigator.mediaDevices?.getDisplayMedia
+    if (typeof gdm !== 'function') {
+      setScreenError('Screen sharing isn’t supported on this device.')
+      setTimeout(() => setScreenError(null), 4000)
+      return
+    }
+    let disp: MediaStream
+    try {
+      disp = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+    } catch {
+      // user cancelled the picker, or the WebView blocks capture
+      setScreenError('Couldn’t start screen sharing.')
+      setTimeout(() => setScreenError(null), 4000)
+      return
+    }
+    screenStreamRef.current = disp
+    const track = disp.getVideoTracks()[0]
+    // the browser's own "Stop sharing" bar ends the track — tidy up like our button
+    track.onended = () => { void stopScreen() }
+    setScreenOn(true)
+    await setVideoTrack(track)
+    sendRtc({ t: 'screen', on: true })
+  }, [sendRtc, setVideoTrack, stopScreen])
+
+  const toggleScreen = useCallback(() => {
+    return screenStreamRef.current ? stopScreen() : startScreen()
+  }, [startScreen, stopScreen])
 
   /** Front ↔ back camera; replaceTrack keeps the call untouched. */
   const flipCam = useCallback(async () => {
@@ -1309,6 +1393,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
       navigator.vibrate?.([80, 60, 80])
     }
     if (p.t === 'cam') setRemoteCamOn(!!p.on)
+    if (p.t === 'screen') setRemoteScreenOn(!!p.on)
     if (p.t === 'answer' && p.sdp) {
       // the caller hears about the ACCEPT immediately — before this, the
       // UI sat on "Calling…" until audio connected, looking broken
@@ -1343,7 +1428,8 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   // hang up if the component unmounts (leaving the conversation)
   useEffect(() => () => { cleanup() }, [cleanup])
 
-  return { state, muted, camOn, remoteCamOn, startCall, acceptCall, endCall, toggleMute, toggleCam, flipCam, handleRtc, attachEl, attachLocalVideo, attachRemoteVideo }
+  const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function'
+  return { state, muted, camOn, remoteCamOn, screenOn, remoteScreenOn, screenError, canScreenShare, startCall, acceptCall, endCall, toggleMute, toggleCam, flipCam, toggleScreen, handleRtc, attachEl, attachLocalVideo, attachRemoteVideo }
 }
 
 /** The in-chat call strip: incoming / connecting / live, with mute + hang up. */
@@ -1354,48 +1440,75 @@ export function VoiceCallBar({ call, partnerName }: {
   // NOTE: the remote <audio> sink is owned by CallHost (always mounted) —
   // this bar is pure UI
   if (call.state === 'idle') return null
+  const live = call.state === 'live'
+  const kind = call.screenOn || call.remoteScreenOn ? 'Screen share' : call.camOn || call.remoteCamOn ? 'Video call' : 'Voice call'
   return (
     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-      className={cn('mb-2 flex items-center gap-2 rounded-2xl border bg-white px-3 py-2.5 shadow-md dark:bg-slate-900 sm:gap-2.5 sm:px-3.5',
+      className={cn('mb-2 rounded-2xl border bg-white/95 px-3 py-2 shadow-lg backdrop-blur dark:bg-slate-900/95 sm:px-3.5',
         call.state === 'incoming' ? 'border-emerald-400/70' : call.state === 'failed' || call.state === 'mic' ? 'border-rose-400/60' : 'border-brand-400/50')}>
-      <Phone size={16} className={cn(
-        call.state === 'live' ? 'text-emerald-500' : call.state === 'failed' || call.state === 'mic' ? 'text-rose-500' : 'animate-pulse text-brand-500')} />
-      <span className="min-w-0 flex-1 text-sm font-semibold leading-snug text-slate-800 dark:text-slate-100">
-        {call.state === 'incoming' && `${partnerName} is calling…`}
-        {call.state === 'connecting' && `Calling ${partnerName}…`}
-        {call.state === 'answered' && 'Call accepted ✓ — connecting audio…'}
-        {call.state === 'live' && `${call.camOn || call.remoteCamOn ? 'Video' : 'Voice'} call with ${partnerName}`}
-        {call.state === 'failed' && 'No audio path — the network blocked the call.'}
-        {call.state === 'mic' && 'Microphone is blocked — allow mic access for FocusLion in your phone settings, then try again.'}
-      </span>
-      {call.state === 'failed' && (
-        <button onClick={() => void call.startCall()}
-          className="shrink-0 rounded-full bg-brand-500 px-3 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
-          Retry
-        </button>
+      <div className="flex items-center gap-2">
+        <Phone size={16} className={cn('shrink-0',
+          live ? 'text-emerald-500' : call.state === 'failed' || call.state === 'mic' ? 'text-rose-500' : 'animate-pulse text-brand-500')} />
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
+          {call.state === 'incoming' && `${partnerName} is calling…`}
+          {call.state === 'connecting' && `Calling ${partnerName}…`}
+          {call.state === 'answered' && 'Connecting…'}
+          {live && `${kind} · ${partnerName}`}
+          {call.state === 'failed' && 'Call failed — the network blocked it.'}
+          {call.state === 'mic' && 'Mic blocked — enable it in phone settings.'}
+        </span>
+        {call.state === 'failed' && (
+          <button onClick={() => void call.startCall()}
+            className="shrink-0 rounded-full bg-brand-500 px-3 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
+            Retry
+          </button>
+        )}
+        {call.state === 'incoming' && (
+          <button onClick={call.acceptCall}
+            className="shrink-0 rounded-full bg-emerald-500 px-3.5 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
+            Accept
+          </button>
+        )}
+        {/* live controls: compact icon row, comfortably fits 360px */}
+        {live && (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button onClick={() => void call.toggleCam()} disabled={call.screenOn}
+              aria-label={call.camOn ? 'Turn camera off' : 'Turn camera on'}
+              className={cn('rounded-full p-2 transition active:scale-90 disabled:opacity-30',
+                call.camOn ? 'bg-sky-500/15 text-sky-500' : 'bg-slate-500/10 text-slate-500 dark:text-slate-300')}>
+              {call.camOn ? <Video size={15} /> : <VideoOff size={15} />}
+            </button>
+            {call.canScreenShare && (
+              <button onClick={() => void call.toggleScreen()}
+                aria-label={call.screenOn ? 'Stop sharing screen' : 'Share screen'}
+                className={cn('rounded-full p-2 transition active:scale-90',
+                  call.screenOn ? 'bg-violet-500/15 text-violet-500' : 'bg-slate-500/10 text-slate-500 dark:text-slate-300')}>
+                {call.screenOn ? <MonitorOff size={15} /> : <MonitorUp size={15} />}
+              </button>
+            )}
+            <button onClick={call.toggleMute} aria-label={call.muted ? 'Unmute' : 'Mute'}
+              className={cn('rounded-full p-2 transition active:scale-90',
+                call.muted ? 'bg-rose-500/15 text-rose-500' : 'bg-slate-500/10 text-slate-500 dark:text-slate-300')}>
+              {call.muted ? <MicOff size={15} /> : <Mic size={15} />}
+            </button>
+            <button onClick={() => call.endCall(true)} aria-label="End call"
+              className="rounded-full bg-rose-500 p-2 text-white shadow active:scale-90">
+              <PhoneOff size={15} />
+            </button>
+          </div>
+        )}
+        {!live && call.state !== 'incoming' && call.state !== 'failed' && (
+          <button onClick={() => call.endCall(true)} aria-label="End call"
+            className="shrink-0 rounded-full bg-rose-500 p-2 text-white shadow active:scale-90">
+            <PhoneOff size={15} />
+          </button>
+        )}
+      </div>
+      {call.screenError && (
+        <div className="mt-1.5 rounded-lg bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-500">
+          {call.screenError}
+        </div>
       )}
-      {call.state === 'incoming' && (
-        <button onClick={call.acceptCall}
-          className="rounded-full bg-emerald-500 px-3.5 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
-          Accept
-        </button>
-      )}
-      {call.state === 'live' && (
-        <button onClick={() => void call.toggleCam()} aria-label={call.camOn ? 'Turn camera off' : 'Turn camera on'}
-          className={cn('rounded-full p-2', call.camOn ? 'bg-sky-500/15 text-sky-500' : 'bg-slate-500/10 text-slate-500 dark:text-slate-300')}>
-          {call.camOn ? <Video size={15} /> : <VideoOff size={15} />}
-        </button>
-      )}
-      {call.state === 'live' && (
-        <button onClick={call.toggleMute} aria-label={call.muted ? 'Unmute' : 'Mute'}
-          className={cn('rounded-full p-2', call.muted ? 'bg-rose-500/15 text-rose-500' : 'bg-slate-500/10 text-slate-500 dark:text-slate-300')}>
-          {call.muted ? <MicOff size={15} /> : <Mic size={15} />}
-        </button>
-      )}
-      <button onClick={() => call.endCall(true)} aria-label="End call"
-        className="rounded-full bg-rose-500 p-2 text-white shadow active:scale-95">
-        <PhoneOff size={15} />
-      </button>
     </motion.div>
   )
 }
