@@ -213,6 +213,12 @@ export function TogetherOverlay({
   const [mediaGone, setMediaGone] = useState(false)
   const [partnerHere, setPartnerHere] = useState(false)
   const [driveLoading, setDriveLoading] = useState(true)
+  // Drive plays in a real <video> (synced, like device media). If Drive won't
+  // stream it (large / non-streamable / codec), fall back to the /preview
+  // iframe (unsynced). driveLoadingRef lets the load-timeout read live state.
+  const [driveFallback, setDriveFallback] = useState(false)
+  const driveLoadingRef = useRef(true)
+  useEffect(() => { driveLoadingRef.current = driveLoading })
   // mobile browsers refuse playback started by ANOTHER phone until this
   // device gets one real tap — gate everything behind "Tap to play"
   const [needsTap, setNeedsTap] = useState(true)
@@ -538,10 +544,18 @@ export function TogetherOverlay({
     })
     return () => { dead = true }
   }, [current.kind, current.kind === 'media' ? current.msgId : '', resolveMediaUrl])
-  // show the loading spinner again whenever a new Drive video comes on
+  // reset Drive state whenever a new Drive video comes on
   useEffect(() => {
-    if (current.kind === 'drive') setDriveLoading(true)
+    if (current.kind === 'drive') { setDriveLoading(true); setDriveFallback(false) }
   }, [current.kind, current.kind === 'drive' ? current.fileId : ''])
+  // if the direct <video> hasn't loaded within 8s (Drive served an HTML page
+  // instead of the file, or the codec isn't supported), drop to the iframe.
+  // A plain onError often never fires for the HTML-page case — hence a timer.
+  useEffect(() => {
+    if (current.kind !== 'drive' || driveFallback) return
+    const t = setTimeout(() => { if (driveLoadingRef.current) setDriveFallback(true) }, 8000)
+    return () => clearTimeout(t)
+  }, [current.kind, current.kind === 'drive' ? current.fileId : '', driveFallback])
 
   // gentle heartbeat so a missed event can't leave the two sides apart —
   // only the driving side speaks, so heartbeats can't ping-pong
@@ -660,8 +674,9 @@ export function TogetherOverlay({
     api.play()
   }
 
-  // Drive plays in its own iframe (cross-origin — our transport can't drive it)
-  const showTransport = !needsTap && current.kind !== 'drive' && !(current.kind === 'media' && mediaGone)
+  // Drive uses our synced transport when streamed as a <video>; only the
+  // iframe fallback (cross-origin) can't be driven by it
+  const showTransport = !needsTap && !(current.kind === 'drive' && driveFallback) && !(current.kind === 'media' && mediaGone)
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       className="fixed inset-0 z-[85] flex flex-col bg-[#06050d]/95 backdrop-blur-sm">
@@ -687,26 +702,39 @@ export function TogetherOverlay({
           isVideo ? (fs ? '' : 'aspect-video') : 'h-32')}>
         {current.kind === 'youtube' && <div id="tg-yt" className="h-full w-full" />}
         {current.kind === 'drive' && (
-          // Drive's own /preview player is the reliable embed — the direct
-          // uc?export=download URL serves a virus-scan warning page for most
-          // files, so a raw <video> showed a dead/stuck play button. This fills
-          // the box and plays with Drive's own controls (no custom sync).
-          <>
+          driveFallback ? (
+            // Drive won't stream this file directly → its own /preview player.
+            // Displays reliably, but can't be synced (cross-origin, no API).
             <iframe
               src={`https://drive.google.com/file/d/${current.fileId}/preview`}
               className="absolute inset-0 h-full w-full border-0"
               allow="autoplay; fullscreen"
               allowFullScreen
-              onLoad={() => setDriveLoading(false)}
               title="Google Drive player"
             />
-            {driveLoading && (
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black">
-                <div className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-white/90" />
-                <span className="text-xs text-white/60">Loading Drive video…</span>
-              </div>
-            )}
-          </>
+          ) : (
+            // direct stream in a real <video> → goes through the SAME synced
+            // transport as device media (play/pause/seek stay in lockstep)
+            <>
+              <video
+                ref={mediaRef}
+                src={`https://drive.usercontent.google.com/download?id=${current.fileId}&export=download&confirm=t`}
+                playsInline
+                className="absolute inset-0 h-full w-full object-contain"
+                onLoadedMetadata={() => setDriveLoading(false)}
+                onError={() => setDriveFallback(true)}
+                onPlay={() => setUiPlaying(true)}
+                onPause={() => setUiPlaying(false)}
+                onEnded={handleEnded}
+              />
+              {driveLoading && (
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black">
+                  <div className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-white/90" />
+                  <span className="text-xs text-white/60">Loading Drive video…</span>
+                </div>
+              )}
+            </>
+          )
         )}
         {current.kind === 'media' && (
           mediaGone ? (
@@ -738,8 +766,9 @@ export function TogetherOverlay({
         {/* Drive plays in its own iframe (no custom transport bar), so give it a
             standalone fullscreen toggle — the app's fullscreen button otherwise
             lives in that bar. Fullscreening boxRef makes the iframe fill screen. */}
-        {current.kind === 'drive' && (
-          // top-LEFT so it doesn't clash with Drive's own popout icon (top-right)
+        {current.kind === 'drive' && driveFallback && (
+          // the iframe fallback has no transport bar → give it a fullscreen
+          // toggle (top-LEFT, clear of Drive's own popout icon top-right)
           <button onClick={toggleFs} aria-label={fs ? 'Exit fullscreen' : 'Fullscreen'}
             className="absolute left-2 top-2 z-[8] rounded-full bg-black/55 p-2 text-white/90 backdrop-blur active:scale-90">
             {fs ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
@@ -870,7 +899,7 @@ export function TogetherOverlay({
         )}
 
         {/* one real tap unblocks playback on this device */}
-        {needsTap && current.kind !== 'drive' && !(current.kind === 'media' && mediaGone) && (
+        {needsTap && !(current.kind === 'drive' && driveFallback) && !(current.kind === 'media' && mediaGone) && (
           <button onClick={tapStart}
             className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/55 text-white">
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-purple-500 shadow-lg">
@@ -914,8 +943,8 @@ export function TogetherOverlay({
       </div>
 
       <div className="shrink-0 px-4 py-1.5 text-center text-[11px] text-white/50">
-        {current.kind === 'drive'
-          ? 'Drive player — press play on both phones.'
+        {current.kind === 'drive' && driveFallback
+          ? 'Drive player — press play on both phones (this file can’t be synced).'
           : partnerHere
             ? `In sync with ${partnerName} 🎧`
             : `Waiting for ${partnerName} to join…`}
