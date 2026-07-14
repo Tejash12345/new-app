@@ -17,6 +17,11 @@ import { ChevronDown, Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minim
 import { cn } from '../lib/utils'
 import { callAudioStart, callAudioSpeaker, callAudioEnd } from '../lib/callAudio'
 import { hasNativeScreen, nativeScreenStart, nativeScreenStop } from '../lib/nativeScreen'
+import { SUPABASE_URL } from '../lib/supabase'
+
+// Stream a public Drive file through our edge proxy so it plays in a real
+// <video> (Drive's direct URL serves an HTML virus-scan page for large files).
+const driveStreamUrl = (fileId: string) => `${SUPABASE_URL}/functions/v1/drive-proxy?id=${encodeURIComponent(fileId)}`
 
 export type TogetherSession =
   | { kind: 'youtube'; videoId: string }
@@ -563,7 +568,7 @@ export function TogetherOverlay({
   // A plain onError often never fires for the HTML-page case — hence a timer.
   useEffect(() => {
     if (current.kind !== 'drive' || driveFallback) return
-    const t = setTimeout(() => { if (driveLoadingRef.current) setDriveFallback(true) }, 8000)
+    const t = setTimeout(() => { if (driveLoadingRef.current) setDriveFallback(true) }, 12000)
     return () => clearTimeout(t)
   }, [current.kind, current.kind === 'drive' ? current.fileId : '', driveFallback])
 
@@ -731,7 +736,7 @@ export function TogetherOverlay({
             <>
               <video
                 ref={mediaRef}
-                src={`https://drive.usercontent.google.com/download?id=${current.fileId}&export=download&confirm=t`}
+                src={driveStreamUrl(current.fileId)}
                 playsInline
                 className="absolute inset-0 h-full w-full object-contain"
                 onLoadedMetadata={(e) => {
