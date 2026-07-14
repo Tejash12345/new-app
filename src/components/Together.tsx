@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Clapperboard, Mic, MicOff, Music, Phone, PhoneOff, X } from 'lucide-react'
+import { Clapperboard, Maximize2, Mic, MicOff, Minimize2, Music, Phone, PhoneOff, Plus, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 export type TogetherSession =
@@ -21,8 +21,11 @@ export type TogetherSession =
   | { kind: 'media'; msgId: string; name?: string; isVideo?: boolean }
   | { kind: 'drive'; fileId: string; name?: string }
 
+/** An Up-Next entry — both sides hold the same queue and auto-advance together. */
+export type QueueItem = { qid: string; kind: 'youtube' | 'drive'; videoId?: string; fileId?: string; label: string }
+
 export type TgPayload = {
-  a: 'open' | 'state' | 'close' | 'emote' | 'join'
+  a: 'open' | 'state' | 'close' | 'emote' | 'join' | 'queue' | 'next'
   from: string
   kind?: TogetherSession['kind']
   videoId?: string
@@ -34,6 +37,8 @@ export type TgPayload = {
   t?: number
   at?: number
   e?: string
+  items?: QueueItem[]
+  item?: QueueItem
 }
 
 export function ytIdFrom(text?: string | null): string | null {
@@ -66,6 +71,7 @@ type YTPlayer = {
   playVideo: () => void
   pauseVideo: () => void
   seekTo: (s: number, allow: boolean) => void
+  loadVideoById: (id: string) => void
   getCurrentTime: () => number
   getDuration: () => number
   getPlayerState: () => number
@@ -114,14 +120,25 @@ export function TogetherOverlay({
   const applyingRemote = useRef(0)
   const iDrive = useRef(false)
   const ECHO_MS = 4000
-  // content-based echo detection: after applying the partner's play/pause we
-  // EXPECT our own player to emit that same event — swallow it whenever it
-  // arrives (mobile buffering can delay it 5s+, far past any time window)
   const expectedEcho = useRef<{ playing: boolean; until: number } | null>(null)
   const expectEcho = (playing: boolean) => {
     expectedEcho.current = { playing, until: Date.now() + 8000 }
   }
   const DRIFT_S = 5 // mobile buffering makes small gaps normal — don't chase them
+
+  // what's on screen NOW — starts at the invite and advances through the
+  // shared Up-Next queue (both sides hold the same queue and move together)
+  const [current, setCurrent] = useState<TogetherSession>(session)
+  const currentRef = useRef(current)
+  useEffect(() => { currentRef.current = current })
+  const [queue, setQueue] = useState<QueueItem[]>([])
+  const queueRef = useRef(queue)
+  useEffect(() => { queueRef.current = queue })
+  const [addOpen, setAddOpen] = useState(false)
+  const [addUrl, setAddUrl] = useState('')
+  const advanceLock = useRef(0)
+  const qSeq = useRef(0)
+
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [mediaGone, setMediaGone] = useState(false)
   const [partnerHere, setPartnerHere] = useState(false)
@@ -136,15 +153,26 @@ export function TogetherOverlay({
   // follower autoplay: playback starts MUTED automatically (YouTube-style);
   // one tap turns the sound on — browsers only allow silent autoplay
   const [soundGate, setSoundGate] = useState(false)
-  // our own YouTube transport (native controls are hidden): phones' players
-  // pause/resume by themselves, and taps inside the iframe are invisible to
-  // us — with our controls, ONLY real button presses ever broadcast
+  // our own transport for ALL players (YouTube iframe AND <video>): phone
+  // players stop/start by themselves, so ONLY our buttons ever broadcast
   const [uiPlaying, setUiPlaying] = useState(false)
   const [cur, setCur] = useState(0)
   const [dur, setDur] = useState(0)
-  // while the finger drags the bar, show the scrub position and only
-  // seek+sync on release — live-seeking on every tick jerked both players
+  // drag shows the scrub position; the seek+sync happens once, on release
   const [scrub, setScrub] = useState<number | null>(null)
+  // fullscreen for the player box (works for iframe and <video> alike)
+  const boxRef = useRef<HTMLDivElement>(null)
+  const [fs, setFs] = useState(false)
+  useEffect(() => {
+    const f = () => setFs(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', f)
+    return () => document.removeEventListener('fullscreenchange', f)
+  }, [])
+  function toggleFs() {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+    else void boxRef.current?.requestFullscreen?.().catch(() => {})
+  }
+
   // how long this hangout has been running
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
@@ -175,10 +203,25 @@ export function TogetherOverlay({
     setTimeout(() => setEmotes((list) => list.filter((x) => x.id !== id)), 2600)
   }, [])
 
+  /** One face for both player types — every control goes through here. */
+  const player = useCallback(() => {
+    const yt = currentRef.current.kind === 'youtube' ? ytRef.current : null
+    const el = currentRef.current.kind !== 'youtube' ? mediaRef.current : null
+    return {
+      ready: !!(yt || el),
+      t: () => (yt ? yt.getCurrentTime() : el ? el.currentTime : 0),
+      d: () => (yt ? yt.getDuration() || 0 : el && Number.isFinite(el.duration) ? el.duration : 0),
+      playing: () => (yt && window.YT ? yt.getPlayerState() === window.YT.PlayerState.PLAYING : el ? !el.paused : false),
+      play: () => { yt?.playVideo(); if (el) void el.play().catch(() => {}) },
+      pause: () => { yt?.pauseVideo(); el?.pause() },
+      seek: (v: number) => { yt?.seekTo(v, true); if (el) el.currentTime = v },
+      mute: (m: boolean) => { if (yt) { if (m) yt.mute(); else yt.unMute() } if (el) el.muted = m },
+    }
+  }, [])
+
   const broadcastState = useCallback((playing: boolean, t: number) => {
     const exp = expectedEcho.current
     if (exp && Date.now() < exp.until && exp.playing === playing) {
-      // that's our player confirming the state we applied — not the user
       expectedEcho.current = null
       return
     }
@@ -188,6 +231,66 @@ export function TogetherOverlay({
     sendTg({ a: 'state', playing, t, at: Date.now() })
   }, [sendTg])
 
+  /** A REAL user action on our transport — always broadcasts, no echo guards. */
+  function userAction(playing: boolean, t: number) {
+    expectedEcho.current = null
+    applyingRemote.current = 0
+    iDrive.current = true
+    sendTg({ a: 'state', playing, t, at: Date.now() })
+  }
+
+  // ---- the shared Up-Next queue ----
+  function sessionFromItem(item: QueueItem): TogetherSession {
+    return item.kind === 'youtube'
+      ? { kind: 'youtube', videoId: item.videoId! }
+      : { kind: 'drive', fileId: item.fileId!, name: item.label }
+  }
+  function sameAsCurrent(item: QueueItem) {
+    const c = currentRef.current
+    return (c.kind === 'youtube' && item.kind === 'youtube' && c.videoId === item.videoId)
+      || (c.kind === 'drive' && item.kind === 'drive' && c.fileId === item.fileId)
+  }
+  const applyNext = useCallback((item: QueueItem, broadcast: boolean, items?: QueueItem[]) => {
+    const remaining = (items ?? queueRef.current).filter((q) => q.qid !== item.qid)
+    setQueue(remaining)
+    pendingState.current = null
+    setCur(0)
+    setDur(0)
+    setCurrent(sessionFromItem(item))
+    pushNotice(`▶ Up next: ${item.label}`)
+    if (broadcast) sendTgRef.current({ a: 'next', item, items: remaining })
+  }, [pushNotice])
+  /** The video finished — roll into the next one together, no pause. */
+  const handleEnded = useCallback(() => {
+    if (Date.now() < advanceLock.current) return
+    const next = queueRef.current[0]
+    if (!next) {
+      setUiPlaying(false)
+      return
+    }
+    advanceLock.current = Date.now() + 3000
+    applyNext(next, true)
+  }, [applyNext])
+  function addToQueue() {
+    const yt = ytIdFrom(addUrl)
+    const drive = yt ? null : driveIdFrom(addUrl)
+    if (!yt && !drive) return
+    const item: QueueItem = yt
+      ? { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: yt, label: `YouTube · ${yt.slice(0, 6)}` }
+      : { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'drive', fileId: drive!, label: 'Drive video' }
+    const items = [...queueRef.current, item]
+    setQueue(items)
+    setAddUrl('')
+    setAddOpen(false)
+    sendTgRef.current({ a: 'queue', items })
+    pushNotice('🎬 Added to Up Next — for both of you')
+  }
+  function removeFromQueue(qid: string) {
+    const items = queueRef.current.filter((q) => q.qid !== qid)
+    setQueue(items)
+    sendTgRef.current({ a: 'queue', items })
+  }
+
   // apply the partner's play/pause/seek, with drift correction
   useEffect(() => {
     registerTgHandler((p) => {
@@ -196,21 +299,27 @@ export function TogetherOverlay({
         pushEmote(p.e)
         return
       }
+      if (p.a === 'queue') {
+        setQueue(p.items ?? [])
+        pushNotice('🎬 Up Next updated')
+        return
+      }
+      if (p.a === 'next' && p.item) {
+        if (!sameAsCurrent(p.item)) applyNext(p.item, false, p.items ? [...p.items, p.item] : undefined)
+        else if (p.items) setQueue(p.items)
+        return
+      }
       if (p.a === 'join') {
         setPartnerHere(true)
         pushNotice(`🎉 ${partnerName} joined the room`)
         navigator.vibrate?.(15)
-        // greet the newcomer with our position — playing OR paused, so they
-        // land on the right second either way
-        const yt = ytRef.current
-        const el = mediaRef.current
-        const playing = yt && window.YT
-          ? yt.getPlayerState() === window.YT.PlayerState.PLAYING
-          : el ? !el.paused : false
-        const t = yt ? yt.getCurrentTime() : el ? el.currentTime : 0
-        if ((yt || el) && (playing || t > 1)) {
-          sendTgRef.current({ a: 'state', playing, t, at: Date.now() })
+        // greet the newcomer with our position — playing OR paused — plus
+        // the queue, so their room matches ours exactly
+        const api = player()
+        if (api.ready && (api.playing() || api.t() > 1)) {
+          sendTgRef.current({ a: 'state', playing: api.playing(), t: api.t(), at: Date.now() })
         }
+        if (queueRef.current.length) sendTgRef.current({ a: 'queue', items: queueRef.current })
         return
       }
       if (p.a === 'close') {
@@ -224,23 +333,15 @@ export function TogetherOverlay({
       // autoplay is allowed) and offer a tap-for-sound pill instead
       if (needsTapRef.current) {
         pendingState.current = { playing: !!p.playing, t: p.t, at: p.at }
-        const yt2 = ytRef.current
-        const el2 = mediaRef.current
-        if (p.playing && (yt2 || el2)) {
+        const api = player()
+        if (p.playing && api.ready) {
           iDrive.current = false
           applyingRemote.current = Date.now() + ECHO_MS
           expectEcho(true)
           const exp = p.t + (Date.now() - p.at) / 1000
-          if (yt2) {
-            yt2.mute()
-            if (exp > 1) yt2.seekTo(exp, true)
-            yt2.playVideo()
-          }
-          if (el2) {
-            el2.muted = true
-            if (exp > 1) el2.currentTime = exp
-            void el2.play().catch(() => {})
-          }
+          api.mute(true)
+          if (exp > 1) api.seek(exp)
+          api.play()
           setNeedsTap(false)
           setSoundGate(true)
         }
@@ -249,66 +350,54 @@ export function TogetherOverlay({
       // the partner acted — they drive now, we follow silently
       iDrive.current = false
       const expected = p.playing ? p.t + (Date.now() - p.at) / 1000 : p.t
-      const yt = ytRef.current
-      const el = mediaRef.current
-      const localT = yt ? yt.getCurrentTime() : el ? el.currentTime : 0
-      const localPlaying = yt
-        ? (window.YT ? yt.getPlayerState() === window.YT.PlayerState.PLAYING : false)
-        : el ? !el.paused : false
-      // already aligned → touch nothing (re-applying is what caused the
-      // stop/resume stutter: every apply kicked off buffering + echo events)
+      const api = player()
+      if (!api.ready) return
+      const localT = api.t()
+      const localPlaying = api.playing()
+      // already aligned → touch nothing (re-applying caused stutter)
       if (localPlaying === !!p.playing && Math.abs(localT - expected) < DRIFT_S) return
       applyingRemote.current = Date.now() + ECHO_MS
       if (localPlaying !== !!p.playing) expectEcho(!!p.playing)
-      // when catching up mid-playback, land slightly AHEAD so our own
-      // buffering doesn't leave us behind again (the "chasing" stutter)
+      // land slightly AHEAD when catching up so buffering doesn't leave us behind
       const target = expected + (p.playing ? 1 : 0)
-      if (yt) {
-        if (Math.abs(localT - expected) >= DRIFT_S) yt.seekTo(target, true)
-        if (p.playing) yt.playVideo()
-        else yt.pauseVideo()
-      }
-      if (el) {
-        if (Math.abs(localT - expected) >= DRIFT_S) el.currentTime = target
-        if (p.playing) void el.play().catch(() => {})
-        else el.pause()
-      }
+      if (Math.abs(localT - expected) >= DRIFT_S) api.seek(target)
+      if (p.playing) api.play()
+      else api.pause()
     })
     return () => registerTgHandler(() => {})
-  }, [registerTgHandler, meId, pushEmote, pushNotice, partnerName])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerTgHandler, meId, pushEmote, pushNotice, partnerName, applyNext, player])
 
-  // youtube player
+  // youtube player — constructed once per youtube stint; videoId changes
+  // (queue advance) reuse the same player via loadVideoById
   useEffect(() => {
-    if (session.kind !== 'youtube') return
+    if (current.kind !== 'youtube') return
     let dead = false
-    let player: YTPlayer | null = null
+    let playerObj: YTPlayer | null = null
     void loadYouTubeApi().then(() => {
       if (dead || !window.YT) return
-      player = new window.YT.Player('tg-yt', {
-        videoId: session.videoId,
+      playerObj = new window.YT.Player('tg-yt', {
+        videoId: currentRef.current.kind === 'youtube' ? currentRef.current.videoId : '',
         width: '100%',
         height: '100%',
         // controls: 0 — the iframe swallows taps and phone players stop and
-        // start on their own; with YouTube's UI hidden, the only events that
-        // sync are the ones from OUR transport bar below
+        // start on their own; only OUR transport ever syncs
         playerVars: { playsinline: 1, rel: 0, controls: 0, disablekb: 1, origin: window.location.origin },
         events: {
-          // CRITICAL: expose the player only when its API methods actually
-          // exist — sync events arriving during boot were calling
-          // getPlayerState on a half-built object and crashing (prod trace)
+          // expose the player only when its API methods actually exist —
+          // sync events during boot used to crash on a half-built object
           onReady: () => {
-            if (dead || !player) return
-            ytRef.current = player
-            // partner already watching? catch up muted right away
+            if (dead || !playerObj) return
+            ytRef.current = playerObj
             const pend = pendingState.current
             if (needsTapRef.current && pend?.playing) {
               iDrive.current = false
               applyingRemote.current = Date.now() + ECHO_MS
               expectEcho(true)
               const exp = pend.t + (Date.now() - pend.at) / 1000
-              player.mute()
-              if (exp > 1) player.seekTo(exp, true)
-              player.playVideo()
+              playerObj.mute()
+              if (exp > 1) playerObj.seekTo(exp, true)
+              playerObj.playVideo()
               setNeedsTap(false)
               setSoundGate(true)
             }
@@ -316,6 +405,7 @@ export function TogetherOverlay({
           onStateChange: (e: { data: number }) => {
             if (!window.YT) return
             setUiPlaying(e.data === window.YT.PlayerState.PLAYING)
+            if (e.data === 0) handleEnded() // ENDED → auto-advance the queue
           },
         },
       })
@@ -323,70 +413,78 @@ export function TogetherOverlay({
     return () => {
       dead = true
       ytRef.current = null
-      try { player?.destroy() } catch { /* player died with the iframe */ }
+      try { playerObj?.destroy() } catch { /* died with the iframe */ }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.kind, session.kind === 'youtube' ? session.videoId : ''])
+  }, [current.kind])
+  // queue advance within youtube: swap the video in the SAME player
+  const ytVideoId = current.kind === 'youtube' ? current.videoId : ''
+  useEffect(() => {
+    if (!ytVideoId) return
+    const yt = ytRef.current
+    if (yt) {
+      try { yt.loadVideoById(ytVideoId) } catch { /* player rebooting */ }
+      setUiPlaying(true)
+    }
+  }, [ytVideoId])
 
   // chat-attachment player (from the device vault)
   useEffect(() => {
-    if (session.kind !== 'media') return
+    if (current.kind !== 'media') return
     let dead = false
-    void resolveMediaUrl(session.msgId).then((url) => {
+    void resolveMediaUrl(current.msgId).then((url) => {
       if (dead) return
       if (url) setMediaUrl(url)
       else setMediaGone(true)
     })
     return () => { dead = true }
-  }, [session.kind, session.kind === 'media' ? session.msgId : '', resolveMediaUrl])
+  }, [current.kind, current.kind === 'media' ? current.msgId : '', resolveMediaUrl])
+  // fresh drive file → give direct playback another chance
+  useEffect(() => { setDriveFallback(false) }, [current.kind === 'drive' ? current.fileId : ''])
 
   // gentle heartbeat so a missed event can't leave the two sides apart —
   // only the driving side speaks, so heartbeats can't ping-pong
   useEffect(() => {
     const iv = setInterval(() => {
       if (!iDrive.current) return
-      const yt = ytRef.current
-      const el = mediaRef.current
-      if (yt && window.YT && yt.getPlayerState() === window.YT.PlayerState.PLAYING) {
-        broadcastState(true, yt.getCurrentTime())
-      } else if (el && !el.paused) {
-        broadcastState(true, el.currentTime)
-      }
+      const api = player()
+      if (api.ready && api.playing()) broadcastState(true, api.t())
     }, 7000)
     return () => clearInterval(iv)
-  }, [broadcastState])
+  }, [broadcastState, player])
 
-  const isVideo = session.kind === 'youtube' || session.kind === 'drive' || (session.kind === 'media' && session.isVideo)
-  const title = ('name' in session && session.name) ? session.name : 'Watching together'
+  // transport position poll (UI only)
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const api = player()
+      if (!api.ready) return
+      try {
+        setCur(api.t() || 0)
+        setDur(api.d() || 0)
+      } catch { /* player booting */ }
+    }, 500)
+    return () => clearInterval(iv)
+  }, [player])
+
+  const isVideo = current.kind === 'youtube' || current.kind === 'drive' || (current.kind === 'media' && current.isVideo)
+  const title = ('name' in current && current.name) ? current.name : 'Watching together'
 
   /** First real tap on this device — unblocks playback and catches up to the partner. */
   function tapStart() {
-    // player still booting — ignore the tap instead of "starting" a black box
-    if (session.kind === 'youtube' && !ytRef.current) return
+    const api = player()
+    if (!api.ready) return // player still booting
     setNeedsTap(false)
     const pend = pendingState.current
     const expected = pend ? (pend.playing ? pend.t + (Date.now() - pend.at) / 1000 : pend.t) : 0
     if (pend) {
-      // catching up to the partner — we're the follower, stay quiet
       iDrive.current = false
       applyingRemote.current = Date.now() + ECHO_MS
       expectEcho(pend.playing)
     }
-    // if the partner is PAUSED, land on their second but stay paused too —
-    // force-playing here used to split the two sides
+    // if the partner is PAUSED, land on their second but stay paused too
     const shouldPlay = !pend || pend.playing
-    const yt = ytRef.current
-    if (yt) {
-      if (expected > 1) yt.seekTo(expected, true)
-      if (shouldPlay) yt.playVideo()
-    }
-    const el = mediaRef.current
-    if (el) {
-      if (expected > 1) el.currentTime = expected
-      if (shouldPlay) void el.play().catch(() => {})
-    }
-    // the starter's kick-off is a real user action — tell the partner
-    // (player events no longer broadcast, so this must be explicit)
+    if (expected > 1) api.seek(expected)
+    if (shouldPlay) api.play()
     if (!pend) userAction(true, expected)
   }
 
@@ -419,43 +517,24 @@ export function TogetherOverlay({
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
-  // transport-bar position poll (UI only)
-  useEffect(() => {
-    if (session.kind !== 'youtube') return
-    const iv = setInterval(() => {
-      const yt = ytRef.current
-      if (!yt) return
-      try {
-        setCur(yt.getCurrentTime() || 0)
-        setDur(yt.getDuration() || 0)
-      } catch { /* player still booting */ }
-    }, 500)
-    return () => clearInterval(iv)
-  }, [session.kind])
-
-  /** A REAL user action on our transport — always broadcasts, no echo guards. */
-  function userAction(playing: boolean, t: number) {
-    expectedEcho.current = null
-    applyingRemote.current = 0
-    iDrive.current = true
-    sendTg({ a: 'state', playing, t, at: Date.now() })
-  }
   function togglePlay() {
-    const yt = ytRef.current
-    if (!yt) return
-    const t = yt.getCurrentTime()
+    const api = player()
+    if (!api.ready) return
+    const t = api.t()
     if (uiPlaying) {
-      yt.pauseVideo()
+      api.pause()
+      setUiPlaying(false)
       userAction(false, t)
     } else {
-      yt.playVideo()
+      api.play()
+      setUiPlaying(true)
       userAction(true, t)
     }
   }
-  function seekYt(v: number) {
-    const yt = ytRef.current
-    if (!yt) return
-    yt.seekTo(v, true)
+  function seekBoth(v: number) {
+    const api = player()
+    if (!api.ready) return
+    api.seek(v)
     setCur(v)
     userAction(uiPlaying, v)
   }
@@ -464,28 +543,18 @@ export function TogetherOverlay({
   function tapSound() {
     setSoundGate(false)
     applyingRemote.current = Date.now() + ECHO_MS
-    const yt = ytRef.current
-    if (yt) {
-      yt.unMute()
-      yt.playVideo()
-    }
-    const el = mediaRef.current
-    if (el) {
-      el.muted = false
-      void el.play().catch(() => {})
-    }
+    const api = player()
+    api.mute(false)
+    api.play()
   }
-  const mediaEvents = {
-    onPlay: (e: React.SyntheticEvent<HTMLVideoElement>) => broadcastState(true, e.currentTarget.currentTime),
-    onPause: (e: React.SyntheticEvent<HTMLVideoElement>) => broadcastState(false, e.currentTarget.currentTime),
-    onSeeked: (e: React.SyntheticEvent<HTMLVideoElement>) => broadcastState(!e.currentTarget.paused, e.currentTarget.currentTime),
-  }
+
+  const showTransport = !needsTap && !(current.kind === 'drive' && driveFallback) && !(current.kind === 'media' && mediaGone)
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       className="fixed inset-0 z-[85] flex flex-col bg-[#06050d]/95 backdrop-blur-sm">
       <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:px-4">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-white">
-          {session.kind === 'media' && !session.isVideo
+          {current.kind === 'media' && !current.isVideo
             ? <Music size={18} className="shrink-0 text-amber-400" />
             : <Clapperboard size={18} className="shrink-0 text-red-400" />}
           <span className="truncate text-sm font-bold">{title} · with {partnerName}</span>
@@ -499,85 +568,99 @@ export function TogetherOverlay({
         </button>
       </div>
 
-      <div className={cn('relative mx-3 shrink-0 overflow-hidden rounded-3xl ring-1 ring-white/15', isVideo ? 'aspect-video' : 'p-3 sm:p-4')}>
-        {session.kind === 'youtube' && (
-          <>
-            <div id="tg-yt" className="h-full w-full" />
-            {/* tap shield: the iframe eats taps — this makes tap = play/pause */}
-            {!needsTap && <div className="absolute inset-0 z-[5]" onClick={togglePlay} />}
-            {/* our transport bar — the ONLY thing that syncs */}
-            {!needsTap && (
-              <div className="absolute inset-x-0 bottom-0 z-[8] flex items-center gap-1.5 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-2.5 pb-2 pt-7 sm:gap-2 sm:px-3">
-                <button onClick={togglePlay} aria-label={uiPlaying ? 'Pause for both' : 'Play for both'}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-slate-900 shadow active:scale-90">
-                  {uiPlaying ? '❚❚' : '▶'}
-                </button>
-                <button onClick={() => seekYt(Math.max(0, cur - 10))} aria-label="Back 10 seconds"
-                  className="shrink-0 rounded-full px-1 py-1 text-[11px] font-black text-white/85 active:scale-90">
-                  ↺10
-                </button>
-                <span className="shrink-0 font-mono text-[10px] font-bold text-white/85">{fmtTime(scrub ?? cur)}</span>
-                <input
-                  type="range" min={0} max={Math.max(1, dur)} step={1}
-                  value={Math.min(scrub ?? cur, Math.max(1, dur))}
-                  onChange={(e) => setScrub(Number(e.target.value))}
-                  onPointerUp={() => { if (scrub != null) { seekYt(scrub); setScrub(null) } }}
-                  onTouchEnd={() => { if (scrub != null) { seekYt(scrub); setScrub(null) } }}
-                  onKeyUp={() => { if (scrub != null) { seekYt(scrub); setScrub(null) } }}
-                  aria-label="Seek for both"
-                  className="h-1.5 min-w-0 flex-1 cursor-pointer accent-amber-400"
-                />
-                <button onClick={() => seekYt(Math.min(dur || cur + 10, cur + 10))} aria-label="Forward 10 seconds"
-                  className="shrink-0 rounded-full px-1 py-1 text-[11px] font-black text-white/85 active:scale-90">
-                  ↻10
-                </button>
-                <span className="shrink-0 font-mono text-[10px] font-bold text-white/60">{fmtTime(dur)}</span>
-              </div>
-            )}
-          </>
-        )}
-        {session.kind === 'drive' && (
+      <div ref={boxRef}
+        className={cn('relative mx-3 shrink-0 overflow-hidden bg-black', fs ? 'h-full rounded-none' : 'rounded-3xl ring-1 ring-white/15', isVideo ? (fs ? '' : 'aspect-video') : 'h-32')}>
+        {current.kind === 'youtube' && <div id="tg-yt" className="h-full w-full" />}
+        {current.kind === 'drive' && (
           driveFallback ? (
             // Drive refused direct playback — its own player still works for
             // both, just without automatic sync
             <iframe
-              src={`https://drive.google.com/file/d/${session.fileId}/preview`}
+              src={`https://drive.google.com/file/d/${current.fileId}/preview`}
               className="h-full w-full"
-              allow="autoplay"
+              allow="autoplay; fullscreen"
               title="Google Drive player"
             />
           ) : (
             <video
               ref={mediaRef}
-              src={`https://drive.google.com/uc?export=download&id=${session.fileId}`}
-              controls
+              src={`https://drive.google.com/uc?export=download&id=${current.fileId}`}
               playsInline
               className="h-full w-full object-contain"
               onError={() => setDriveFallback(true)}
-              {...mediaEvents}
+              onPlay={() => setUiPlaying(true)}
+              onPause={() => setUiPlaying(false)}
+              onEnded={handleEnded}
             />
           )
         )}
-        {session.kind === 'media' && (
+        {current.kind === 'media' && (
           mediaGone ? (
             <p className="py-8 text-center text-sm text-white/60">
               This file isn't on your device anymore — media lives on the phones that exchanged it.
             </p>
           ) : mediaUrl ? (
-            <video
-              ref={mediaRef}
-              src={mediaUrl}
-              controls
-              playsInline
-              className={cn('w-full', session.isVideo ? 'h-full object-contain' : 'h-14')}
-              {...mediaEvents}
-            />
+            <>
+              <video
+                ref={mediaRef}
+                src={mediaUrl}
+                playsInline
+                className={cn('h-full w-full', current.isVideo ? 'object-contain' : 'opacity-0')}
+                onPlay={() => setUiPlaying(true)}
+                onPause={() => setUiPlaying(false)}
+                onEnded={handleEnded}
+              />
+              {!current.isVideo && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <Music size={40} className={cn('text-amber-400', uiPlaying && 'animate-pulse')} />
+                </div>
+              )}
+            </>
           ) : (
-            <div className="h-14 w-full animate-pulse rounded-xl bg-white/10" />
+            <div className="h-full w-full animate-pulse bg-white/10" />
           )
         )}
+
+        {/* tap shield: makes tap = play/pause on every player type */}
+        {showTransport && <div className="absolute inset-0 z-[5]" onClick={togglePlay} />}
+        {/* the unified transport — the ONLY thing that syncs */}
+        {showTransport && (
+          <div className="absolute inset-x-0 bottom-0 z-[8] flex items-center gap-1.5 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-2.5 pb-2 pt-7 sm:gap-2 sm:px-3">
+            <button onClick={togglePlay} aria-label={uiPlaying ? 'Pause for both' : 'Play for both'}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-slate-900 shadow active:scale-90">
+              {uiPlaying ? '❚❚' : '▶'}
+            </button>
+            <button onClick={() => seekBoth(Math.max(0, cur - 10))} aria-label="Back 10 seconds"
+              className="shrink-0 rounded-full px-1 py-1 text-[11px] font-black text-white/85 active:scale-90">
+              ↺10
+            </button>
+            <span className="shrink-0 font-mono text-[10px] font-bold text-white/85">{fmtTime(scrub ?? cur)}</span>
+            <input
+              type="range" min={0} max={Math.max(1, dur)} step={1}
+              value={Math.min(scrub ?? cur, Math.max(1, dur))}
+              onChange={(e) => setScrub(Number(e.target.value))}
+              onPointerUp={() => { if (scrub != null) { seekBoth(scrub); setScrub(null) } }}
+              onTouchEnd={() => { if (scrub != null) { seekBoth(scrub); setScrub(null) } }}
+              onKeyUp={() => { if (scrub != null) { seekBoth(scrub); setScrub(null) } }}
+              aria-label="Seek for both"
+              className="h-1.5 min-w-0 flex-1 cursor-pointer accent-amber-400"
+            />
+            <button onClick={() => seekBoth(Math.min(dur || cur + 10, cur + 10))} aria-label="Forward 10 seconds"
+              className="shrink-0 rounded-full px-1 py-1 text-[11px] font-black text-white/85 active:scale-90">
+              ↻10
+            </button>
+            <span className="shrink-0 font-mono text-[10px] font-bold text-white/60">{fmtTime(dur)}</span>
+            {isVideo && (
+              <button onClick={toggleFs} aria-label={fs ? 'Exit fullscreen' : 'Fullscreen'}
+                className="shrink-0 rounded-full p-1.5 text-white/85 active:scale-90">
+                {fs ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* one real tap unblocks playback on this device */}
-        {needsTap && !(session.kind === 'drive' && driveFallback) && !(session.kind === 'media' && mediaGone) && (
+        {needsTap && !(current.kind === 'drive' && driveFallback) && !(current.kind === 'media' && mediaGone) && (
           <button onClick={tapStart}
             className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/55 text-white">
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-purple-500 text-2xl shadow-lg">
@@ -590,7 +673,7 @@ export function TogetherOverlay({
         {/* muted-autoplay started — one tap for sound */}
         {soundGate && (
           <button onClick={tapSound}
-            className="absolute bottom-3 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-4 py-2 text-sm font-black text-slate-900 shadow-xl active:scale-95">
+            className="absolute bottom-14 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-4 py-2 text-sm font-black text-slate-900 shadow-xl active:scale-95">
             🔊 Tap for sound
           </button>
         )}
@@ -621,11 +704,47 @@ export function TogetherOverlay({
       </div>
 
       <div className="shrink-0 px-4 py-1.5 text-center text-[11px] text-white/50">
-        {session.kind === 'drive' && driveFallback
+        {current.kind === 'drive' && driveFallback
           ? 'Drive player mode — press play on both phones.'
           : partnerHere
             ? `In sync with ${partnerName} 🎧`
             : `Waiting for ${partnerName} to join…`}
+      </div>
+
+      {/* Up Next — shared queue, auto-plays for both when a video ends */}
+      <div className="shrink-0 px-3 pb-1">
+        <div className="flex items-center gap-1.5 overflow-x-auto">
+          <span className="shrink-0 text-[9px] font-bold uppercase tracking-widest text-white/40">Up next</span>
+          {queue.map((q) => (
+            <span key={q.qid} className="flex shrink-0 items-center gap-1 rounded-full bg-white/10 py-1 pl-2.5 pr-1 text-[11px] font-semibold text-white/85">
+              {q.label}
+              <button onClick={() => removeFromQueue(q.qid)} aria-label={`Remove ${q.label} from queue`}
+                className="rounded-full p-0.5 text-white/50 hover:bg-white/10">
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+          {queue.length === 0 && <span className="shrink-0 text-[11px] text-white/35">nothing queued — keep it rolling</span>}
+          <button onClick={() => setAddOpen((o) => !o)} aria-label="Add to queue"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-white active:scale-90">
+            <Plus size={13} />
+          </button>
+        </div>
+        {addOpen && (
+          <div className="mt-1.5 flex gap-1.5">
+            <input
+              value={addUrl}
+              onChange={(e) => setAddUrl(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addToQueue()}
+              placeholder="Paste the next YouTube or Drive link…"
+              className="min-w-0 flex-1 rounded-full bg-white/10 px-3.5 py-2 text-xs text-white outline-none placeholder:text-white/40"
+            />
+            <button onClick={addToQueue} disabled={!ytIdFrom(addUrl) && !driveIdFrom(addUrl)}
+              className="shrink-0 rounded-full bg-gradient-to-r from-brand-500 to-purple-500 px-3.5 py-2 text-xs font-black uppercase text-white shadow active:scale-95 disabled:opacity-40">
+              Add
+            </button>
+          </div>
+        )}
       </div>
 
       {/* chat rides along under the player */}
@@ -663,6 +782,8 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null)
   const pendingOffer = useRef<RTCSessionDescriptionInit | null>(null)
   const candBuffer = useRef<RTCIceCandidateInit[]>([])
+  const roleRef = useRef<'caller' | 'callee' | null>(null)
+  const restarted = useRef(false)
 
   // callback ref: re-attach the remote stream whenever the element mounts,
   // and ALWAYS call play() explicitly — relying on the autoPlay attribute
@@ -686,8 +807,26 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     pcRef.current = null
     pendingOffer.current = null
     candBuffer.current = []
+    roleRef.current = null
+    restarted.current = false
     setMuted(false)
   }, [])
+
+  // one in-call second chance: renegotiate with fresh network candidates
+  // before declaring the call dead (transient mobile-network failures)
+  const tryIceRestart = useCallback((): boolean => {
+    const pc = pcRef.current
+    if (!pc || restarted.current || roleRef.current !== 'caller') return false
+    restarted.current = true
+    void (async () => {
+      try {
+        const offer = await pc.createOffer({ iceRestart: true })
+        await pc.setLocalDescription(offer)
+        sendRtc({ t: 'offer', sdp: offer })
+      } catch { /* connection already gone */ }
+    })()
+    return true
+  }, [sendRtc])
 
   const endCall = useCallback((notify = true) => {
     if (notify) sendRtc({ t: 'end' })
@@ -701,9 +840,11 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
         // several STUNs — different carriers blacklist different ones
         { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
         // free public TURN relay — mobile carriers usually block direct
-        // peer-to-peer, so calls ride this relay when punching through fails
+        // peer-to-peer, so calls ride this relay when punching through
+        // fails. NOTE: this relay's :443 endpoints are DEAD (refused) —
+        // only :80 udp/tcp are alive, so don't list 443 as false hope.
         {
-          urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443?transport=tcp'],
+          urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:80?transport=tcp'],
           username: 'openrelayproject',
           credential: 'openrelayproject',
         },
@@ -722,8 +863,16 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     }
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') setState('live')
-      if (pc.connectionState === 'failed') { cleanup(); setState('failed') }
-      if (pc.connectionState === 'closed' || pc.connectionState === 'disconnected') { cleanup(); setState('idle') }
+      if (pc.connectionState === 'failed') {
+        // try once more with fresh candidates before giving up
+        if (!tryIceRestart()) {
+          cleanup()
+          setState('failed')
+        }
+      }
+      if (pc.connectionState === 'closed') { cleanup(); setState('idle') }
+      // 'disconnected' is often transient on mobile — let ICE recover on
+      // its own instead of hanging up (cutting here dropped live calls)
     }
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     streamRef.current = stream
@@ -739,6 +888,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
 
   const startCall = useCallback(async () => {
     try {
+      roleRef.current = 'caller'
       const pc = await makePc()
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
@@ -753,6 +903,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     const offer = pendingOffer.current
     if (!offer) return
     try {
+      roleRef.current = 'callee'
       const pc = await makePc()
       await pc.setRemoteDescription(offer)
       for (const c of candBuffer.current) await pc.addIceCandidate(c).catch(() => {})
@@ -778,6 +929,20 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   const handleRtc = useCallback((p: RtcPayload) => {
     if (p.from === meId) return
     if (p.t === 'offer' && p.sdp) {
+      const pc = pcRef.current
+      if (pc && roleRef.current) {
+        // renegotiation (ICE restart mid-call) — answer in place, no re-ring
+        const sdp = p.sdp
+        void (async () => {
+          try {
+            await pc.setRemoteDescription(sdp)
+            const answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+            sendRtc({ t: 'answer', sdp: answer })
+          } catch { /* stale renegotiation */ }
+        })()
+        return
+      }
       pendingOffer.current = p.sdp
       setState('incoming')
       navigator.vibrate?.([80, 60, 80])
@@ -785,7 +950,8 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     if (p.t === 'answer' && p.sdp) {
       // the caller hears about the ACCEPT immediately — before this, the
       // UI sat on "Calling…" until audio connected, looking broken
-      setState('answered')
+      // (but a renegotiation answer during a LIVE call must not regress it)
+      setState((s) => (s === 'live' ? s : 'answered'))
       void pcRef.current?.setRemoteDescription(p.sdp).catch(() => {})
     }
     if (p.t === 'ice' && p.cand) {
@@ -795,16 +961,22 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     if (p.t === 'end') { cleanup(); setState('idle') }
   }, [meId, cleanup])
 
-  // watchdog: accepted/dialing but no audio within 25s → fail with Retry
-  // (dead relays used to leave both sides on "connecting" forever)
+  // two-stage watchdog: mobile relays legitimately take 30-40s, so the old
+  // 25s cutoff was hanging up calls that were still connecting. Stage 1
+  // (18s): quietly retry with fresh network candidates. Stage 2 (55s): give
+  // up with the Retry button.
   useEffect(() => {
     if (state !== 'connecting' && state !== 'answered') return
-    const t = setTimeout(() => {
+    const t1 = setTimeout(() => { tryIceRestart() }, 18_000)
+    const t2 = setTimeout(() => {
       cleanup()
       setState('failed')
-    }, 25_000)
-    return () => clearTimeout(t)
-  }, [state, cleanup])
+    }, 55_000)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+    }
+  }, [state, cleanup, tryIceRestart])
 
   // hang up if the component unmounts (leaving the conversation)
   useEffect(() => () => { cleanup() }, [cleanup])
