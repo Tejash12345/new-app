@@ -213,6 +213,11 @@ export function TogetherOverlay({
   const [mediaGone, setMediaGone] = useState(false)
   const [partnerHere, setPartnerHere] = useState(false)
   const [driveLoading, setDriveLoading] = useState(true)
+  // the playing video's real aspect ratio (w/h), read on loadedmetadata, so the
+  // player window matches the clip (a portrait video no longer sits tiny inside
+  // a 16:9 box with huge black bars). null → fall back to 16:9. YouTube stays
+  // 16:9 (its dimensions aren't readable from the iframe).
+  const [videoAspect, setVideoAspect] = useState<number | null>(null)
   // Drive plays in a real <video> (synced, like device media). If Drive won't
   // stream it (large / non-streamable / codec), fall back to the /preview
   // iframe (unsynced). driveLoadingRef lets the load-timeout read live state.
@@ -544,10 +549,15 @@ export function TogetherOverlay({
     })
     return () => { dead = true }
   }, [current.kind, current.kind === 'media' ? current.msgId : '', resolveMediaUrl])
-  // reset Drive state whenever a new Drive video comes on
+  // reset per-source state whenever a new video comes on (Drive spinner/fallback
+  // + the measured aspect ratio, so the window re-fits the next clip)
   useEffect(() => {
+    setVideoAspect(null)
     if (current.kind === 'drive') { setDriveLoading(true); setDriveFallback(false) }
-  }, [current.kind, current.kind === 'drive' ? current.fileId : ''])
+  }, [current.kind,
+    current.kind === 'youtube' ? current.videoId
+      : current.kind === 'drive' ? current.fileId
+      : current.kind === 'media' ? current.msgId : ''])
   // if the direct <video> hasn't loaded within 8s (Drive served an HTML page
   // instead of the file, or the codec isn't supported), drop to the iframe.
   // A plain onError often never fires for the HTML-page case — hence a timer.
@@ -697,9 +707,12 @@ export function TogetherOverlay({
       </div>
 
       <div ref={boxRef}
+        style={!fs && isVideo
+          ? { aspectRatio: String(current.kind === 'youtube' ? 16 / 9 : (videoAspect ?? 16 / 9)), maxHeight: '55vh' }
+          : undefined}
         className={cn('relative shrink-0 overflow-hidden bg-black',
           fs ? 'h-full w-full rounded-none' : 'mx-3 rounded-3xl ring-1 ring-white/15',
-          isVideo ? (fs ? '' : 'aspect-video') : 'h-32')}>
+          !isVideo && !fs && 'h-32')}>
         {current.kind === 'youtube' && <div id="tg-yt" className="h-full w-full" />}
         {current.kind === 'drive' && (
           driveFallback ? (
@@ -721,7 +734,11 @@ export function TogetherOverlay({
                 src={`https://drive.usercontent.google.com/download?id=${current.fileId}&export=download&confirm=t`}
                 playsInline
                 className="absolute inset-0 h-full w-full object-contain"
-                onLoadedMetadata={() => setDriveLoading(false)}
+                onLoadedMetadata={(e) => {
+                  setDriveLoading(false)
+                  const v = e.currentTarget
+                  if (v.videoWidth && v.videoHeight) setVideoAspect(v.videoWidth / v.videoHeight)
+                }}
                 onError={() => setDriveFallback(true)}
                 onPlay={() => setUiPlaying(true)}
                 onPause={() => setUiPlaying(false)}
@@ -748,6 +765,10 @@ export function TogetherOverlay({
                 src={mediaUrl}
                 playsInline
                 className={cn('h-full w-full', current.isVideo ? 'object-contain' : 'opacity-0')}
+                onLoadedMetadata={(e) => {
+                  const v = e.currentTarget
+                  if (v.videoWidth && v.videoHeight) setVideoAspect(v.videoWidth / v.videoHeight)
+                }}
                 onPlay={() => setUiPlaying(true)}
                 onPause={() => setUiPlaying(false)}
                 onEnded={handleEnded}
