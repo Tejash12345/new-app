@@ -1008,9 +1008,20 @@ export type CallState = 'idle' | 'incoming' | 'connecting' | 'answered' | 'live'
 // Fill ONE of them with a Metered.ca free-tier relay or a self-hosted Coturn
 // (see coturn/ in this repo). The relay is placed FIRST so ICE prefers it.
 // ===========================================================================
-const MANAGED_TURN: RTCIceServer | null = null
-// e.g.  { urls: ['turn:relay.metered.ca:80','turn:relay.metered.ca:443','turns:relay.metered.ca:443?transport=tcp'],
-//         username: 'PASTE_USERNAME', credential: 'PASTE_CREDENTIAL' }
+// Metered.ca relay (free tier) — verified 2026-07-14 to connect a forced
+// relay-only peer connection (the Jio↔Airtel path) in ~1.5s. TURN creds are
+// necessarily client-visible (every WebRTC app ships them); they're scoped to
+// relay use and rate-limited per account. global.* is anycast → nearest POP.
+const MANAGED_TURN: RTCIceServer | null = {
+  urls: [
+    'turn:global.relay.metered.ca:80',
+    'turn:global.relay.metered.ca:80?transport=tcp',
+    'turn:global.relay.metered.ca:443',
+    'turns:global.relay.metered.ca:443?transport=tcp',
+  ],
+  username: '6d9593a30c0b5e00da3eddae',
+  credential: 'A7l6OrGcMu8xvNab',
+}
 
 function buildIceServers(): RTCIceServer[] {
   const servers: RTCIceServer[] = [
