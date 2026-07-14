@@ -13,9 +13,10 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorOff, MonitorUp, Music, Phone, PhoneOff, Plus, SwitchCamera, Video, VideoOff, Volume1, Volume2, X } from 'lucide-react'
+import { ChevronDown, Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorOff, MonitorUp, Music, Pause, Phone, PhoneOff, Play, Plus, RotateCcw, RotateCw, SwitchCamera, Video, VideoOff, Volume1, Volume2, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { callAudioStart, callAudioSpeaker, callAudioEnd } from '../lib/callAudio'
+import { hasNativeScreen, nativeScreenStart, nativeScreenStop } from '../lib/nativeScreen'
 
 export type TogetherSession =
   | { kind: 'youtube'; videoId: string }
@@ -211,8 +212,6 @@ export function TogetherOverlay({
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [mediaGone, setMediaGone] = useState(false)
   const [partnerHere, setPartnerHere] = useState(false)
-  // Drive files that refuse direct playback drop to Drive's own player iframe
-  const [driveFallback, setDriveFallback] = useState(false)
   // mobile browsers refuse playback started by ANOTHER phone until this
   // device gets one real tap — gate everything behind "Tap to play"
   const [needsTap, setNeedsTap] = useState(true)
@@ -538,8 +537,6 @@ export function TogetherOverlay({
     })
     return () => { dead = true }
   }, [current.kind, current.kind === 'media' ? current.msgId : '', resolveMediaUrl])
-  // fresh drive file → give direct playback another chance
-  useEffect(() => { setDriveFallback(false) }, [current.kind === 'drive' ? current.fileId : ''])
 
   // gentle heartbeat so a missed event can't leave the two sides apart —
   // only the driving side speaks, so heartbeats can't ping-pong
@@ -658,7 +655,8 @@ export function TogetherOverlay({
     api.play()
   }
 
-  const showTransport = !needsTap && !(current.kind === 'drive' && driveFallback) && !(current.kind === 'media' && mediaGone)
+  // Drive plays in its own iframe (cross-origin — our transport can't drive it)
+  const showTransport = !needsTap && current.kind !== 'drive' && !(current.kind === 'media' && mediaGone)
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       className="fixed inset-0 z-[85] flex flex-col bg-[#06050d]/95 backdrop-blur-sm">
@@ -682,27 +680,17 @@ export function TogetherOverlay({
         className={cn('relative mx-3 shrink-0 overflow-hidden bg-black', fs ? 'h-full rounded-none' : 'rounded-3xl ring-1 ring-white/15', isVideo ? (fs ? '' : 'aspect-video') : 'h-32')}>
         {current.kind === 'youtube' && <div id="tg-yt" className="h-full w-full" />}
         {current.kind === 'drive' && (
-          driveFallback ? (
-            // Drive refused direct playback — its own player still works for
-            // both, just without automatic sync
-            <iframe
-              src={`https://drive.google.com/file/d/${current.fileId}/preview`}
-              className="h-full w-full"
-              allow="autoplay; fullscreen"
-              title="Google Drive player"
-            />
-          ) : (
-            <video
-              ref={mediaRef}
-              src={`https://drive.google.com/uc?export=download&id=${current.fileId}`}
-              playsInline
-              className="h-full w-full object-contain"
-              onError={() => setDriveFallback(true)}
-              onPlay={() => setUiPlaying(true)}
-              onPause={() => setUiPlaying(false)}
-              onEnded={handleEnded}
-            />
-          )
+          // Drive's own /preview player is the reliable embed — the direct
+          // uc?export=download URL serves a virus-scan warning page for most
+          // files, so a raw <video> showed a dead/stuck play button. This fills
+          // the box and plays with Drive's own controls (no custom sync).
+          <iframe
+            src={`https://drive.google.com/file/d/${current.fileId}/preview`}
+            className="h-full w-full border-0"
+            allow="autoplay; fullscreen"
+            allowFullScreen
+            title="Google Drive player"
+          />
         )}
         {current.kind === 'media' && (
           mediaGone ? (
@@ -738,11 +726,11 @@ export function TogetherOverlay({
           <div className="absolute inset-x-0 bottom-0 z-[8] flex items-center gap-1.5 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-2.5 pb-2 pt-7 sm:gap-2 sm:px-3">
             <button onClick={togglePlay} aria-label={uiPlaying ? 'Pause for both' : 'Play for both'}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-slate-900 shadow active:scale-90">
-              {uiPlaying ? '❚❚' : '▶'}
+              {uiPlaying ? <Pause size={16} className="fill-current" /> : <Play size={16} className="ml-0.5 fill-current" />}
             </button>
             <button onClick={() => seekBoth(Math.max(0, cur - 10))} aria-label="Back 10 seconds"
-              className="shrink-0 rounded-full px-1 py-1 text-[11px] font-black text-white/85 active:scale-90">
-              ↺10
+              className="flex shrink-0 items-center rounded-full p-1 text-white/85 active:scale-90">
+              <RotateCcw size={16} />
             </button>
             <span className="shrink-0 font-mono text-[10px] font-bold text-white/85">{fmtTime(scrub ?? cur)}</span>
             <input
@@ -756,8 +744,8 @@ export function TogetherOverlay({
               className="h-1.5 min-w-0 flex-1 cursor-pointer accent-amber-400"
             />
             <button onClick={() => seekBoth(Math.min(dur || cur + 10, cur + 10))} aria-label="Forward 10 seconds"
-              className="shrink-0 rounded-full px-1 py-1 text-[11px] font-black text-white/85 active:scale-90">
-              ↻10
+              className="flex shrink-0 items-center rounded-full p-1 text-white/85 active:scale-90">
+              <RotateCw size={16} />
             </button>
             <span className="shrink-0 font-mono text-[10px] font-bold text-white/60">{fmtTime(dur)}</span>
             {isVideo && (
@@ -855,11 +843,11 @@ export function TogetherOverlay({
         )}
 
         {/* one real tap unblocks playback on this device */}
-        {needsTap && !(current.kind === 'drive' && driveFallback) && !(current.kind === 'media' && mediaGone) && (
+        {needsTap && current.kind !== 'drive' && !(current.kind === 'media' && mediaGone) && (
           <button onClick={tapStart}
             className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/55 text-white">
-            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-purple-500 text-2xl shadow-lg">
-              ▶
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-purple-500 shadow-lg">
+              <Play size={26} className="ml-1 fill-current" />
             </span>
             <span className="text-sm font-bold">Tap to play</span>
             <span className="px-6 text-center text-[11px] text-white/60">each phone taps once — then you stay in sync</span>
@@ -899,8 +887,8 @@ export function TogetherOverlay({
       </div>
 
       <div className="shrink-0 px-4 py-1.5 text-center text-[11px] text-white/50">
-        {current.kind === 'drive' && driveFallback
-          ? 'Drive player mode — press play on both phones.'
+        {current.kind === 'drive'
+          ? 'Drive player — press play on both phones.'
           : partnerHere
             ? `In sync with ${partnerName} 🎧`
             : `Waiting for ${partnerName} to join…`}
@@ -1061,6 +1049,8 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   const [speakerOn, setSpeakerOn] = useState(false)
   const audioStarted = useRef(false)
   const screenStreamRef = useRef<MediaStream | null>(null)
+  // true while screen share is served by native MediaProjection (Android app)
+  const nativeScreenRef = useRef(false)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const camStreamRef = useRef<MediaStream | null>(null)
@@ -1341,6 +1331,14 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     if (!screenStreamRef.current) return
     screenStreamRef.current.getTracks().forEach((t) => t.stop())
     screenStreamRef.current = null
+    if (nativeScreenRef.current) {
+      // stop native capture + unhook the frame receiver
+      nativeScreenRef.current = false
+      nativeScreenStop()
+      const w = window as unknown as Record<string, unknown>
+      delete w.__flScreenFrame
+      delete w.__flScreenStopped
+    }
     setScreenOn(false)
     // back to the camera if it's still on, else clear our video entirely
     const cam = camStreamRef.current?.getVideoTracks()[0] ?? null
@@ -1349,15 +1347,46 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
     if (cam) sendRtc({ t: 'cam', on: true }) // remote relabels screen → face
   }, [sendRtc, setVideoTrack])
 
-  /** Share this device's screen (or a browser tab) to the other side. */
+  /** Share this device's screen to the other side. Browser/desktop uses
+   *  getDisplayMedia; the Android app has no getDisplayMedia so it uses native
+   *  MediaProjection frames painted onto a canvas → canvas.captureStream(). */
   const startScreen = useCallback(async () => {
     if (!pcRef.current) return
     const gdm = navigator.mediaDevices?.getDisplayMedia
+
+    // --- Android app: native screen capture piped through a canvas ---
     if (typeof gdm !== 'function') {
-      setScreenError('Screen sharing isn’t supported on this device.')
-      setTimeout(() => setScreenError(null), 4000)
+      if (!hasNativeScreen()) {
+        setScreenError('Screen sharing isn’t supported on this device.')
+        setTimeout(() => setScreenError(null), 4000)
+        return
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = 640
+      canvas.height = 360
+      const ctx = canvas.getContext('2d')
+      const img = new Image()
+      img.onload = () => {
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+          canvas.width = img.naturalWidth
+          canvas.height = img.naturalHeight
+        }
+        ctx?.drawImage(img, 0, 0)
+      }
+      const w = window as unknown as Record<string, unknown>
+      w.__flScreenFrame = (b64: string) => { img.src = 'data:image/jpeg;base64,' + b64 }
+      w.__flScreenStopped = () => { void stopScreen() }
+      const stream = canvas.captureStream(8)
+      screenStreamRef.current = stream
+      nativeScreenRef.current = true
+      setScreenOn(true)
+      await setVideoTrack(stream.getVideoTracks()[0])
+      sendRtc({ t: 'screen', on: true })
+      nativeScreenStart() // fires the system "start casting?" prompt
       return
     }
+
+    // --- browser / desktop: getDisplayMedia ---
     let disp: MediaStream
     try {
       disp = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
@@ -1491,7 +1520,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
   // hang up if the component unmounts (leaving the conversation)
   useEffect(() => () => { cleanup(); if (audioStarted.current) { audioStarted.current = false; callAudioEnd() } }, [cleanup])
 
-  const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function'
+  const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function' || hasNativeScreen()
   return { state, muted, camOn, remoteCamOn, screenOn, remoteScreenOn, screenError, canScreenShare, speakerOn, startCall, acceptCall, endCall, toggleMute, toggleCam, flipCam, toggleScreen, toggleSpeaker, handleRtc, attachEl, attachLocalVideo, attachRemoteVideo }
 }
 
