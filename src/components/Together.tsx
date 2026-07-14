@@ -719,6 +719,16 @@ export function TogetherOverlay({
           )
         )}
 
+        {/* Drive plays in its own iframe (no custom transport bar), so give it a
+            standalone fullscreen toggle — the app's fullscreen button otherwise
+            lives in that bar. Fullscreening boxRef makes the iframe fill screen. */}
+        {current.kind === 'drive' && (
+          <button onClick={toggleFs} aria-label={fs ? 'Exit fullscreen' : 'Fullscreen'}
+            className="absolute right-2 top-2 z-[8] rounded-full bg-black/55 p-2 text-white/90 backdrop-blur active:scale-90">
+            {fs ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
+        )}
+
         {/* tap shield: makes tap = play/pause on every player type */}
         {showTransport && <div className="absolute inset-0 z-[5]" onClick={togglePlay} />}
         {/* the unified transport — the ONLY thing that syncs */}
