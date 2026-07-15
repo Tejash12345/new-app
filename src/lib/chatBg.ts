@@ -12,6 +12,7 @@ export const CHAT_BGS: ChatBg[] = [
   { id: '', name: 'None', emoji: '⊘', dir: 'up', glyphs: [] },
   { id: 'hearts', name: 'Hearts', emoji: '❤️', dir: 'up', glyphs: ['❤️', '💕', '💗', '💖', '💘'] },
   { id: 'kisses', name: 'Kisses', emoji: '💋', dir: 'up', glyphs: ['💋', '😘', '😙', '💌', '💕'] },
+  { id: 'kissyface', name: 'Kissy Face', emoji: '😘', dir: 'up', glyphs: ['😘', '😗', '😙', '😚', '🥰', '💋', '💕'] },
   { id: 'love', name: 'In Love', emoji: '🥰', dir: 'up', glyphs: ['🥰', '😍', '💞', '💓', '❣️'] },
   { id: 'rain', name: 'Rain', emoji: '🌧️', dir: 'down', glyphs: ['💧', '🌧️', '☔'] },
   { id: 'autumn', name: 'Autumn', emoji: '🍂', dir: 'down', glyphs: ['🍂', '🍁', '🍃', '🌾'] },
