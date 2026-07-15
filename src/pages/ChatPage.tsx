@@ -1315,7 +1315,10 @@ function FriendsChat() {
           // the WebView viewport — which the native wrapper now shrinks with
           // the keyboard, so the header stays pinned and the composer rides
           // above the keyboard with no JS repositioning.
-          ? '!fixed inset-0 z-[60] !rounded-none !px-3 !pt-[calc(0.75rem+env(safe-area-inset-top))] !pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:!relative lg:h-[40rem] lg:z-auto lg:!rounded-3xl lg:!p-5'
+          // plain !p-3 (no env(safe-area-*)): the Flutter wrapper already wraps
+          // the WebView in a SafeArea, so adding the status-bar inset here again
+          // double-counted it and left a big empty gap above the header.
+          ? '!fixed inset-0 z-[60] !rounded-none !p-3 lg:!relative lg:h-[40rem] lg:z-auto lg:!rounded-3xl lg:!p-5'
           : 'hidden lg:flex lg:h-[40rem]',
       )}>
         {!active ? (
