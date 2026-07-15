@@ -82,8 +82,12 @@ export function useDMNotifications() {
         : m.kind === 'file' ? `📎 ${m.file_name ?? 'File'}`
         : m.kind === 'post' ? '📨 Shared a post'
         : (m.body || '')
-      // tapping it opens that exact conversation (Instagram-style)
-      notify(`💬 ${name}`, preview, `dm-${m.sender_id}`, `/chat?dm=${m.sender_id}`)
+      // tapping it opens that exact conversation (Instagram-style). Tag is the
+      // MESSAGE id (not the sender) so every message shows its own notification
+      // — a per-sender tag collapsed rapid messages into one and some OEMs then
+      // suppressed the repeat alert. Matches the server push tag so a foreground
+      // message still shows once, not twice.
+      notify(`💬 ${name}`, preview, `dm-${m.id}`, `/chat?dm=${m.sender_id}`)
     }
 
     // 1) Supabase realtime — the always-available path (works even when the
