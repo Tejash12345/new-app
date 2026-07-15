@@ -6,6 +6,7 @@ import { Button, GlassCard, Input, MascotImg, Modal, Page, SectionTitle } from '
 import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
 import { prepareMascotImage, setMascotLocal, useMascot, type MascotKind } from '../lib/mascot'
+import { THEMES, getStoredTheme, setTheme as applyAccentTheme, type ThemeId } from '../lib/theme'
 
 function MascotRow({ kind, title, desc, busy, onPick, onReset }: {
   kind: MascotKind; title: string; desc: string
@@ -130,6 +131,7 @@ export function SettingsPage() {
 
   const [mascotBusy, setMascotBusy] = useState<MascotKind | null>(null)
   const [mascotErr, setMascotErr] = useState<string | null>(null)
+  const [accent, setAccent] = useState<ThemeId>(getStoredTheme())
   const mascotFileRef = useRef<HTMLInputElement>(null)
   const mascotPickKind = useRef<MascotKind>('lion')
 
@@ -281,6 +283,47 @@ export function SettingsPage() {
           </div>
           {mascotErr && <p className="mt-3 text-xs font-semibold text-rose-500">{mascotErr}</p>}
           <input ref={mascotFileRef} type="file" accept="image/*" className="hidden" onChange={onPickMascot} />
+        </GlassCard>
+
+        <GlassCard>
+          <SectionTitle>🎨 Accent theme</SectionTitle>
+          <p className="mb-4 text-xs leading-relaxed text-slate-500">
+            Pick an accent colour — it re-skins buttons, highlights and the whole app instantly, on all your devices.
+          </p>
+          <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+            {THEMES.map((t) => {
+              const active = accent === t.id
+              return (
+                <button key={t.id}
+                  onClick={() => { setAccent(t.id); applyAccentTheme(t.id) }}
+                  aria-label={`${t.name} theme`}
+                  className={cn('group flex flex-col items-center gap-1.5 rounded-xl p-2 transition',
+                    active ? 'bg-slate-500/15 ring-2 ring-inset ring-brand-500' : 'hover:bg-slate-500/10')}>
+                  <span className="flex h-8 w-full items-center justify-center gap-0.5 overflow-hidden rounded-md">
+                    <span className="h-full flex-1" style={{ background: t.ramp[300] }} />
+                    <span className="h-full flex-1" style={{ background: t.ramp[500] }} />
+                    <span className="h-full flex-1" style={{ background: t.ramp[700] }} />
+                  </span>
+                  <span className="w-full truncate text-center text-[11px] font-semibold text-slate-600 dark:text-slate-300">{t.name}</span>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* live preview — a mini chat that reflects the chosen accent */}
+          <p className="mb-2 mt-5 text-xs font-bold uppercase tracking-widest text-slate-400">Preview</p>
+          <div className="space-y-2 rounded-2xl border border-slate-200 bg-white/60 p-3 dark:border-white/10 dark:bg-white/5">
+            <div className="flex justify-start">
+              <span className="max-w-[80%] rounded-2xl rounded-bl-md bg-slate-500/10 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-200">Hey! Love the new look 😍</span>
+            </div>
+            <div className="flex justify-end">
+              <span className="max-w-[80%] rounded-2xl rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 px-3 py-1.5 text-sm text-white">Right? This accent is 🔥</span>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <div className="flex-1 rounded-full bg-slate-500/10 px-3 py-2 text-xs text-slate-400">Message…</div>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-500 text-white shadow">➤</span>
+            </div>
+          </div>
         </GlassCard>
 
         <GlassCard>

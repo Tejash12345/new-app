@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import './lib/theme' // applies the saved accent theme before first paint
 import App from './App.tsx'
 
 // When a new build deploys, the service worker (autoUpdate) activates and
