@@ -1397,26 +1397,25 @@ function FriendsChat() {
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setBgMenuOpen(false)} />
                     <div className="absolute right-0 z-50 mt-1 w-64 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-slate-900">
-                      <div className="mb-1.5 flex items-center justify-between px-1.5 py-1">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Chat background</span>
-                        {/* Animated ⇄ Static — user picks how the particles behave */}
-                        {(() => {
-                          const base = chatBg.split(':')[0]
-                          const isStatic = chatBg.endsWith(':s')
-                          return (
-                            <div className="flex overflow-hidden rounded-full bg-slate-500/10 text-[10px] font-bold">
-                              <button onClick={() => base && changeBg(base)}
-                                className={cn('px-2 py-1 transition', !isStatic ? 'bg-brand-500 text-white' : 'text-slate-500')}>
-                                Animated
-                              </button>
-                              <button onClick={() => base && changeBg(`${base}:s`)}
-                                className={cn('px-2 py-1 transition', isStatic ? 'bg-brand-500 text-white' : 'text-slate-500')}>
-                                Static
-                              </button>
-                            </div>
-                          )
-                        })()}
-                      </div>
+                      <div className="px-1.5 pb-1 pt-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Chat background</div>
+                      {/* Animated ⇄ Static — full-width segmented toggle on its own row
+                          so both labels stay fully visible on a narrow (360px) menu */}
+                      {(() => {
+                        const base = chatBg.split(':')[0]
+                        const isStatic = chatBg.endsWith(':s')
+                        return (
+                          <div className="mb-2 flex gap-1 rounded-full bg-slate-500/10 p-0.5 text-[11px] font-bold">
+                            <button onClick={() => base && changeBg(base)}
+                              className={cn('flex-1 rounded-full py-1.5 text-center transition', !isStatic ? 'bg-brand-500 text-white shadow' : 'text-slate-500')}>
+                              ✨ Animated
+                            </button>
+                            <button onClick={() => base && changeBg(`${base}:s`)}
+                              className={cn('flex-1 rounded-full py-1.5 text-center transition', isStatic ? 'bg-brand-500 text-white shadow' : 'text-slate-500')}>
+                              ⏸ Static
+                            </button>
+                          </div>
+                        )
+                      })()}
                       <div className="grid max-h-[46vh] grid-cols-4 gap-1 overflow-y-auto">
                         {CHAT_BGS.map((b) => (
                           <button key={b.id}
