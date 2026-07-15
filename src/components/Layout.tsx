@@ -65,6 +65,11 @@ export function Layout() {
   useFriendRequestNotifications()
   // ask once so reminders (study, deadlines, time-almost-up) can actually fire
   useEffect(() => { requestNotifPermission() }, [])
+  // tell the native wrapper the current route so it can hide the floating Guard
+  // shield on the chat pages (no-op in the browser — FLRoute exists only in the app)
+  useEffect(() => {
+    ;(window as unknown as { FLRoute?: { postMessage: (m: string) => void } }).FLRoute?.postMessage(location.pathname)
+  }, [location.pathname])
 
   const level = levelForXp(profile?.xp ?? 0)
   const initial = (profile?.full_name || profile?.email || '?').slice(0, 1).toUpperCase()
