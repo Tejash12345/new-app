@@ -14,17 +14,20 @@ export function ChatBackground({ bg }: { bg: ChatBgId }) {
   const cfg = bgById(bg)
   const particles = useMemo(() => {
     if (!cfg.glyphs.length) return []
-    return Array.from({ length: 22 }, (_, i) => {
+    const soft = cfg.soft
+    const count = soft ? 14 : 22
+    return Array.from({ length: count }, (_, i) => {
       const s = i + 1
       return {
         key: `${cfg.id}-${i}`,
         g: cfg.glyphs[i % cfg.glyphs.length],
         left: rand(s * 1.3) * 100,
-        size: 0.8 + rand(s * 2.7) * 1.5,
-        dur: 8 + rand(s * 3.9) * 10,
-        delay: -rand(s * 5.1) * 16,
-        o: 0.3 + rand(s * 6.3) * 0.5,
-        blur: rand(s * 7.7) < 0.4 ? 1 + rand(s * 8.9) * 1.5 : 0,
+        // soft styles = big dreamy blurred glows (bokeh/clouds)
+        size: soft ? 2.5 + rand(s * 2.7) * 3.5 : 0.8 + rand(s * 2.7) * 1.5,
+        dur: (soft ? 16 : 8) + rand(s * 3.9) * (soft ? 14 : 10),
+        delay: -rand(s * 5.1) * 18,
+        o: soft ? 0.16 + rand(s * 6.3) * 0.22 : 0.3 + rand(s * 6.3) * 0.5,
+        blur: soft ? 6 + rand(s * 8.9) * 10 : (rand(s * 7.7) < 0.4 ? 1 + rand(s * 8.9) * 1.5 : 0),
       }
     })
   }, [cfg])

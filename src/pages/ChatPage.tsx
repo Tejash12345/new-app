@@ -1270,8 +1270,8 @@ function FriendsChat() {
           <>
             <ChatBackground bg={chatBg} />
             <div className="relative z-10 flex min-h-0 flex-1 flex-col">
-            <div className="mb-3 flex items-center gap-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
-              <button onClick={() => setActive(null)} className="lg:hidden text-slate-500"><ArrowLeft size={20} /></button>
+            <div className="mb-3 flex items-center gap-2 border-b border-slate-200/50 dark:border-white/10 pb-3 sm:gap-3">
+              <button onClick={() => setActive(null)} className="shrink-0 text-slate-500 lg:hidden"><ArrowLeft size={20} /></button>
               {(() => {
                 // use the freshest record (friends reload every 15s) so last_seen is current
                 const fresh = friends.find((f) => f.friend_id === active.friend_id) ?? active
@@ -1294,8 +1294,10 @@ function FriendsChat() {
                   </>
                 )
               })()}
+              {/* action buttons — grouped + tight so they never crowd the name on 360px */}
+              <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
               {/* Together — synced YouTube / music + live voice call */}
-              <div className="relative ml-auto">
+              <div className="relative">
                 <button onClick={() => setTgMenuOpen((o) => !o)} aria-label="Together menu"
                   className={cn('rounded-full p-2 transition hover:bg-slate-500/10', tg ? 'text-brand-500' : 'text-slate-400')}>
                   <MonitorPlay size={18} />
@@ -1396,7 +1398,7 @@ function FriendsChat() {
                       <div className="px-1.5 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
                         Chat background
                       </div>
-                      <div className="grid grid-cols-4 gap-1">
+                      <div className="grid max-h-[46vh] grid-cols-4 gap-1 overflow-y-auto">
                         {CHAT_BGS.map((b) => (
                           <button key={b.id} onClick={() => changeBg(b.id)} aria-label={`${b.name} background`}
                             className={cn('fl-lift flex flex-col items-center gap-1 rounded-xl px-1 py-2 transition',
@@ -1412,6 +1414,7 @@ function FriendsChat() {
                     </div>
                   </>
                 )}
+              </div>
               </div>
             </div>
 
