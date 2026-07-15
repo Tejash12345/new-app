@@ -429,9 +429,6 @@ function FriendsChat() {
   const [, setTick] = useState(0)
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
-  // the full-screen conversation card — sized to the visual viewport so the
-  // header stays pinned and the composer rides above the keyboard (WhatsApp-style)
-  const panelRef = useRef<HTMLDivElement>(null)
   const activeIdRef = useRef<string | null>(null)
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const lastTypingSent = useRef(0)
@@ -677,37 +674,6 @@ function FriendsChat() {
   }, [pairKey])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
-
-  // WhatsApp-style keyboard handling: on mobile the open conversation is a
-  // full-screen fixed panel. When the Android keyboard opens it shrinks the
-  // VISUAL viewport (not the layout viewport), which would push the pinned name
-  // header off the top and hide the composer. We size the panel to the visible
-  // area so the header stays put and the composer sits right above the keyboard.
-  useEffect(() => {
-    if (!active) return
-    const vv = window.visualViewport
-    const isMobile = () => window.matchMedia('(max-width: 1023px)').matches
-    const apply = () => {
-      const el = panelRef.current
-      if (!el) return
-      if (!vv || !isMobile()) { el.style.height = ''; el.style.top = ''; return }
-      el.style.height = `${vv.height}px`
-      el.style.top = `${vv.offsetTop}px`
-    }
-    apply()
-    // opening a thread should land on the newest message
-    bottomRef.current?.scrollIntoView({ behavior: 'auto' })
-    vv?.addEventListener('resize', apply)
-    vv?.addEventListener('scroll', apply)
-    window.addEventListener('resize', apply)
-    return () => {
-      vv?.removeEventListener('resize', apply)
-      vv?.removeEventListener('scroll', apply)
-      window.removeEventListener('resize', apply)
-      const el = panelRef.current
-      if (el) { el.style.height = ''; el.style.top = '' }
-    }
-  }, [active])
 
   /** Reply columns for the message being composed (empty when not replying). */
   function replyFields() {
@@ -1340,14 +1306,16 @@ function FriendsChat() {
           Leo button. z-[60] sits under calls / watch-together / lightbox /
           link modal so those still layer on top. On desktop it stays an in-grid
           40rem card beside the friends list. */}
-      <GlassCard ref={panelRef} className={cn(
+      <GlassCard className={cn(
         'relative flex flex-col lg:col-span-2',
         active
           // !fixed (important) beats the base `relative`; lg:!relative restores
           // the in-grid card on desktop (relative keeps ChatBackground + the
-          // header dropdown menus anchored to the card). height/top are managed
-          // by the visualViewport effect on mobile so the keyboard behaves.
-          ? '!fixed inset-x-0 top-0 h-[100dvh] z-[60] !rounded-none !px-3 !pt-[calc(0.75rem+env(safe-area-inset-top))] !pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:!relative lg:top-auto lg:h-[40rem] lg:z-auto lg:!rounded-3xl lg:!p-5'
+          // header dropdown menus anchored to the card). inset-0 always fills
+          // the WebView viewport — which the native wrapper now shrinks with
+          // the keyboard, so the header stays pinned and the composer rides
+          // above the keyboard with no JS repositioning.
+          ? '!fixed inset-0 z-[60] !rounded-none !px-3 !pt-[calc(0.75rem+env(safe-area-inset-top))] !pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:!relative lg:h-[40rem] lg:z-auto lg:!rounded-3xl lg:!p-5'
           : 'hidden lg:flex lg:h-[40rem]',
       )}>
         {!active ? (
