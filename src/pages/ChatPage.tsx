@@ -4,7 +4,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
 import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video, Wand2 } from 'lucide-react'
 import { ChatBackground } from '../components/ChatBackground'
-import { CHAT_BGS, isCustomBg, makeCustomBg, type ChatBgId } from '../lib/chatBg'
+import { CHAT_BGS, isCustomBg, customBgUrl, makeCustomBg, type ChatBgId } from '../lib/chatBg'
 import { prepareMascotImage } from '../lib/mascot'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
@@ -866,12 +866,22 @@ function FriendsChat() {
    *  broadcasts so the other friend's chat changes too (Instagram-style). */
   async function changeBg(bg: ChatBgId) {
     if (!user || !active) return
+    const prev = chatBg // remember the outgoing background so we can free its file
     setBgMenuOpen(false)
     setChatBg(bg)
     const [a, b] = [user.id, active.friend_id].sort()
     await supabase.from('dm_pairs').upsert({ a, b, chat_bg: bg, updated_by: user.id, updated_at: new Date().toISOString() })
       .then(() => {}, () => { /* pre-migration DB — background just won't stick */ })
     channelRef.current?.send({ type: 'broadcast', event: 'bg', payload: { bg, from: user.id } })
+    // delete the previous custom photo from storage so old uploads don't pile
+    // up. Only our own file (RLS lets us remove just the <uid>/… folder) and
+    // only once nobody references it — dm_pairs now holds the new value.
+    if (isCustomBg(prev) && prev !== bg) {
+      const path = customBgUrl(prev).split('/object/public/avatars/')[1]
+      if (path && path.startsWith(`${user.id}/`)) {
+        supabase.storage.from('avatars').remove([path]).then(() => {}, () => {})
+      }
+    }
   }
 
   /** Upload the user's own photo and use it as the (synced) chat background. */
