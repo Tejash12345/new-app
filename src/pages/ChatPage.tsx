@@ -882,13 +882,21 @@ function FriendsChat() {
     setBgUploading(true)
     try {
       const blob = await prepareMascotImage(file) // 512px downscale, jpeg/png Blob
-      const path = `chat-bg/${user.id}-${Date.now()}.jpg`
-      const { error } = await supabase.storage.from('avatars').upload(path, blob, { contentType: blob.type })
+      // first path segment MUST be the user id — the avatars-bucket RLS policy
+      // checks (storage.foldername(name))[1] = auth.uid(), so a "chat-bg/…"
+      // prefix was silently rejected. Same folder convention as avatar/mascot.
+      const path = `${user.id}/chat-bg-${Date.now()}.jpg`
+      const { error } = await supabase.storage.from('avatars').upload(path, blob, { contentType: blob.type, upsert: true })
       if (error) throw error
       const url = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
       await changeBg(makeCustomBg(url))
-    } catch {
-      setSendError('Couldn’t set that photo as the background. Try another image.')
+    } catch (err) {
+      const msg = (err as { message?: string })?.message
+      setSendError(
+        msg && /bucket.*not.*found/i.test(msg)
+          ? 'Photo storage isn’t set up yet (avatars bucket missing).'
+          : `Couldn’t set that photo as the background${msg ? ` — ${msg}` : ''}. Try another image.`,
+      )
     } finally {
       setBgUploading(false)
     }
