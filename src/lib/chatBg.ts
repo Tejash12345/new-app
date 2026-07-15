@@ -57,3 +57,9 @@ export const CHAT_BGS: ChatBg[] = [
 export function bgById(id?: string | null): ChatBg {
   return CHAT_BGS.find((b) => b.id === (id ?? '')) ?? CHAT_BGS[0]
 }
+
+// A user's own photo used as the background is stored as "img#<publicUrl>" —
+// it floats as 3D-tumbling photo tiles. (URLs contain ':' so we delimit with '#'.)
+export const isCustomBg = (id?: string | null): boolean => !!id && id.startsWith('img#')
+export const customBgUrl = (id?: string | null): string => (isCustomBg(id) ? id!.slice(4) : '')
+export const makeCustomBg = (url: string): string => `img#${url}`

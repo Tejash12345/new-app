@@ -4,7 +4,8 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
 import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video, Wand2 } from 'lucide-react'
 import { ChatBackground } from '../components/ChatBackground'
-import { CHAT_BGS, type ChatBgId } from '../lib/chatBg'
+import { CHAT_BGS, isCustomBg, makeCustomBg, type ChatBgId } from '../lib/chatBg'
+import { prepareMascotImage } from '../lib/mascot'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { smartReplies } from '../lib/ai'
@@ -391,6 +392,8 @@ function FriendsChat() {
   // per-conversation animated background (synced to both friends, Instagram-style)
   const [chatBg, setChatBg] = useState<ChatBgId>('')
   const [bgMenuOpen, setBgMenuOpen] = useState(false)
+  const [bgUploading, setBgUploading] = useState(false)
+  const bgFileRef = useRef<HTMLInputElement>(null)
   const [duo, setDuo] = useState<DuoState | null>(null)
   const [duoMenuOpen, setDuoMenuOpen] = useState(false)
   // Together: synced playback + voice call
@@ -869,6 +872,26 @@ function FriendsChat() {
     await supabase.from('dm_pairs').upsert({ a, b, chat_bg: bg, updated_by: user.id, updated_at: new Date().toISOString() })
       .then(() => {}, () => { /* pre-migration DB — background just won't stick */ })
     channelRef.current?.send({ type: 'broadcast', event: 'bg', payload: { bg, from: user.id } })
+  }
+
+  /** Upload the user's own photo and use it as the (synced) chat background. */
+  async function onPickBgImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !user) return
+    setBgUploading(true)
+    try {
+      const blob = await prepareMascotImage(file) // 512px downscale, jpeg/png Blob
+      const path = `chat-bg/${user.id}-${Date.now()}.jpg`
+      const { error } = await supabase.storage.from('avatars').upload(path, blob, { contentType: blob.type })
+      if (error) throw error
+      const url = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
+      await changeBg(makeCustomBg(url))
+    } catch {
+      setSendError('Couldn’t set that photo as the background. Try another image.')
+    } finally {
+      setBgUploading(false)
+    }
   }
 
   /** expires_at for a message sent right now (empty when the timer is off). */
@@ -1417,12 +1440,19 @@ function FriendsChat() {
                         )
                       })()}
                       <div className="grid max-h-[46vh] grid-cols-4 gap-1 overflow-y-auto">
+                        {/* your own photo → floats as 3D-tumbling photo tiles */}
+                        <button onClick={() => bgFileRef.current?.click()} disabled={bgUploading} aria-label="Custom photo background"
+                          className={cn('fl-lift flex flex-col items-center gap-1 rounded-xl px-1 py-2 transition',
+                            isCustomBg(chatBg) ? 'bg-brand-500/15 ring-1 ring-inset ring-brand-500' : 'hover:bg-slate-500/10')}>
+                          <span className="text-xl leading-none">{bgUploading ? '⏳' : '🖼️'}</span>
+                          <span className="w-full truncate text-center text-[10px] font-bold text-brand-500">{bgUploading ? '…' : 'Photo'}</span>
+                        </button>
                         {CHAT_BGS.map((b) => (
                           <button key={b.id}
                             onClick={() => changeBg(b.id && chatBg.endsWith(':s') ? `${b.id}:s` : b.id)}
                             aria-label={`${b.name} background`}
                             className={cn('fl-lift flex flex-col items-center gap-1 rounded-xl px-1 py-2 transition',
-                              chatBg.split(':')[0] === b.id ? 'bg-brand-500/15 ring-1 ring-inset ring-brand-500' : 'hover:bg-slate-500/10')}>
+                              !isCustomBg(chatBg) && chatBg.split(':')[0] === b.id ? 'bg-brand-500/15 ring-1 ring-inset ring-brand-500' : 'hover:bg-slate-500/10')}>
                             <span className="text-xl leading-none">{b.emoji}</span>
                             <span className="w-full truncate text-center text-[10px] font-semibold text-slate-600 dark:text-slate-300">{b.name}</span>
                           </button>
@@ -1431,6 +1461,7 @@ function FriendsChat() {
                       <div className="px-1.5 pb-0.5 pt-1 text-[10px] text-slate-400">
                         Both of you see the same background — in chat and while watching together.
                       </div>
+                      <input ref={bgFileRef} type="file" accept="image/*" className="hidden" onChange={onPickBgImage} />
                     </div>
                   </>
                 )}

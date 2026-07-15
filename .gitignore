@@ -32,3 +32,6 @@ supabase/.temp/
 _city-harness.html
 _shot*.mjs
 _city-*.png
+
+.vercel
+.env*
