@@ -59,17 +59,18 @@ export function ChatBackground({ bg }: { bg: ChatBgId }) {
   const isStatic = mode === 's' && !custom
   const cfg = bgById(baseId)
 
-  // custom photo → floating 3D-tumbling photo tiles
-  const photoParticles = useMemo(() => (custom ? makeParticles(url, 14, 2.6, 2.2, 11, 10, 0.72, 0.24, false) : []), [custom, url])
+  // custom photo → floating 3D-tumbling photo tiles (counts kept modest — each
+  // tile is two layers; too many janks low-end phones)
+  const photoParticles = useMemo(() => (custom ? makeParticles(url, 9, 2.7, 2.2, 12, 10, 0.74, 0.22, false) : []), [custom, url])
   const particles = useMemo(() => {
     if (custom || !cfg.glyphs.length) return []
     const soft = cfg.soft
-    return makeParticles(cfg.id, soft ? 14 : 22, soft ? 2.5 : 0.8, soft ? 3.5 : 1.5, soft ? 16 : 8, soft ? 14 : 10, soft ? 0.16 : 0.3, soft ? 0.22 : 0.5, !!soft)
+    return makeParticles(cfg.id, soft ? 10 : 16, soft ? 2.5 : 0.8, soft ? 3.5 : 1.5, soft ? 16 : 8, soft ? 14 : 10, soft ? 0.16 : 0.3, soft ? 0.22 : 0.5, !!soft)
   }, [cfg, custom])
 
   if (custom && url) {
     return (
-      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]" aria-hidden>
+      <div className="fl-bg-layer pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]" aria-hidden>
         {photoParticles.map((p) => {
           const shape = PHOTO_SHAPES[Math.floor(rand((p.i + 1) * 4.4) * PHOTO_SHAPES.length)]
           const skin = SHAPE_SKINS[Math.floor(rand((p.i + 1) * 5.6) * SHAPE_SKINS.length)]
@@ -78,17 +79,19 @@ export function ChatBackground({ bg }: { bg: ChatBgId }) {
           return (
             <div key={p.key} className="fl-bg-3d absolute"
               style={{
+                top: 0,
                 left: `${p.left}%`,
                 width: `${size}rem`,
                 height: `${size}rem`,
                 animationDuration: `${p.dur}s`,
                 animationDelay: `${p.delay}s`,
-                // coloured glow + depth shadow follows the silhouette
-                filter: `drop-shadow(0 4px 7px rgba(0,0,0,0.30)) drop-shadow(0 0 8px ${skin.glow})`,
+                // single coloured shadow = depth + glow in one cheap (cached) pass
+                filter: `drop-shadow(0 3px 7px ${skin.glow})`,
                 '--o': p.o,
               } as CSSProperties}>
-              {/* coloured 3D/4D frame — hue-shimmers slowly behind the photo */}
-              <div className="fl-bg-shimmer absolute inset-0"
+              {/* coloured 3D/4D frame behind the photo (static gradient — a
+                  per-frame hue animation here was the main source of stutter) */}
+              <div className="absolute inset-0"
                 style={{ background: skin.grad, borderRadius: shape ? 0 : '0.95rem', ...clip }} />
               {/* the photo, inset so the coloured frame shows as a border */}
               <img src={url} alt="" className="absolute object-cover"
@@ -102,13 +105,14 @@ export function ChatBackground({ bg }: { bg: ChatBgId }) {
 
   if (!cfg.glyphs.length) return null
   return (
-    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]" aria-hidden>
+    <div className="fl-bg-layer pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]" aria-hidden>
       {particles.map((p) => (
         <span
           key={p.key}
           className={cfg.dir === 'up' ? 'fl-bg-rise' : 'fl-bg-fall'}
           style={{
             position: 'absolute',
+            top: 0,
             left: `${p.left}%`,
             fontSize: `${p.size}rem`,
             animationDuration: `${p.dur}s`,

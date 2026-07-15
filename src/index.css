@@ -67,34 +67,34 @@ body {
 }
 
 /* ---- animated chat / watch backgrounds (floating particles) ---- */
+/* the particle layer is a size container so travel (cqh) matches the panel
+   height on any screen. Motion is transform + opacity ONLY (GPU-composited,
+   no per-frame layout) — animating `top` used to thrash layout and stutter. */
+.fl-bg-layer { container-type: size; contain: layout paint size; }
 @keyframes fl-bg-rise {
-  0% { top: 106%; opacity: 0; transform: rotate(0deg); }
+  0% { transform: translate3d(0, 112cqh, 0) rotate(0deg); opacity: 0; }
   10% { opacity: var(--o, 0.6); }
   90% { opacity: var(--o, 0.6); }
-  100% { top: -14%; opacity: 0; transform: rotate(26deg); }
+  100% { transform: translate3d(0, -16cqh, 0) rotate(26deg); opacity: 0; }
 }
 @keyframes fl-bg-fall {
-  0% { top: -14%; opacity: 0; transform: rotate(0deg); }
+  0% { transform: translate3d(0, -16cqh, 0) rotate(0deg); opacity: 0; }
   10% { opacity: var(--o, 0.6); }
   90% { opacity: var(--o, 0.6); }
-  100% { top: 106%; opacity: 0; transform: rotate(34deg); }
+  100% { transform: translate3d(0, 112cqh, 0) rotate(34deg); opacity: 0; }
 }
-.fl-bg-rise { animation: fl-bg-rise linear infinite; will-change: top, transform, opacity; }
-.fl-bg-fall { animation: fl-bg-fall linear infinite; will-change: top, transform, opacity; }
+.fl-bg-rise { animation: fl-bg-rise linear infinite; will-change: transform, opacity; }
+.fl-bg-fall { animation: fl-bg-fall linear infinite; will-change: transform, opacity; }
 /* custom-photo particles: float up while tumbling in 3D (a floating-cube feel) */
 @keyframes fl-bg-rise-3d {
-  0% { top: 108%; opacity: 0; transform: perspective(600px) rotateY(0deg) rotateX(10deg); }
+  0% { transform: translate3d(0, 112cqh, 0) perspective(600px) rotateY(0deg) rotateX(10deg); opacity: 0; }
   10% { opacity: var(--o, 0.85); }
   90% { opacity: var(--o, 0.85); }
-  100% { top: -16%; opacity: 0; transform: perspective(600px) rotateY(540deg) rotateX(10deg); }
+  100% { transform: translate3d(0, -16cqh, 0) perspective(600px) rotateY(540deg) rotateX(10deg); opacity: 0; }
 }
-.fl-bg-3d { animation: fl-bg-rise-3d linear infinite; will-change: top, transform, opacity; }
-/* coloured photo frame slowly cycles hue for a shimmering "4D" feel */
-@keyframes fl-bg-hue { to { filter: hue-rotate(360deg); } }
-.fl-bg-shimmer { animation: fl-bg-hue 7s linear infinite; }
+.fl-bg-3d { animation: fl-bg-rise-3d linear infinite; will-change: transform, opacity; }
 @media (prefers-reduced-motion: reduce) {
-  .fl-bg-rise, .fl-bg-fall, .fl-bg-3d { animation: none; opacity: 0.22; top: 40%; }
-  .fl-bg-shimmer { animation: none; }
+  .fl-bg-rise, .fl-bg-fall, .fl-bg-3d { animation: none; opacity: 0.22; transform: translateY(0); }
 }
 
 /* ---- Apple frosted white cards over colorful aurora ---- */
