@@ -2,7 +2,9 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video, Wand2 } from 'lucide-react'
+import { ChatBackground } from '../components/ChatBackground'
+import { CHAT_BGS, type ChatBgId } from '../lib/chatBg'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
 import { smartReplies } from '../lib/ai'
@@ -386,6 +388,9 @@ function FriendsChat() {
   const [peerReadAt, setPeerReadAt] = useState<string | null>(null)
   const [ttl, setTtl] = useState(0)
   const [ttlMenuOpen, setTtlMenuOpen] = useState(false)
+  // per-conversation animated background (synced to both friends, Instagram-style)
+  const [chatBg, setChatBg] = useState<ChatBgId>('')
+  const [bgMenuOpen, setBgMenuOpen] = useState(false)
   const [duo, setDuo] = useState<DuoState | null>(null)
   const [duoMenuOpen, setDuoMenuOpen] = useState(false)
   // Together: synced playback + voice call
@@ -569,15 +574,21 @@ function FriendsChat() {
       .limit(200)
       .then(({ data }) => { if (!cancelled) setMessages(((data as DMessage[]) ?? []).reverse()) })
 
-    // shared disappearing-messages timer for this pair
+    // shared per-pair settings: disappearing-messages timer + chat background
     setTtl(0)
     setTtlMenuOpen(false)
+    setChatBg('')
+    setBgMenuOpen(false)
     setTg(null)
     setTgInvite(null)
     {
       const [a, b] = [user.id, active.friend_id].sort()
-      supabase.from('dm_pairs').select('ttl_seconds').eq('a', a).eq('b', b).maybeSingle()
-        .then(({ data }) => { if (!cancelled && data) setTtl(data.ttl_seconds) }, () => {})
+      supabase.from('dm_pairs').select('ttl_seconds, chat_bg').eq('a', a).eq('b', b).maybeSingle()
+        .then(({ data }) => {
+          if (cancelled || !data) return
+          setTtl(data.ttl_seconds)
+          if (data.chat_bg) setChatBg(data.chat_bg as ChatBgId)
+        }, () => {})
     }
 
     // read receipts: where has THEY read up to, and tell them where I have
@@ -619,6 +630,9 @@ function FriendsChat() {
       })
       .on('broadcast', { event: 'ttl' }, ({ payload }) => {
         setTtl((payload as { seconds: number }).seconds)
+      })
+      .on('broadcast', { event: 'bg' }, ({ payload }) => {
+        setChatBg((payload as { bg: ChatBgId }).bg)
       })
       .on('broadcast', { event: 'tg' }, ({ payload }) => {
         const p = payload as TgPayload
@@ -843,6 +857,18 @@ function FriendsChat() {
     await supabase.from('dm_pairs').upsert({ a, b, ttl_seconds: s, updated_by: user.id, updated_at: new Date().toISOString() })
       .then(() => {}, () => { /* pre-migration DB — timer just won't stick */ })
     channelRef.current?.send({ type: 'broadcast', event: 'ttl', payload: { seconds: s, from: user.id } })
+  }
+
+  /** Set the conversation's animated background — persists on the pair and
+   *  broadcasts so the other friend's chat changes too (Instagram-style). */
+  async function changeBg(bg: ChatBgId) {
+    if (!user || !active) return
+    setBgMenuOpen(false)
+    setChatBg(bg)
+    const [a, b] = [user.id, active.friend_id].sort()
+    await supabase.from('dm_pairs').upsert({ a, b, chat_bg: bg, updated_by: user.id, updated_at: new Date().toISOString() })
+      .then(() => {}, () => { /* pre-migration DB — background just won't stick */ })
+    channelRef.current?.send({ type: 'broadcast', event: 'bg', payload: { bg, from: user.id } })
   }
 
   /** expires_at for a message sent right now (empty when the timer is off). */
@@ -1234,7 +1260,7 @@ function FriendsChat() {
         </GlassCard>
       </div>
 
-      <GlassCard className={cn('flex h-[34rem] flex-col lg:col-span-2', !active && 'hidden lg:flex')}>
+      <GlassCard className={cn('relative flex flex-col lg:col-span-2 h-[calc(100dvh-8rem)] lg:h-[40rem]', !active && 'hidden lg:flex')}>
         {!active ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <div className="text-4xl">💬</div>
@@ -1242,6 +1268,8 @@ function FriendsChat() {
           </div>
         ) : (
           <>
+            <ChatBackground bg={chatBg} />
+            <div className="relative z-10 flex min-h-0 flex-1 flex-col">
             <div className="mb-3 flex items-center gap-3 border-b border-slate-200/50 dark:border-white/10 pb-3">
               <button onClick={() => setActive(null)} className="lg:hidden text-slate-500"><ArrowLeft size={20} /></button>
               {(() => {
@@ -1350,6 +1378,36 @@ function FriendsChat() {
                       ))}
                       <div className="px-2.5 pb-1 pt-0.5 text-[10px] text-slate-400">
                         Applies to new messages, for both of you.
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              {/* animated chat background — shared with your friend (Instagram-style) */}
+              <div className="relative">
+                <button onClick={() => setBgMenuOpen((o) => !o)} aria-label="Chat background"
+                  className={cn('rounded-full p-2 transition hover:bg-slate-500/10', chatBg ? 'text-brand-500' : 'text-slate-400')}>
+                  <Wand2 size={18} />
+                </button>
+                {bgMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setBgMenuOpen(false)} />
+                    <div className="absolute right-0 z-50 mt-1 w-64 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-slate-900">
+                      <div className="px-1.5 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Chat background
+                      </div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {CHAT_BGS.map((b) => (
+                          <button key={b.id} onClick={() => changeBg(b.id)} aria-label={`${b.name} background`}
+                            className={cn('fl-lift flex flex-col items-center gap-1 rounded-xl px-1 py-2 transition',
+                              chatBg === b.id ? 'bg-brand-500/15 ring-1 ring-inset ring-brand-500' : 'hover:bg-slate-500/10')}>
+                            <span className="text-xl leading-none">{b.emoji}</span>
+                            <span className="w-full truncate text-center text-[10px] font-semibold text-slate-600 dark:text-slate-300">{b.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="px-1.5 pb-0.5 pt-1 text-[10px] text-slate-400">
+                        Both of you see the same background — in chat and while watching together.
                       </div>
                     </div>
                   </>
@@ -1738,6 +1796,7 @@ function FriendsChat() {
                 </button>
               </div>
             )}
+            </div>
           </>
         )}
       </GlassCard>
@@ -1813,6 +1872,7 @@ function FriendsChat() {
           session={tg}
           meId={user.id}
           partnerName={fname(active).split(' ')[0]}
+          chatBg={chatBg}
           sendTg={sendTg}
           registerTgHandler={(fn) => { tgOverlayHandler.current = fn }}
           resolveMediaUrl={resolveTgMedia}

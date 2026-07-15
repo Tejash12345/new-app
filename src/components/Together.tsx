@@ -18,6 +18,8 @@ import { cn } from '../lib/utils'
 import { callAudioStart, callAudioSpeaker, callAudioEnd } from '../lib/callAudio'
 import { hasNativeScreen, nativeScreenStart, nativeScreenStop } from '../lib/nativeScreen'
 import { SUPABASE_URL } from '../lib/supabase'
+import { ChatBackground } from './ChatBackground'
+import type { ChatBgId } from '../lib/chatBg'
 
 // Stream a public Drive file through our edge proxy so it plays in a real
 // <video> (Drive's direct URL serves an HTML virus-scan page for large files).
@@ -167,11 +169,12 @@ function loadYouTubeApi(): Promise<void> {
 
 // ---------- synced playback overlay ----------
 export function TogetherOverlay({
-  session, meId, partnerName, sendTg, registerTgHandler, resolveMediaUrl, onClose, callNode, chatNode, callInfo,
+  session, meId, partnerName, chatBg, sendTg, registerTgHandler, resolveMediaUrl, onClose, callNode, chatNode, callInfo,
 }: {
   session: TogetherSession
   meId: string
   partnerName: string
+  chatBg?: ChatBgId
   sendTg: (p: Omit<TgPayload, 'from'>) => void
   registerTgHandler: (fn: (p: TgPayload) => void) => void
   resolveMediaUrl: (msgId: string) => Promise<string | null>
@@ -729,6 +732,9 @@ export function TogetherOverlay({
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       className="fixed inset-0 z-[85] flex flex-col bg-[#06050d]/95 backdrop-blur-sm">
+      {/* same synced background as the chat, drifting behind the player */}
+      {chatBg ? <ChatBackground bg={chatBg} /> : null}
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:px-4">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-white">
           {current.kind === 'media' && !current.isVideo
@@ -1107,6 +1113,7 @@ export function TogetherOverlay({
         ))}
       </div>
       {callNode}
+      </div>
     </motion.div>
   )
 }

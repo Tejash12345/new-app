@@ -66,6 +66,25 @@ body {
   .fl-lift:hover, .fl-lift:active { transform: none; }
 }
 
+/* ---- animated chat / watch backgrounds (floating particles) ---- */
+@keyframes fl-bg-rise {
+  0% { top: 106%; opacity: 0; transform: rotate(0deg); }
+  10% { opacity: var(--o, 0.6); }
+  90% { opacity: var(--o, 0.6); }
+  100% { top: -14%; opacity: 0; transform: rotate(26deg); }
+}
+@keyframes fl-bg-fall {
+  0% { top: -14%; opacity: 0; transform: rotate(0deg); }
+  10% { opacity: var(--o, 0.6); }
+  90% { opacity: var(--o, 0.6); }
+  100% { top: 106%; opacity: 0; transform: rotate(34deg); }
+}
+.fl-bg-rise { animation: fl-bg-rise linear infinite; will-change: top, transform, opacity; }
+.fl-bg-fall { animation: fl-bg-fall linear infinite; will-change: top, transform, opacity; }
+@media (prefers-reduced-motion: reduce) {
+  .fl-bg-rise, .fl-bg-fall { animation: none; opacity: 0.22; top: 40%; }
+}
+
 /* ---- Apple frosted white cards over colorful aurora ---- */
 .glass {
   background: rgba(255, 255, 255, 0.78);
