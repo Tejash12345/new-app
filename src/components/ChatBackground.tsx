@@ -11,7 +11,11 @@ const rand = (n: number) => { const x = Math.sin(n) * 43758.5453; return x - Mat
  * fills its (relative) parent, behind the content, and ignores pointer events.
  */
 export function ChatBackground({ bg }: { bg: ChatBgId }) {
-  const cfg = bgById(bg)
+  // value is "<id>" (animated) or "<id>:s" (static — particles freeze scattered
+  // like a wallpaper, via animation-play-state: paused + the staggered delays)
+  const [baseId, mode] = (bg ?? '').split(':')
+  const isStatic = mode === 's'
+  const cfg = bgById(baseId)
   const particles = useMemo(() => {
     if (!cfg.glyphs.length) return []
     const soft = cfg.soft
@@ -45,8 +49,11 @@ export function ChatBackground({ bg }: { bg: ChatBgId }) {
             fontSize: `${p.size}rem`,
             animationDuration: `${p.dur}s`,
             animationDelay: `${p.delay}s`,
+            animationPlayState: isStatic ? 'paused' : 'running',
             filter: p.blur ? `blur(${p.blur}px)` : undefined,
             '--o': p.o,
+            // static: hold at full opacity (the keyframe's fade is frozen mid-way)
+            ...(isStatic ? { opacity: p.o } : {}),
           } as CSSProperties}
         >
           {p.g}

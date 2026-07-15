@@ -1294,10 +1294,12 @@ function FriendsChat() {
                   </>
                 )
               })()}
-              {/* action buttons — grouped + tight so they never crowd the name on 360px */}
-              <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
+              {/* action buttons — grouped + tight so they never crowd the name on 360px;
+                  `relative` so every dropdown anchors to the cluster's right edge (not a
+                  single button) and opens fully on-screen */}
+              <div className="relative ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
               {/* Together — synced YouTube / music + live voice call */}
-              <div className="relative">
+              <div>
                 <button onClick={() => setTgMenuOpen((o) => !o)} aria-label="Together menu"
                   className={cn('rounded-full p-2 transition hover:bg-slate-500/10', tg ? 'text-brand-500' : 'text-slate-400')}>
                   <MonitorPlay size={18} />
@@ -1318,12 +1320,12 @@ function FriendsChat() {
                         <Video size={15} className="text-sky-500" /> Video call
                       </button>
                       <button onClick={() => { setTgMenuOpen(false); setYtUrl(''); setPasteFail(false); setLinkPrompt('yt') }}
-                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
-                        <Clapperboard size={15} className="text-red-500" /> Watch YouTube together
+                        className="flex w-full items-center gap-2.5 whitespace-nowrap rounded-xl px-2.5 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
+                        <Clapperboard size={15} className="shrink-0 text-red-500" /> Watch YouTube
                       </button>
                       <button onClick={() => { setTgMenuOpen(false); setYtUrl(''); setPasteFail(false); setLinkPrompt('drive') }}
-                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
-                        <FileText size={15} className="text-amber-500" /> Play from Google Drive
+                        className="flex w-full items-center gap-2.5 whitespace-nowrap rounded-xl px-2.5 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
+                        <FileText size={15} className="shrink-0 text-amber-500" /> Play from Drive
                       </button>
                       <div className="px-2.5 pb-1 pt-0.5 text-[10px] text-slate-400">
                         Tip: any song, video or Drive link sent in this chat gets a Play together button under it.
@@ -1333,7 +1335,7 @@ function FriendsChat() {
                 )}
               </div>
               {/* Focus Together — invite this friend into a live synced session */}
-              <div className="relative">
+              <div>
                 <button onClick={() => setDuoMenuOpen((o) => !o)} aria-label="Focus together"
                   className="rounded-full p-2 text-amber-500 transition hover:bg-amber-400/15">
                   <Zap size={18} />
@@ -1359,7 +1361,7 @@ function FriendsChat() {
                 )}
               </div>
               {/* disappearing-messages timer — shared by both sides of the chat */}
-              <div className="relative">
+              <div>
                 <button onClick={() => setTtlMenuOpen((o) => !o)} aria-label="Disappearing messages"
                   className={cn('rounded-full p-2 transition hover:bg-slate-500/10', ttl > 0 ? 'text-brand-500' : 'text-slate-400')}>
                   <Timer size={18} />
@@ -1386,7 +1388,7 @@ function FriendsChat() {
                 )}
               </div>
               {/* animated chat background — shared with your friend (Instagram-style) */}
-              <div className="relative">
+              <div>
                 <button onClick={() => setBgMenuOpen((o) => !o)} aria-label="Chat background"
                   className={cn('rounded-full p-2 transition hover:bg-slate-500/10', chatBg ? 'text-brand-500' : 'text-slate-400')}>
                   <Wand2 size={18} />
@@ -1395,14 +1397,33 @@ function FriendsChat() {
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setBgMenuOpen(false)} />
                     <div className="absolute right-0 z-50 mt-1 w-64 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-slate-900">
-                      <div className="px-1.5 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                        Chat background
+                      <div className="mb-1.5 flex items-center justify-between px-1.5 py-1">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Chat background</span>
+                        {/* Animated ⇄ Static — user picks how the particles behave */}
+                        {(() => {
+                          const base = chatBg.split(':')[0]
+                          const isStatic = chatBg.endsWith(':s')
+                          return (
+                            <div className="flex overflow-hidden rounded-full bg-slate-500/10 text-[10px] font-bold">
+                              <button onClick={() => base && changeBg(base)}
+                                className={cn('px-2 py-1 transition', !isStatic ? 'bg-brand-500 text-white' : 'text-slate-500')}>
+                                Animated
+                              </button>
+                              <button onClick={() => base && changeBg(`${base}:s`)}
+                                className={cn('px-2 py-1 transition', isStatic ? 'bg-brand-500 text-white' : 'text-slate-500')}>
+                                Static
+                              </button>
+                            </div>
+                          )
+                        })()}
                       </div>
                       <div className="grid max-h-[46vh] grid-cols-4 gap-1 overflow-y-auto">
                         {CHAT_BGS.map((b) => (
-                          <button key={b.id} onClick={() => changeBg(b.id)} aria-label={`${b.name} background`}
+                          <button key={b.id}
+                            onClick={() => changeBg(b.id && chatBg.endsWith(':s') ? `${b.id}:s` : b.id)}
+                            aria-label={`${b.name} background`}
                             className={cn('fl-lift flex flex-col items-center gap-1 rounded-xl px-1 py-2 transition',
-                              chatBg === b.id ? 'bg-brand-500/15 ring-1 ring-inset ring-brand-500' : 'hover:bg-slate-500/10')}>
+                              chatBg.split(':')[0] === b.id ? 'bg-brand-500/15 ring-1 ring-inset ring-brand-500' : 'hover:bg-slate-500/10')}>
                             <span className="text-xl leading-none">{b.emoji}</span>
                             <span className="w-full truncate text-center text-[10px] font-semibold text-slate-600 dark:text-slate-300">{b.name}</span>
                           </button>
