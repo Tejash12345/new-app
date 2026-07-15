@@ -17,6 +17,17 @@ const PHOTO_SHAPES: (string | null)[] = [
   'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)', // hexagon
 ]
 
+// vibrant gradient "frame" + matching glow behind each shaped photo tile — this
+// is the coloured 3D/4D look: a colourful border hugging the shape, a coloured
+// glow, and (via .fl-bg-shimmer) a slow hue cycle so the border shifts colour.
+const SHAPE_SKINS: { grad: string; glow: string }[] = [
+  { grad: 'linear-gradient(135deg,#ff5f9e,#ffb35a)', glow: 'rgba(255,95,158,0.60)' }, // pink→orange
+  { grad: 'linear-gradient(135deg,#7c5cff,#41d4ff)', glow: 'rgba(124,92,255,0.58)' }, // violet→cyan
+  { grad: 'linear-gradient(135deg,#ffd23f,#ff6f91)', glow: 'rgba(255,180,63,0.58)' }, // gold→rose
+  { grad: 'linear-gradient(135deg,#33d9b2,#3a86ff)', glow: 'rgba(51,217,178,0.58)' }, // teal→blue
+  { grad: 'linear-gradient(135deg,#ff6f61,#c04cff)', glow: 'rgba(192,76,255,0.58)' }, // coral→purple
+]
+
 /** Layout for both emoji and photo particles. */
 function makeParticles(seed: string, count: number, sizeBase: number, sizeVar: number, durBase: number, durVar: number, oBase: number, oVar: number, softBlur: boolean) {
   return Array.from({ length: count }, (_, i) => {
@@ -61,23 +72,28 @@ export function ChatBackground({ bg }: { bg: ChatBgId }) {
       <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]" aria-hidden>
         {photoParticles.map((p) => {
           const shape = PHOTO_SHAPES[Math.floor(rand((p.i + 1) * 4.4) * PHOTO_SHAPES.length)]
+          const skin = SHAPE_SKINS[Math.floor(rand((p.i + 1) * 5.6) * SHAPE_SKINS.length)]
+          const clip = shape ? ({ clipPath: shape, WebkitClipPath: shape } as CSSProperties) : {}
+          const size = p.size + 1.6
           return (
-            <img key={p.key} src={url} alt=""
-              className={`fl-bg-3d absolute object-cover${shape ? '' : ' rounded-2xl shadow-lg ring-1 ring-white/30'}`}
+            <div key={p.key} className="fl-bg-3d absolute"
               style={{
                 left: `${p.left}%`,
-                width: `${p.size + 1.4}rem`,
-                height: `${p.size + 1.4}rem`,
+                width: `${size}rem`,
+                height: `${size}rem`,
                 animationDuration: `${p.dur}s`,
                 animationDelay: `${p.delay}s`,
-                clipPath: shape || undefined,
-                WebkitClipPath: shape || undefined,
-                // clip-path clips box-shadow/ring away, so shaped tiles get a
-                // silhouette-following drop-shadow for the same floating depth
-                filter: shape ? 'drop-shadow(0 4px 7px rgba(0,0,0,0.28))' : undefined,
+                // coloured glow + depth shadow follows the silhouette
+                filter: `drop-shadow(0 4px 7px rgba(0,0,0,0.30)) drop-shadow(0 0 8px ${skin.glow})`,
                 '--o': p.o,
-              } as CSSProperties}
-            />
+              } as CSSProperties}>
+              {/* coloured 3D/4D frame — hue-shimmers slowly behind the photo */}
+              <div className="fl-bg-shimmer absolute inset-0"
+                style={{ background: skin.grad, borderRadius: shape ? 0 : '0.95rem', ...clip }} />
+              {/* the photo, inset so the coloured frame shows as a border */}
+              <img src={url} alt="" className="absolute object-cover"
+                style={{ inset: '11%', width: '78%', height: '78%', borderRadius: shape ? 0 : '0.7rem', ...clip }} />
+            </div>
           )
         })}
       </div>

@@ -89,8 +89,12 @@ body {
   100% { top: -16%; opacity: 0; transform: perspective(600px) rotateY(540deg) rotateX(10deg); }
 }
 .fl-bg-3d { animation: fl-bg-rise-3d linear infinite; will-change: top, transform, opacity; }
+/* coloured photo frame slowly cycles hue for a shimmering "4D" feel */
+@keyframes fl-bg-hue { to { filter: hue-rotate(360deg); } }
+.fl-bg-shimmer { animation: fl-bg-hue 7s linear infinite; }
 @media (prefers-reduced-motion: reduce) {
   .fl-bg-rise, .fl-bg-fall, .fl-bg-3d { animation: none; opacity: 0.22; top: 40%; }
+  .fl-bg-shimmer { animation: none; }
 }
 
 /* ---- Apple frosted white cards over colorful aurora ---- */
