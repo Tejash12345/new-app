@@ -510,7 +510,7 @@ export function FeedPage() {
         {TABS.map(({ key, label, icon: Icon }) => (
           <button key={key} onClick={() => setTab(key)}
             className={cn('flex items-center gap-1.5 rounded-2xl px-3.5 py-2 text-sm font-bold transition',
-              tab === key ? 'bg-gradient-to-r from-brand-500 to-purple-500 text-white shadow-lg shadow-brand-500/30'
+              tab === key ? 'bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/30'
                 : 'glass text-slate-600 dark:text-slate-300')}>
             <Icon size={15} /> {label}
           </button>
@@ -1232,7 +1232,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
         {TYPES.map(({ key, label, icon: Icon }) => (
           <button key={key} onClick={() => { setType(key); setFile(null); setError(null) }}
             className={cn('flex flex-col items-center gap-1 rounded-2xl py-3 text-xs font-bold transition',
-              type === key ? 'bg-gradient-to-br from-brand-500 to-purple-500 text-white'
+              type === key ? 'bg-gradient-to-br from-brand-500 to-brand-600 text-white'
                 : 'bg-slate-400/10 text-slate-600 dark:bg-white/5 dark:text-slate-300 hover:bg-slate-400/20')}>
             <Icon size={18} /> {label}
           </button>

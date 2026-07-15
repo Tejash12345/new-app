@@ -286,20 +286,21 @@ export function SettingsPage() {
         </GlassCard>
 
         <GlassCard>
-          <SectionTitle>🎨 Accent theme</SectionTitle>
+          <SectionTitle><span className="fl-float-tilt inline-block">🎨</span> Accent theme</SectionTitle>
           <p className="mb-4 text-xs leading-relaxed text-slate-500">
-            Pick an accent colour — it re-skins buttons, highlights and the whole app instantly, on all your devices.
+            {THEMES.length} professional colours — pick one and the whole app (buttons, nav, gradients, the
+            aurora background) re-skins instantly, on all your devices.
           </p>
-          <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+          <div className="grid max-h-[260px] grid-cols-4 gap-2 overflow-y-auto rounded-xl p-0.5 sm:grid-cols-6">
             {THEMES.map((t) => {
               const active = accent === t.id
               return (
                 <button key={t.id}
                   onClick={() => { setAccent(t.id); applyAccentTheme(t.id) }}
                   aria-label={`${t.name} theme`}
-                  className={cn('group flex flex-col items-center gap-1.5 rounded-xl p-2 transition',
+                  className={cn('fl-lift group flex flex-col items-center gap-1.5 rounded-xl p-2',
                     active ? 'bg-slate-500/15 ring-2 ring-inset ring-brand-500' : 'hover:bg-slate-500/10')}>
-                  <span className="flex h-8 w-full items-center justify-center gap-0.5 overflow-hidden rounded-md">
+                  <span className="flex h-8 w-full items-center justify-center gap-0.5 overflow-hidden rounded-md shadow-sm">
                     <span className="h-full flex-1" style={{ background: t.ramp[300] }} />
                     <span className="h-full flex-1" style={{ background: t.ramp[500] }} />
                     <span className="h-full flex-1" style={{ background: t.ramp[700] }} />
@@ -317,11 +318,11 @@ export function SettingsPage() {
               <span className="max-w-[80%] rounded-2xl rounded-bl-md bg-slate-500/10 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-200">Hey! Love the new look 😍</span>
             </div>
             <div className="flex justify-end">
-              <span className="max-w-[80%] rounded-2xl rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 px-3 py-1.5 text-sm text-white">Right? This accent is 🔥</span>
+              <span className="max-w-[80%] rounded-2xl rounded-br-md bg-gradient-to-r from-brand-500 to-brand-600 px-3 py-1.5 text-sm text-white shadow-lg shadow-brand-500/30">Right? This accent is 🔥</span>
             </div>
             <div className="flex items-center gap-2 pt-1">
               <div className="flex-1 rounded-full bg-slate-500/10 px-3 py-2 text-xs text-slate-400">Message…</div>
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-500 text-white shadow">➤</span>
+              <span className="fl-float flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/40">➤</span>
             </div>
           </div>
         </GlassCard>

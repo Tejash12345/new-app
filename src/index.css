@@ -32,22 +32,38 @@ body {
 }
 
 /* ---- aurora background ---- */
+/* the two dominant glows follow the accent theme (color-mix on the brand var);
+   the orange/cyan accents stay for richness */
 .aurora {
   background:
-    radial-gradient(55rem 38rem at 8% -8%, rgba(96, 132, 255, 0.50), transparent 62%),
+    radial-gradient(55rem 38rem at 8% -8%, color-mix(in srgb, var(--color-brand-400) 62%, transparent), transparent 62%),
     radial-gradient(48rem 34rem at 105% 8%, rgba(255, 158, 94, 0.42), transparent 62%),
     radial-gradient(42rem 36rem at 78% 68%, rgba(64, 200, 224, 0.34), transparent 62%),
-    radial-gradient(46rem 40rem at 22% 108%, rgba(186, 110, 255, 0.42), transparent 62%),
+    radial-gradient(46rem 40rem at 22% 108%, color-mix(in srgb, var(--color-brand-500) 48%, transparent), transparent 62%),
     radial-gradient(36rem 30rem at 50% 40%, rgba(255, 120, 180, 0.20), transparent 62%),
     #eef1fb;
 }
 .dark .aurora {
   background:
-    radial-gradient(55rem 38rem at 8% -8%, rgba(79, 107, 250, 0.40), transparent 62%),
+    radial-gradient(55rem 38rem at 8% -8%, color-mix(in srgb, var(--color-brand-500) 46%, transparent), transparent 62%),
     radial-gradient(48rem 34rem at 105% 8%, rgba(255, 150, 84, 0.20), transparent 62%),
     radial-gradient(42rem 36rem at 78% 68%, rgba(56, 178, 200, 0.22), transparent 62%),
-    radial-gradient(46rem 40rem at 22% 108%, rgba(167, 108, 255, 0.30), transparent 62%),
+    radial-gradient(46rem 40rem at 22% 108%, color-mix(in srgb, var(--color-brand-500) 34%, transparent), transparent 62%),
     #0b0d14;
+}
+
+/* ---- playful floating + 3D-lift micro-animations ---- */
+@keyframes fl-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+.fl-float { animation: fl-float 3.6s ease-in-out infinite; }
+@keyframes fl-float-tilt { 0%, 100% { transform: translateY(0) rotate(-1.5deg); } 50% { transform: translateY(-6px) rotate(1.5deg); } }
+.fl-float-tilt { animation: fl-float-tilt 5s ease-in-out infinite; }
+/* a springy 3D lift on hover + press — reads as depth without being noisy */
+.fl-lift { transition: transform .18s cubic-bezier(.2, .8, .2, 1), box-shadow .18s ease; transform-style: preserve-3d; }
+.fl-lift:hover { transform: perspective(700px) translateY(-3px) translateZ(6px) scale(1.04); box-shadow: 0 12px 26px rgba(31, 41, 87, 0.18); }
+.fl-lift:active { transform: perspective(700px) translateY(0) scale(.96); }
+@media (prefers-reduced-motion: reduce) {
+  .fl-float, .fl-float-tilt { animation: none; }
+  .fl-lift:hover, .fl-lift:active { transform: none; }
 }
 
 /* ---- Apple frosted white cards over colorful aurora ---- */

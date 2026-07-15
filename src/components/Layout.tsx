@@ -108,12 +108,12 @@ export function Layout() {
                     'relative flex items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-semibold transition-colors',
                     isActive
                       ? 'text-white'
-                      : 'text-slate-600 dark:text-slate-300 hover:bg-gradient-to-r hover:from-brand-500/20 hover:to-purple-500/20 hover:text-brand-600 dark:hover:text-brand-300',
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-gradient-to-r hover:from-brand-500/20 hover:to-brand-600/20 hover:text-brand-600 dark:hover:text-brand-300',
                   )}>
                     {isActive && (
                       <motion.div
                         layoutId="nav-pill"
-                        className="absolute inset-0 rounded-2xl bg-gradient-to-r from-brand-500 to-purple-500 shadow-lg shadow-brand-500/40"
+                        className="absolute inset-0 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 shadow-lg shadow-brand-500/40"
                         transition={{ type: 'spring', damping: 26, stiffness: 320 }}
                       />
                     )}
@@ -135,7 +135,7 @@ export function Layout() {
               {({ isActive }) => (
                 <div className={cn(
                   'flex items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-semibold',
-                  isActive ? 'bg-gradient-to-r from-brand-500 to-purple-500 text-white shadow-lg shadow-brand-500/40' : 'text-slate-600 dark:text-slate-300 hover:bg-gradient-to-r hover:from-brand-500/20 hover:to-purple-500/20 hover:text-brand-600 dark:hover:text-brand-300',
+                  isActive ? 'bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/40' : 'text-slate-600 dark:text-slate-300 hover:bg-gradient-to-r hover:from-brand-500/20 hover:to-brand-600/20 hover:text-brand-600 dark:hover:text-brand-300',
                 )}>
                   <Settings size={18} /> Settings
                 </div>
@@ -146,7 +146,7 @@ export function Layout() {
                 {({ isActive }) => (
                   <div className={cn(
                     'flex items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-semibold',
-                    isActive ? 'bg-gradient-to-r from-brand-500 to-purple-500 text-white shadow-lg shadow-brand-500/40' : 'text-slate-600 dark:text-slate-300 hover:bg-gradient-to-r hover:from-brand-500/20 hover:to-purple-500/20 hover:text-brand-600 dark:hover:text-brand-300',
+                    isActive ? 'bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/40' : 'text-slate-600 dark:text-slate-300 hover:bg-gradient-to-r hover:from-brand-500/20 hover:to-brand-600/20 hover:text-brand-600 dark:hover:text-brand-300',
                   )}>
                     <Crown size={18} /> Admin
                   </div>
@@ -381,7 +381,7 @@ export function Layout() {
                     className={cn(
                       'relative flex flex-col items-center gap-1 rounded-2xl py-2.5 text-[10px] font-semibold transition',
                       location.pathname === to
-                        ? 'bg-gradient-to-br from-brand-500 to-purple-500 text-white'
+                        ? 'bg-gradient-to-br from-brand-500 to-brand-600 text-white'
                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-500/10',
                     )}>
                     <Icon size={18} />

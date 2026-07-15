@@ -100,7 +100,7 @@ export function VocabPage() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-end gap-x-3 gap-y-1">
-                  <h2 className="break-words bg-gradient-to-r from-brand-500 to-purple-500 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent sm:text-5xl">
+                  <h2 className="break-words bg-gradient-to-r from-brand-500 to-brand-600 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent sm:text-5xl">
                     {word.word}
                   </h2>
                   {word.phonetic && <span className="pb-1 text-sm text-slate-400">{word.phonetic}</span>}

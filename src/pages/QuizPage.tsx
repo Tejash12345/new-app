@@ -1228,7 +1228,7 @@ export function QuizPage() {
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-slate-200/70 dark:bg-white/10">
                 <motion.div
-                  className="h-full rounded-full bg-gradient-to-r from-brand-500 to-purple-500"
+                  className="h-full rounded-full bg-gradient-to-r from-brand-500 to-brand-600"
                   animate={{ width: `${((i + (picked !== null ? 1 : 0)) / questions.length) * 100}%` }}
                 />
               </div>

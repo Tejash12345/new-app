@@ -328,7 +328,7 @@ export function ChatPage() {
         {(['friends', 'rooms'] as const).map((m) => (
           <button key={m} onClick={() => setMode(m)}
             className={cn('flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-bold transition',
-              mode === m ? 'bg-gradient-to-r from-brand-500 to-purple-500 text-white shadow-lg shadow-brand-500/30' : 'glass text-slate-600 dark:text-slate-300')}>
+              mode === m ? 'bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/30' : 'glass text-slate-600 dark:text-slate-300')}>
             {m === 'friends' ? <><MessageCircle size={16} /> Friends</> : <><Users size={16} /> Community</>}
           </button>
         ))}
@@ -1366,7 +1366,7 @@ function FriendsChat() {
                   {fname(active).split(' ')[0]} started watching{('name' in tgInvite && tgInvite.name) ? ` ${tgInvite.name}` : ''} — join?
                 </span>
                 <button onClick={() => { setTg(tgInvite); setTgInvite(null) }}
-                  className="shrink-0 rounded-full bg-gradient-to-r from-brand-500 to-purple-500 px-3.5 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
+                  className="shrink-0 rounded-full bg-gradient-to-r from-brand-500 to-brand-600 px-3.5 py-1.5 text-xs font-black uppercase text-white shadow active:scale-95">
                   Join
                 </button>
                 <button onClick={() => setTgInvite(null)} aria-label="Dismiss invite"
@@ -1491,9 +1491,9 @@ function FriendsChat() {
                       )}
                       {m.kind === 'tg' ? (
                         <div className={cn('flex min-w-0 flex-col', mine ? 'items-end' : 'items-start')}>
-                          <div className="min-w-0 max-w-full rounded-2xl border border-brand-400/40 bg-gradient-to-br from-brand-500/15 to-purple-500/10 p-3.5 sm:max-w-md">
+                          <div className="min-w-0 max-w-full rounded-2xl border border-brand-400/40 bg-gradient-to-br from-brand-500/15 to-brand-600/10 p-3.5 sm:max-w-md">
                             <div className="flex items-center gap-2.5">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-purple-500 text-white shadow">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow">
                                 <MonitorPlay size={19} />
                               </div>
                               <div className="min-w-0">
@@ -1504,7 +1504,7 @@ function FriendsChat() {
                             <button
                               onClick={() => { const s = tgSessionFrom(m); if (s) openTogether(s, { skipCard: true }) }}
                               disabled={!tgSessionFrom(m)}
-                              className="mt-2.5 w-full rounded-xl bg-gradient-to-r from-brand-500 to-purple-500 py-2 text-sm font-black uppercase tracking-wide text-white shadow transition active:scale-95 disabled:opacity-50">
+                              className="mt-2.5 w-full rounded-xl bg-gradient-to-r from-brand-500 to-brand-600 py-2 text-sm font-black uppercase tracking-wide text-white shadow transition active:scale-95 disabled:opacity-50">
                               ▶ Join
                             </button>
                           </div>
@@ -2024,7 +2024,7 @@ function RoomsChat() {
             {ROOMS.map((r) => (
               <button key={r.key} onClick={() => setRoom(r.key)}
                 className={cn('flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition',
-                  room === r.key ? 'bg-gradient-to-r from-brand-500 to-purple-500 text-white shadow-lg shadow-brand-500/30' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-500/10')}>
+                  room === r.key ? 'bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/30' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-500/10')}>
                 <span className="text-lg">{r.emoji}</span> {r.label}
               </button>
             ))}

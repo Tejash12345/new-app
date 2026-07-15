@@ -100,7 +100,7 @@ export function Dashboard() {
           <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mb-5">
             <GlassCard className={urgent ? '!border-rose-400/40' : ''}>
               <div className="flex items-center gap-4">
-                <div className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-3xl text-white shadow-lg ${urgent ? 'bg-gradient-to-br from-rose-500 to-orange-500' : 'bg-gradient-to-br from-brand-500 to-purple-500'}`}>
+                <div className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-3xl text-white shadow-lg ${urgent ? 'bg-gradient-to-br from-rose-500 to-orange-500' : 'bg-gradient-to-br from-brand-500 to-brand-600'}`}>
                   <span className="text-2xl font-extrabold leading-none">{daysLeft}</span>
                   <span className="text-[9px] font-bold uppercase opacity-80">day{daysLeft === 1 ? '' : 's'}</span>
                 </div>

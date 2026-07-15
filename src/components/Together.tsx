@@ -973,7 +973,7 @@ export function TogetherOverlay({
         {needsTap && !(current.kind === 'drive' && driveFallback) && !(current.kind === 'media' && mediaGone) && (
           <button onClick={tapStart}
             className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/55 text-white">
-            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-purple-500 shadow-lg">
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-600 shadow-lg">
               <Play size={26} className="ml-1 fill-current" />
             </span>
             <span className="text-sm font-bold">Tap to play</span>
@@ -1066,7 +1066,7 @@ export function TogetherOverlay({
               className="min-w-0 flex-1 rounded-full bg-white/10 px-3.5 py-2 text-xs text-white outline-none placeholder:text-white/40"
             />
             <button onClick={addToQueue} disabled={!ytIdFrom(addUrl) && !driveIdFrom(addUrl)}
-              className="shrink-0 rounded-full bg-gradient-to-r from-brand-500 to-purple-500 px-3.5 py-2 text-xs font-black uppercase text-white shadow active:scale-95 disabled:opacity-40">
+              className="shrink-0 rounded-full bg-gradient-to-r from-brand-500 to-brand-600 px-3.5 py-2 text-xs font-black uppercase text-white shadow active:scale-95 disabled:opacity-40">
               Add
             </button>
           </div>
@@ -1813,7 +1813,7 @@ export function CallScreen({ call, peerName, avatarUrl, onMinimize }: {
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
           <div className="relative">
             <span className={cn('absolute inset-0 -m-3 rounded-full bg-brand-400/30', !live && 'animate-ping')} />
-            <div className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-purple-500 text-4xl font-bold text-white shadow-2xl sm:h-32 sm:w-32">
+            <div className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-4xl font-bold text-white shadow-2xl sm:h-32 sm:w-32">
               {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : peerName.slice(0, 1).toUpperCase()}
             </div>
           </div>

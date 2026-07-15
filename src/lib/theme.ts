@@ -1,37 +1,72 @@
 /**
  * Accent themes. FocusLion's Tailwind 4 `@theme` exposes the brand palette as
  * CSS variables (--color-brand-50…900) that every `brand-*` utility resolves at
- * runtime — so overriding those variables on <html> re-skins the whole app
- * instantly. The user picks a theme in Settings (like a daisyUI theme picker);
- * it persists in localStorage and is applied before first paint.
+ * runtime — so overriding those variables on <html> re-skins the WHOLE app
+ * (buttons, nav, gradients, the aurora background, highlights) instantly. The
+ * user picks from 50+ colours in Settings; it persists and is applied before
+ * first paint.
  */
-export type ThemeId =
-  | 'ocean' | 'violet' | 'emerald' | 'rose' | 'amber'
-  | 'cyan' | 'pink' | 'teal' | 'orange' | 'sky' | 'crimson'
-
 const SHADES = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900] as const
+type Shade = (typeof SHADES)[number]
+type Ramp = Record<Shade, string>
 
-type Ramp = Record<(typeof SHADES)[number], string>
+// lightness curve per shade (tuned to look like a real Tailwind ramp)
+const LIGHT: Record<Shade, number> = { 50: 97, 100: 94, 200: 87, 300: 77, 400: 67, 500: 57, 600: 49, 700: 41, 800: 34, 900: 27 }
 
-export const THEMES: { id: ThemeId; name: string; ramp: Ramp }[] = [
-  { id: 'ocean', name: 'Ocean', ramp: { 50: '#eef1ff', 100: '#dde3ff', 200: '#c0cbff', 300: '#94a6ff', 400: '#6c8cff', 500: '#4f6bfa', 600: '#3a4bef', 700: '#2f3ad3', 800: '#2932aa', 900: '#283186' } },
-  { id: 'violet', name: 'Violet', ramp: { 50: '#f5f3ff', 100: '#ede9fe', 200: '#ddd6fe', 300: '#c4b5fd', 400: '#a78bfa', 500: '#8b5cf6', 600: '#7c3aed', 700: '#6d28d9', 800: '#5b21b6', 900: '#4c1d95' } },
-  { id: 'emerald', name: 'Emerald', ramp: { 50: '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0', 300: '#6ee7b7', 400: '#34d399', 500: '#10b981', 600: '#059669', 700: '#047857', 800: '#065f46', 900: '#064e3b' } },
-  { id: 'rose', name: 'Rose', ramp: { 50: '#fff1f2', 100: '#ffe4e6', 200: '#fecdd3', 300: '#fda4af', 400: '#fb7185', 500: '#f43f5e', 600: '#e11d48', 700: '#be123c', 800: '#9f1239', 900: '#881337' } },
-  { id: 'amber', name: 'Amber', ramp: { 50: '#fffbeb', 100: '#fef3c7', 200: '#fde68a', 300: '#fcd34d', 400: '#fbbf24', 500: '#f59e0b', 600: '#d97706', 700: '#b45309', 800: '#92400e', 900: '#78350f' } },
-  { id: 'cyan', name: 'Cyan', ramp: { 50: '#ecfeff', 100: '#cffafe', 200: '#a5f3fc', 300: '#67e8f9', 400: '#22d3ee', 500: '#06b6d4', 600: '#0891b2', 700: '#0e7490', 800: '#155e75', 900: '#164e63' } },
-  { id: 'pink', name: 'Pink', ramp: { 50: '#fdf2f8', 100: '#fce7f3', 200: '#fbcfe8', 300: '#f9a8d4', 400: '#f472b6', 500: '#ec4899', 600: '#db2777', 700: '#be185d', 800: '#9d174d', 900: '#831843' } },
-  { id: 'teal', name: 'Teal', ramp: { 50: '#f0fdfa', 100: '#ccfbf1', 200: '#99f6e4', 300: '#5eead4', 400: '#2dd4bf', 500: '#14b8a6', 600: '#0d9488', 700: '#0f766e', 800: '#115e59', 900: '#134e4a' } },
-  { id: 'orange', name: 'Orange', ramp: { 50: '#fff7ed', 100: '#ffedd5', 200: '#fed7aa', 300: '#fdba74', 400: '#fb923c', 500: '#f97316', 600: '#ea580c', 700: '#c2410c', 800: '#9a3412', 900: '#7c2d12' } },
-  { id: 'sky', name: 'Sky', ramp: { 50: '#f0f9ff', 100: '#e0f2fe', 200: '#bae6fd', 300: '#7dd3fc', 400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7', 700: '#0369a1', 800: '#075985', 900: '#0c4a6e' } },
-  { id: 'crimson', name: 'Crimson', ramp: { 50: '#fef2f2', 100: '#fee2e2', 200: '#fecaca', 300: '#fca5a5', 400: '#f87171', 500: '#ef4444', 600: '#dc2626', 700: '#b91c1c', 800: '#991b1b', 900: '#7f1d1d' } },
+function hslToHex(h: number, s: number, l: number): string {
+  s /= 100; l /= 100
+  const k = (n: number) => (n + h / 30) % 12
+  const a = s * Math.min(l, 1 - l)
+  const f = (n: number) => {
+    const c = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
+    return Math.round(255 * c).toString(16).padStart(2, '0')
+  }
+  return `#${f(0)}${f(8)}${f(4)}`
+}
+
+// build a 50→900 ramp from a hue + base saturation (slightly desaturate the
+// palest tints, keep the darks rich)
+function ramp(h: number, s: number): Ramp {
+  const out = {} as Ramp
+  for (const shade of SHADES) {
+    const sat = shade <= 100 ? s * 0.82 : shade >= 800 ? Math.min(s * 1.05, 92) : s
+    out[shade] = hslToHex(h, sat, LIGHT[shade])
+  }
+  return out
+}
+
+// Ocean = the app's original brand ramp (kept exact so existing users' look
+// doesn't shift); everything else is generated from a hue + saturation.
+const OCEAN: Ramp = { 50: '#eef1ff', 100: '#dde3ff', 200: '#c0cbff', 300: '#94a6ff', 400: '#6c8cff', 500: '#4f6bfa', 600: '#3a4bef', 700: '#2f3ad3', 800: '#2932aa', 900: '#283186' }
+
+const HUES: [string, number, number][] = [
+  ['Blue', 218, 82], ['Sky', 200, 85], ['Azure', 208, 82], ['Sapphire', 224, 70], ['Royal', 234, 66],
+  ['Indigo', 245, 62], ['Denim', 214, 46], ['Violet', 262, 68], ['Purple', 275, 62], ['Grape', 285, 58],
+  ['Lavender', 258, 46], ['Amethyst', 270, 54], ['Magenta', 310, 70], ['Fuchsia', 322, 76], ['Orchid', 300, 54],
+  ['Plum', 295, 40], ['Pink', 330, 80], ['Rose', 345, 80], ['Blush', 350, 56], ['Cherry', 352, 72],
+  ['Crimson', 348, 76], ['Ruby', 342, 66], ['Red', 4, 78], ['Scarlet', 10, 82], ['Coral', 14, 78],
+  ['Salmon', 12, 60], ['Vermilion', 16, 82], ['Orange', 26, 88], ['Tangerine', 30, 90], ['Peach', 24, 62],
+  ['Apricot', 34, 78], ['Amber', 40, 90], ['Honey', 44, 82], ['Gold', 46, 76], ['Yellow', 52, 86],
+  ['Chartreuse', 78, 68], ['Lime', 92, 66], ['Olive', 70, 40], ['Green', 135, 58], ['Emerald', 152, 62],
+  ['Forest', 145, 44], ['Fern', 120, 50], ['Mint', 158, 52], ['Jade', 162, 55], ['Seafoam', 168, 46],
+  ['Teal', 176, 62], ['Turquoise', 182, 58], ['Aqua', 186, 66], ['Cyan', 190, 72], ['Cerulean', 196, 70],
+  ['Slate', 220, 15], ['Steel', 210, 20], ['Mocha', 25, 28], ['Bronze', 34, 42], ['Sienna', 18, 48], ['Rust', 16, 56],
 ]
+
+export type ThemeEntry = { id: string; name: string; ramp: Ramp }
+
+export const THEMES: ThemeEntry[] = [
+  { id: 'ocean', name: 'Ocean', ramp: OCEAN },
+  ...HUES.map(([name, h, s]): ThemeEntry => ({ id: name.toLowerCase(), name, ramp: ramp(h, s) })),
+]
+
+export type ThemeId = string
 
 const STORAGE_KEY = 'fl-theme'
 
 export function getStoredTheme(): ThemeId {
-  const id = localStorage.getItem(STORAGE_KEY) as ThemeId | null
-  return THEMES.some((t) => t.id === id) ? (id as ThemeId) : 'ocean'
+  const id = localStorage.getItem(STORAGE_KEY)
+  return id && THEMES.some((t) => t.id === id) ? id : 'ocean'
 }
 
 export function applyTheme(id: ThemeId) {
