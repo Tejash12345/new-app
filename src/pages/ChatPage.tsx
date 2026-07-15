@@ -1301,7 +1301,20 @@ function FriendsChat() {
         </GlassCard>
       </div>
 
-      <GlassCard className={cn('relative flex flex-col lg:col-span-2 h-[calc(100dvh-8rem)] lg:h-[40rem]', !active && 'hidden lg:flex')}>
+      {/* WhatsApp-style: an open conversation takes over the FULL screen on
+          mobile — covering the topbar, page header, bottom nav and the floating
+          Leo button. z-[60] sits under calls / watch-together / lightbox /
+          link modal so those still layer on top. On desktop it stays an in-grid
+          40rem card beside the friends list. */}
+      <GlassCard className={cn(
+        'relative flex flex-col lg:col-span-2',
+        active
+          // !fixed (important) beats the base `relative`; lg:!relative restores
+          // the in-grid card on desktop (relative keeps ChatBackground + the
+          // header dropdown menus anchored to the card).
+          ? '!fixed inset-0 z-[60] !rounded-none !px-3 !pt-[calc(0.75rem+env(safe-area-inset-top))] !pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:!relative lg:z-auto lg:h-[40rem] lg:!rounded-3xl lg:!p-5'
+          : 'hidden lg:flex lg:h-[40rem]',
+      )}>
         {!active ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <div className="text-4xl">💬</div>
@@ -1312,7 +1325,11 @@ function FriendsChat() {
             <ChatBackground bg={chatBg} />
             <div className="relative z-10 flex min-h-0 flex-1 flex-col">
             <div className="mb-3 flex items-center gap-2 border-b border-slate-200/50 dark:border-white/10 pb-3 sm:gap-3">
-              <button onClick={() => setActive(null)} className="shrink-0 text-slate-500 lg:hidden"><ArrowLeft size={20} /></button>
+              {/* WhatsApp-style back arrow — returns to the conversation list */}
+              <button onClick={() => setActive(null)} aria-label="Back to chats"
+                className="-ml-1 shrink-0 rounded-full p-2 text-slate-600 transition hover:bg-slate-500/10 active:scale-95 dark:text-slate-300 lg:hidden">
+                <ArrowLeft size={22} />
+              </button>
               {(() => {
                 // use the freshest record (friends reload every 15s) so last_seen is current
                 const fresh = friends.find((f) => f.friend_id === active.friend_id) ?? active
