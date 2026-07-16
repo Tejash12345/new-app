@@ -149,6 +149,10 @@ export function startLionRun3D(
   const key = new THREE.DirectionalLight(0xffd9a0, 0.9)
   key.position.set(6, 14, 8)
   scene.add(key)
+  // cool rim/back light — carves a cinematic edge on the lion for a realer look
+  const rim = new THREE.DirectionalLight(0x9fc0ff, 0.6)
+  rim.position.set(-5, 7, -12)
+  scene.add(rim)
 
   // ---------- road ----------
   const road = new THREE.Mesh(
@@ -372,6 +376,24 @@ export function startLionRun3D(
       cleanup: () => { scene.remove(sp); sp.material.dispose() },
     })
   }
+  // a soft dust puff kicked up behind the running lion (drifts back + up, fades)
+  function dustPuff(x: number) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex('rgba(196,168,128,0.55)'), transparent: true, depthWrite: false, opacity: 0.5 }))
+    sp.position.set(x + (rand() - 0.5) * 0.6, 0.3, 1.1)
+    scene.add(sp)
+    let t = 0
+    fxList.push({
+      update: (dt2) => {
+        t += dt2
+        sp.position.z += 5 * dt2
+        sp.position.y += 0.5 * dt2
+        sp.scale.setScalar(0.7 + t * 3.2)
+        sp.material.opacity = Math.max(0, 0.5 - t / 0.4)
+        return t < 0.4
+      },
+      cleanup: () => { scene.remove(sp); sp.material.dispose() },
+    })
+  }
   function rocketIn(lane: number, zStop: number, onArrive: () => void) {
     const m = new THREE.Mesh(rocketGeo, rocketMat)
     m.rotation.x = Math.PI / 2
@@ -538,6 +560,7 @@ export function startLionRun3D(
   let slideT = 0
   let combo = 0
   let comboT = 0
+  let dustT = 0 // throttle for the running dust trail
   let fov = 55
   // adaptive: drop pixel ratio if the phone can't hold frame rate
   let slowFrames = 0
@@ -1086,6 +1109,12 @@ export function startLionRun3D(
       ghost.headGroup.rotation.y = Math.PI / 2
       ghostShadow.position.set(ghostX, 0.02, ghostZ)
       if (ghostLabel) ghostLabel.position.set(ghostX, 3.5, ghostZ)
+    }
+
+    // ---- running dust trail (kicked up while grounded) ----
+    if (state === 'run' && lionY < 0.4 && jetT === 0) {
+      dustT -= rawDt
+      if (dustT <= 0) { dustT = 0.1; dustPuff(lionX) }
     }
 
     // ---- animated attack VFX ----
