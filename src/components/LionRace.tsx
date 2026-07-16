@@ -18,7 +18,6 @@ import { X } from 'lucide-react'
 // pull the whole 3D engine into the main bundle); the engine is dynamically
 // imported when a race actually starts, mirroring CityPage.
 import type { Run3DHandle, AttackKind, HudState } from '../game/lionRun3d'
-import { MascotImg } from './ui'
 
 const EMOTES = ['😜', '😂', '🔥', '💪', '😎', '👋', '😱', '🦁']
 
@@ -120,23 +119,27 @@ export function LionRace({
   const myFinal = useRef(0)
   const oppFinal = useRef(0)
   const oppDistRef = useRef(0)
+  const myDistRef = useRef(0)
   const oppSeen = useRef(false)
   const resolvedRef = useRef(false)
   const sendRef = useRef(send)
   sendRef.current = send
 
+  // the FIRST crash ends the race for both — the survivor wins (last lion
+  // standing); if both crash together, the greater distance wins.
   function resolve() {
     if (resolvedRef.current) return
     resolvedRef.current = true
+    if (!myDeadRef.current) myFinal.current = Math.round(myDistRef.current)
     const mine = myFinal.current
     const theirs = oppDeadRef.current ? oppFinal.current : oppDistRef.current
-    setWinner(!oppSeen.current || mine > theirs ? 'me' : mine < theirs ? 'opp' : 'tie')
+    let w: 'me' | 'opp' | 'tie'
+    if (!oppSeen.current) w = 'me' // solo / opponent never joined
+    else if (myDeadRef.current && !oppDeadRef.current) w = 'opp' // I crashed first
+    else if (oppDeadRef.current && !myDeadRef.current) w = 'me' // they crashed first
+    else w = mine > theirs ? 'me' : mine < theirs ? 'opp' : 'tie'
+    setWinner(w)
     setPhase('over')
-  }
-  function maybeResolve() {
-    if (!myDeadRef.current) return
-    if (oppSeen.current && !oppDeadRef.current) return // they're still running — wait
-    resolve()
   }
 
   // build (or rebuild, on rematch) the runner for the current seed. The 3D
@@ -169,6 +172,7 @@ export function LionRace({
         },
         onProgress: (dist, lane, alive) => {
           setMyDist(dist)
+          myDistRef.current = dist
           const now = performance.now()
           if (now - lastSent.current > 90) {
             lastSent.current = now
@@ -180,9 +184,7 @@ export function LionRace({
           myFinal.current = r.distanceM ?? 0
           setMyAlive(false)
           sendRef.current({ a: 'dead', dist: myFinal.current })
-          maybeResolve()
-          // safety: if the opponent goes silent after we die, settle anyway
-          setTimeout(() => resolve(), 8000)
+          resolve() // my crash ends the race for both
         },
       }, { seed: curSeed, race: true, oppName: opp.name, female: femaleRef.current })
       if (!h) { setFailed(true); return }
@@ -226,7 +228,7 @@ export function LionRace({
         oppDistRef.current = p.dist
         setOppAlive(false)
         setOppDist(p.dist)
-        maybeResolve()
+        resolve() // rival crashed → race ends for me too (I win, last standing)
       } else if (p.a === 'rematch') {
         setCurSeed(p.seed)
       } else if (p.a === 'emote') {
@@ -439,20 +441,25 @@ export function LionRace({
             <div className="mt-2 text-2xl font-black text-slate-900 dark:text-white">
               {winner === 'me' ? 'You WIN!' : winner === 'opp' ? `${opp.name.split(' ')[0]} wins` : "It's a tie!"}
             </div>
-            <div className="mt-4 flex items-center justify-center gap-6">
-              <div>
-                <MascotImg className="mx-auto h-8 w-auto" />
-                <div className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-300">You</div>
-                <div className="text-lg font-black text-amber-500">{myFinal.current}m</div>
-              </div>
-              <div className="text-2xl font-black text-slate-300">vs</div>
-              <div>
-                <div className="mx-auto flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold text-white">
-                  {opp.avatarUrl ? <img src={opp.avatarUrl} alt="" className="h-full w-full object-cover" /> : (opp.name || '?').slice(0, 1).toUpperCase()}
+            <div className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              {winner === 'tie' ? 'Both lions fell together' : `${(winner === 'me' ? opp.name.split(' ')[0] : 'You')} crashed first — race over`}
+            </div>
+            {/* ---- leaderboard (both racers, ranked by distance) ---- */}
+            <div className="mt-4 space-y-2">
+              {[
+                { key: 'me', name: 'You', dist: myFinal.current, avatarUrl: me.avatarUrl },
+                { key: 'opp', name: opp.name.split(' ')[0], dist: oppDeadRef.current ? oppFinal.current : Math.round(oppDist), avatarUrl: opp.avatarUrl },
+              ].sort((a, b) => b.dist - a.dist).map((r, i) => (
+                <div key={r.key}
+                  className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 ${i === 0 ? 'bg-amber-400/20 ring-1 ring-amber-400/50' : 'bg-slate-500/10'}`}>
+                  <span className="w-6 text-center text-xl">{i === 0 ? '🥇' : '🥈'}</span>
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold text-white">
+                    {r.avatarUrl ? <img src={r.avatarUrl} alt="" className="h-full w-full object-cover" /> : (r.name || '?').slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1 truncate text-left text-sm font-bold text-slate-900 dark:text-white">{r.name}</div>
+                  <div className={`text-lg font-black tabular-nums ${i === 0 ? 'text-amber-500' : 'text-slate-400'}`}>{r.dist}m</div>
                 </div>
-                <div className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-300">{opp.name.split(' ')[0]}</div>
-                <div className="text-lg font-black text-sky-500">{oppDeadRef.current ? oppFinal.current : Math.round(oppDist)}m</div>
-              </div>
+              ))}
             </div>
             <div className="mt-6 flex gap-2">
               <button onClick={rematch}

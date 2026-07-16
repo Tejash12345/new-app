@@ -884,9 +884,9 @@ export function startLionRun3D(
           cb.onStage?.(stage, STAGES[stage - 1].name)
           navigator.vibrate?.([30, 30, 30])
         }
-        // ramps higher + faster the further you run (the longer you survive,
-        // the more it accelerates) — tops out fast enough to feel frantic
-        speed = Math.min(48, 16 + (stage - 1) * 4.2 + elapsed * 0.45)
+        // keeps accelerating the further/longer you run — noticeably faster
+        // deep into a run (per-stage jump + a steady time ramp), capped high
+        speed = Math.min(54, 16 + (stage - 1) * 4.8 + elapsed * 0.55)
         if (stunT > 0) stunT = Math.max(0, stunT - dt)
       }
       // boost pad speeds you up; a bolt/freeze stun drags you down
