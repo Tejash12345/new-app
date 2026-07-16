@@ -45,6 +45,7 @@ export type TgPayload = {
   playing?: boolean
   t?: number
   at?: number
+  hard?: boolean  // 'state' — a real user pause/play/seek → apply EXACTLY + instantly (no drift tolerance)
   e?: string
   items?: QueueItem[]
   item?: QueueItem
@@ -357,12 +358,13 @@ export function TogetherOverlay({
     sendTg({ a: 'state', playing, t, at: Date.now() })
   }, [sendTg])
 
-  /** A REAL user action on our transport — always broadcasts, no echo guards. */
+  /** A REAL user action on our transport — always broadcasts (hard = apply
+   *  exactly + instantly on the partner), no echo guards. */
   function userAction(playing: boolean, t: number) {
     expectedEcho.current = null
     applyingRemote.current = 0
     iDrive.current = true
-    sendTg({ a: 'state', playing, t, at: Date.now() })
+    sendTg({ a: 'state', playing, t, at: Date.now(), hard: true })
   }
 
   // ---- the shared Up-Next queue ----
@@ -525,13 +527,19 @@ export function TogetherOverlay({
       if (!api.ready) return
       const localT = api.t()
       const localPlaying = api.playing()
-      // already aligned → touch nothing (re-applying caused stutter)
-      if (localPlaying === !!p.playing && Math.abs(localT - expected) < DRIFT_S) return
+      // a HARD event = a deliberate pause/play/seek → match EXACTLY, right now,
+      // with no drift tolerance (that tolerance is only for the passive
+      // heartbeat, so buffering jitter isn't chased). This is the instant sync.
+      const hard = !!p.hard
+      // already aligned → touch nothing (re-applying caused stutter) — but a
+      // hard action always applies precisely
+      if (!hard && localPlaying === !!p.playing && Math.abs(localT - expected) < DRIFT_S) return
       applyingRemote.current = Date.now() + ECHO_MS
       if (localPlaying !== !!p.playing) expectEcho(!!p.playing)
-      // land slightly AHEAD when catching up so buffering doesn't leave us behind
-      const target = expected + (p.playing ? 1 : 0)
-      if (Math.abs(localT - expected) >= DRIFT_S) api.seek(target)
+      // land slightly AHEAD when catching up so buffering doesn't leave us
+      // behind; a hard action lands right on the mark (tiny lead if playing)
+      const target = expected + (p.playing ? (hard ? 0.25 : 1) : 0)
+      if (hard || Math.abs(localT - expected) >= DRIFT_S) api.seek(target)
       if (p.playing) api.play()
       else api.pause()
     })
