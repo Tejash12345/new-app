@@ -25,6 +25,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { buildLion, setLionFemale } from './lionModel'
+import { skinById } from '../lib/lionSkins'
 import type { RunResult } from './lionRun'
 
 export type AttackKind = 'rocket' | 'bolt' | 'fire' | 'freeze' | 'tornado'
@@ -35,10 +36,12 @@ export type Run3DHandle = {
   injectAttack: (kind: AttackKind) => void
   // Asphalt-Nitro-style rival: show the opponent's lion racing in this scene,
   // placed from their broadcast distance/lane; and a launch VFX when I attack
-  setGhost: (distanceM: number, lane: number, alive: boolean, female?: boolean) => void
+  setGhost: (distanceM: number, lane: number, alive: boolean, female?: boolean, skin?: string) => void
   fireFx: (kind: AttackKind) => void
   // switch MY lion between lion / lioness live (from the race gender toggle)
   setSelfFemale: (female: boolean) => void
+  // change MY lion's skin live (recolor + signature trail)
+  setSkin: (skinId: string) => void
 }
 export type Run3DOpts = {
   // a shared seed makes the obstacle/orb track identical on both racers'
@@ -50,6 +53,8 @@ export type Run3DOpts = {
   oppName?: string
   // render the player's runner as a lioness (no mane + a flower)
   female?: boolean
+  // cosmetic skin id (recolor + trail) — see lib/lionSkins
+  skin?: string
 }
 
 type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack' | 'gate'; z: number; alive: boolean; passed?: boolean }
@@ -292,9 +297,11 @@ export function startLionRun3D(
   const rig = buildLion({ female: opts.female })
   rig.group.rotation.y = Math.PI / 2 // face down the road (-z)
   rig.group.scale.setScalar(0.5)
-  rig.maneMat.color.set(0xffb454)
+  const mySkin = skinById(opts.skin)
+  rig.maneMat.color.setHex(mySkin.mane)
   rig.maneMat.emissiveIntensity = 0.35
-  rig.bodyMat.color.set(0x3a2410)
+  rig.bodyMat.color.setHex(mySkin.body)
+  let myTrail: string | null = mySkin.trail // skin's signature glow trail
   scene.add(rig.group)
   const shadow = new THREE.Mesh(
     track(new THREE.CircleGeometry(1.1, 16)),
@@ -305,11 +312,16 @@ export function startLionRun3D(
   scene.add(shadow)
 
   // ---------- opponent "ghost" lion (race) — placed from their live state ----------
+  // the rival renders as a REAL lion (not a tinted ghost) — a normal lion by
+  // default, then recoloured to their actual skin when their state arrives.
+  // The floating name tag + position are what distinguish it from you.
   const ghost = buildLion()
   ghost.group.rotation.y = Math.PI / 2
   ghost.group.scale.setScalar(0.5)
-  ghost.maneMat.color.set(0x3ad6ff) // cool cyan so the rival reads instantly
-  ghost.bodyMat.color.set(0x14384a)
+  const gSkin = skinById('classic')
+  ghost.maneMat.color.setHex(gSkin.mane)
+  ghost.maneMat.emissiveIntensity = 0.35
+  ghost.bodyMat.color.setHex(gSkin.body)
   ghost.group.visible = false
   scene.add(ghost.group)
   const ghostShadow = new THREE.Mesh(
@@ -346,6 +358,7 @@ export function startLionRun3D(
   let ghostAlive = false
   let ghostSeen = false
   let ghostFemale = false
+  let ghostSkinId = ''
   let ghostX = 0
   let ghostZ = -8
 
@@ -390,6 +403,24 @@ export function startLionRun3D(
         sp.scale.setScalar(0.7 + t * 3.2)
         sp.material.opacity = Math.max(0, 0.5 - t / 0.4)
         return t < 0.4
+      },
+      cleanup: () => { scene.remove(sp); sp.material.dispose() },
+    })
+  }
+  // the skin's signature glow trail — an additive streak dropped at the lion
+  function trailPuff(x: number, y: number, color: string) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(color), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+    sp.position.set(x, y, 0.4)
+    sp.scale.setScalar(1.5)
+    scene.add(sp)
+    let t = 0
+    fxList.push({
+      update: (dt2) => {
+        t += dt2
+        sp.position.z += 7 * dt2
+        sp.scale.setScalar(1.5 - t * 1.8)
+        sp.material.opacity = Math.max(0, 1 - t / 0.35)
+        return t < 0.35
       },
       cleanup: () => { scene.remove(sp); sp.material.dispose() },
     })
@@ -561,6 +592,7 @@ export function startLionRun3D(
   let combo = 0
   let comboT = 0
   let dustT = 0 // throttle for the running dust trail
+  let trailT = 0 // throttle for the skin's signature glow trail
   let fov = 55
   // adaptive: drop pixel ratio if the phone can't hold frame rate
   let slowFrames = 0
@@ -708,7 +740,7 @@ export function startLionRun3D(
     })
     navigator.vibrate?.(15)
   }
-  function setGhost(distanceM: number, lane2: number, alive: boolean, female?: boolean) {
+  function setGhost(distanceM: number, lane2: number, alive: boolean, female?: boolean, skin?: string) {
     ghostSeen = true
     ghostDistM = distanceM
     ghostLane = Math.max(0, Math.min(2, lane2))
@@ -717,8 +749,20 @@ export function startLionRun3D(
       ghostFemale = female
       setLionFemale(ghost, female)
     }
+    if (skin !== undefined && skin !== ghostSkinId) {
+      ghostSkinId = skin
+      const s = skinById(skin)
+      ghost.bodyMat.color.setHex(s.body)
+      ghost.maneMat.color.setHex(s.mane)
+    }
   }
   function setSelfFemale(female: boolean) { setLionFemale(rig, female) }
+  function setSkin(skinId: string) {
+    const s = skinById(skinId)
+    rig.bodyMat.color.setHex(s.body)
+    rig.maneMat.color.setHex(s.mane)
+    myTrail = s.trail
+  }
 
   // ---------- mobile-first input ----------
   // Swipes trigger mid-gesture the moment the threshold is crossed; taps
@@ -1116,6 +1160,11 @@ export function startLionRun3D(
       dustT -= rawDt
       if (dustT <= 0) { dustT = 0.1; dustPuff(lionX) }
     }
+    // ---- skin's signature glow trail (streams behind the lion at any height) ----
+    if (state === 'run' && myTrail) {
+      trailT -= rawDt
+      if (trailT <= 0) { trailT = 0.05; trailPuff(lionX, lionY + 0.9, myTrail) }
+    }
 
     // ---- animated attack VFX ----
     for (let i = fxList.length - 1; i >= 0; i--) {
@@ -1203,5 +1252,6 @@ export function startLionRun3D(
     setGhost,
     fireFx,
     setSelfFemale,
+    setSkin,
   }
 }

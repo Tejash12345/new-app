@@ -18,6 +18,7 @@ import { X } from 'lucide-react'
 // pull the whole 3D engine into the main bundle); the engine is dynamically
 // imported when a race actually starts, mirroring CityPage.
 import type { Run3DHandle, AttackKind, HudState } from '../game/lionRun3d'
+import { LION_SKINS } from '../lib/lionSkins'
 
 const EMOTES = ['😜', '😂', '🔥', '💪', '😎', '👋', '😱', '🦁']
 
@@ -31,7 +32,7 @@ const CONFETTI = Array.from({ length: 24 }, (_, i) => ({
 }))
 
 export type RacePayload =
-  | { a: 'state'; from: string; dist: number; lane: number; alive: boolean; female?: boolean }
+  | { a: 'state'; from: string; dist: number; lane: number; alive: boolean; female?: boolean; skin?: string }
   | { a: 'attack'; from: string; kind: AttackKind }
   | { a: 'dead'; from: string; dist: number }
   | { a: 'rematch'; from: string; seed: number }
@@ -111,6 +112,12 @@ export function LionRace({
   })
   const femaleRef = useRef(myFemale)
   femaleRef.current = myFemale
+  // cosmetic lion skin (persisted) — recolor + signature glow trail
+  const [mySkin, setMySkin] = useState(() => {
+    try { return localStorage.getItem('fl-lion-skin') || 'classic' } catch { return 'classic' }
+  })
+  const skinRef = useRef(mySkin)
+  skinRef.current = mySkin
 
   const handleRef = useRef<Run3DHandle | null>(null)
   const lastSent = useRef(0)
@@ -176,7 +183,7 @@ export function LionRace({
           const now = performance.now()
           if (now - lastSent.current > 90) {
             lastSent.current = now
-            sendRef.current({ a: 'state', dist: Math.round(dist), lane, alive, female: femaleRef.current })
+            sendRef.current({ a: 'state', dist: Math.round(dist), lane, alive, female: femaleRef.current, skin: skinRef.current })
           }
         },
         onOver: (r) => {
@@ -186,7 +193,7 @@ export function LionRace({
           sendRef.current({ a: 'dead', dist: myFinal.current })
           resolve() // my crash ends the race for both
         },
-      }, { seed: curSeed, race: true, oppName: opp.name, female: femaleRef.current })
+      }, { seed: curSeed, race: true, oppName: opp.name, female: femaleRef.current, skin: skinRef.current })
       if (!h) { setFailed(true); return }
       handle = h
       handleRef.current = h
@@ -217,7 +224,7 @@ export function LionRace({
         oppDistRef.current = p.dist
         setOppDist(p.dist)
         setOppAlive(p.alive)
-        handleRef.current?.setGhost(p.dist, p.lane, p.alive, p.female) // show their lion (or lioness) racing in my scene
+        handleRef.current?.setGhost(p.dist, p.lane, p.alive, p.female, p.skin) // show their lion (skin/lioness) racing in my scene
       } else if (p.a === 'attack') {
         handleRef.current?.injectAttack(p.kind)
         setFlash(p.kind)
@@ -268,6 +275,12 @@ export function LionRace({
     femaleRef.current = nx
     try { localStorage.setItem('fl-lioness', nx ? '1' : '0') } catch { /* private mode */ }
     handleRef.current?.setSelfFemale(nx)
+  }
+  function chooseSkin(id: string) {
+    setMySkin(id)
+    skinRef.current = id
+    try { localStorage.setItem('fl-lion-skin', id) } catch { /* private mode */ }
+    handleRef.current?.setSkin(id)
   }
   function rematch() {
     const s = Math.floor(Math.random() * 1e9)
@@ -374,6 +387,18 @@ export function LionRace({
             className="rounded-full bg-white/12 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/20 active:scale-95">
             {myFemale ? '🌸 Racing as Lioness — tap for Lion' : '🦁 Racing as Lion — tap for Lioness'}
           </button>
+          {/* skin picker */}
+          <div className="flex flex-col items-center gap-1.5">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-white/50">Skin</div>
+            <div className="flex flex-wrap items-center justify-center gap-1.5 px-4">
+              {LION_SKINS.map((s) => (
+                <button key={s.id} onClick={() => chooseSkin(s.id)}
+                  className={`flex h-11 w-11 flex-col items-center justify-center rounded-2xl text-lg transition active:scale-90 ${mySkin === s.id ? 'bg-white/25 ring-2 ring-white' : 'bg-white/8'}`}>
+                  {s.emoji}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
