@@ -14,9 +14,17 @@ export type LionRig = {
   legs: THREE.Mesh[]
   bodyMat: THREE.MeshLambertMaterial
   maneMat: THREE.MeshLambertMaterial
+  mane: THREE.Mesh
+  flower: THREE.Group
 }
 
-export function buildLion(): LionRig {
+/** A lioness hides the mane and wears a little flower; a lion shows the mane. */
+export function setLionFemale(rig: LionRig, female: boolean) {
+  rig.mane.visible = !female
+  rig.flower.visible = female
+}
+
+export function buildLion(opts?: { female?: boolean }): LionRig {
   const group = new THREE.Group()
   const bodyMat = new THREE.MeshLambertMaterial({ color: 0xc98a4b, emissive: 0xffa64d, emissiveIntensity: 0 })
   const maneMat = new THREE.MeshLambertMaterial({ color: 0x7a4a1c, emissive: 0xcc7a26, emissiveIntensity: 0 })
@@ -67,7 +75,22 @@ export function buildLion(): LionRig {
   tuft.position.set(-2.45, 2.3, 0)
   group.add(tuft)
 
-  return { group, body, headGroup, tail, legs, bodyMat, maneMat }
+  // a little flower for the lioness (shown when female, hidden for a lion)
+  const flower = new THREE.Group()
+  const petalMat = new THREE.MeshLambertMaterial({ color: 0xff8fc8 })
+  for (let i = 0; i < 5; i++) {
+    const petal = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 5), petalMat)
+    const a = (i / 5) * Math.PI * 2
+    petal.position.set(Math.cos(a) * 0.22, 0, Math.sin(a) * 0.22)
+    flower.add(petal)
+  }
+  flower.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 5), new THREE.MeshLambertMaterial({ color: 0xffe14d })))
+  flower.position.set(0.55, 0.72, 0.32)
+  headGroup.add(flower)
+
+  const rig: LionRig = { group, body, headGroup, tail, legs, bodyMat, maneMat, mane, flower }
+  setLionFemale(rig, !!opts?.female)
+  return rig
 }
 
 /** Dispose every geometry/material under the rig (textures not used). */

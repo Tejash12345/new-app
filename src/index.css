@@ -97,6 +97,13 @@ body {
   .fl-bg-rise, .fl-bg-fall, .fl-bg-3d { animation: none; opacity: 0.22; transform: translateY(0); }
 }
 
+/* ---- win confetti (Lion Race victory) ---- */
+@keyframes fl-confetti {
+  0% { transform: translateY(-12vh) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(96vh) rotate(720deg); opacity: 0; }
+}
+.fl-confetti { top: 0; animation: fl-confetti linear infinite; will-change: transform, opacity; }
+
 /* ---- Apple frosted white cards over colorful aurora ---- */
 .glass {
   background: rgba(255, 255, 255, 0.78);

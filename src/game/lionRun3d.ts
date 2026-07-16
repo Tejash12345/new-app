@@ -21,7 +21,10 @@
  * when WebGL is unavailable so the caller can fall back to the 2D runner.
  */
 import * as THREE from 'three'
-import { buildLion } from './lionModel'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { buildLion, setLionFemale } from './lionModel'
 import type { RunResult } from './lionRun'
 
 export type AttackKind = 'rocket' | 'bolt' | 'fire' | 'freeze' | 'tornado'
@@ -32,8 +35,10 @@ export type Run3DHandle = {
   injectAttack: (kind: AttackKind) => void
   // Asphalt-Nitro-style rival: show the opponent's lion racing in this scene,
   // placed from their broadcast distance/lane; and a launch VFX when I attack
-  setGhost: (distanceM: number, lane: number, alive: boolean) => void
+  setGhost: (distanceM: number, lane: number, alive: boolean, female?: boolean) => void
   fireFx: (kind: AttackKind) => void
+  // switch MY lion between lion / lioness live (from the race gender toggle)
+  setSelfFemale: (female: boolean) => void
 }
 export type Run3DOpts = {
   // a shared seed makes the obstacle/orb track identical on both racers'
@@ -43,11 +48,25 @@ export type Run3DOpts = {
   race?: boolean
   // the opponent's name, floated above their ghost lion in a race
   oppName?: string
+  // render the player's runner as a lioness (no mane + a flower)
+  female?: boolean
 }
 
-type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack'; z: number; alive: boolean }
+type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack' | 'gate'; z: number; alive: boolean; passed?: boolean }
 type Orb = { holder: THREE.Group; lane: number; z: number; alive: boolean }
 type Burst = { sprite: THREE.Sprite; t: number }
+// floating pickups: 4 power-ups + a Mario-Kart item box + a ground boost pad
+type PickKind = 'magnet' | 'shield' | 'jet' | 'x2' | 'box' | 'boost'
+type Pickup = { grp: THREE.Group; kind: PickKind; lane: number; z: number; alive: boolean; bob: number }
+// live HUD snapshot for the React layer (power-up timers, combo, shield)
+export type HudState = {
+  score: number
+  coins: number
+  combo: number
+  mult: number
+  shield: boolean
+  powerups: { kind: 'magnet' | 'jet' | 'x2' | 'boost'; tLeft: number }[]
+}
 
 const LANE_X = [-3, 0, 3]
 const STAGE_LEN = 400 // metres per stage
@@ -87,6 +106,10 @@ export function startLionRun3D(
     // race telemetry: fires every frame with live distance/lane/alive so the
     // caller can broadcast it to the opponent (throttled by the caller)
     onProgress?: (distanceM: number, lane: number, alive: boolean) => void
+    // rich HUD: power-up timers, combo streak, shield — for the on-screen HUD
+    onHud?: (h: HudState) => void
+    // Mario-Kart item box grabbed → caller grants a random weapon (race)
+    onItemBox?: () => void
   },
   opts: Run3DOpts = {},
 ): Run3DHandle | null {
@@ -109,6 +132,16 @@ export function startLionRun3D(
 
   const disposables: { dispose: () => void }[] = []
   const track = <T extends { dispose: () => void }>(x: T): T => { disposables.push(x); return x }
+
+  // ---------- bloom post-processing (cinematic neon glow on lights/orbs/FX) ----------
+  let composer: EffectComposer | null = null
+  let bloomOn = false
+  try {
+    composer = new EffectComposer(renderer)
+    composer.addPass(new RenderPass(scene, camera))
+    composer.addPass(new UnrealBloomPass(new THREE.Vector2(256, 256), 0.7, 0.6, 0.6))
+    bloomOn = true
+  } catch { composer = null; bloomOn = false }
 
   // ---------- lights (intensities lerp with the stage's day factor) ----------
   const ambient = new THREE.AmbientLight(0x8f86c8, 0.55)
@@ -240,8 +273,19 @@ export function startLionRun3D(
   const rainMat = track(new THREE.PointsMaterial({ color: 0x9db8e8, size: 1.4, transparent: true, opacity: 0, sizeAttenuation: false, depthWrite: false }))
   scene.add(new THREE.Points(rainGeo, rainMat))
 
+  // ---------- speed lines: warp streaks that fade in at high velocity ----------
+  const speedLineMat = track(new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }))
+  const speedLineGeo = track(new THREE.BoxGeometry(0.06, 0.06, 3))
+  const speedLines: THREE.Mesh[] = []
+  for (let i = 0; i < 18; i++) {
+    const m = new THREE.Mesh(speedLineGeo, speedLineMat)
+    m.position.set((i % 2 ? 1 : -1) * (4.5 + (i % 4) * 1.5), 0.8 + (i % 5) * 1.7, -10 - ((i * 5) % 90))
+    scene.add(m)
+    speedLines.push(m)
+  }
+
   // ---------- the runner + grounding blob shadow ----------
-  const rig = buildLion()
+  const rig = buildLion({ female: opts.female })
   rig.group.rotation.y = Math.PI / 2 // face down the road (-z)
   rig.group.scale.setScalar(0.5)
   rig.maneMat.color.set(0xffb454)
@@ -297,6 +341,7 @@ export function startLionRun3D(
   let ghostLane = 1
   let ghostAlive = false
   let ghostSeen = false
+  let ghostFemale = false
   let ghostX = 0
   let ghostZ = -8
 
@@ -375,6 +420,9 @@ export function startLionRun3D(
   const barGeo = track(new THREE.BoxGeometry(2.6, 1, 0.5))
   const wallGeo = track(new THREE.BoxGeometry(2.7, 3.6, 0.7))
   const stackGeo = track(new THREE.BoxGeometry(2.4, 2.4, 1.2))
+  // an overhead gate you SLIDE under (swipe down) — jumping into it = crash
+  const gateGeo = track(new THREE.BoxGeometry(2.7, 0.7, 0.6))
+  const gateMat = track(new THREE.MeshLambertMaterial({ color: 0x2f6f8a, emissive: 0x33d6ff, emissiveIntensity: 0.35 }))
   const obstacles: Obstacle[] = []
 
   const orbGeo = track(new THREE.SphereGeometry(0.32, 10, 8))
@@ -393,14 +441,66 @@ export function startLionRun3D(
     orbs.push({ holder, lane, z, alive: true })
   }
   function spawnObstacle(lane: number, kind: Obstacle['kind'], z: number) {
-    const geo = kind === 'bar' ? barGeo : kind === 'wall' ? wallGeo : stackGeo
-    const mat = kind === 'bar' ? barMat : kind === 'wall' ? wallMat : crateMat
+    const geo = kind === 'bar' ? barGeo : kind === 'wall' ? wallGeo : kind === 'gate' ? gateGeo : stackGeo
+    const mat = kind === 'bar' ? barMat : kind === 'wall' ? wallMat : kind === 'gate' ? gateMat : crateMat
     const mesh = new THREE.Mesh(geo, mat)
-    const y = kind === 'bar' ? 0.5 : kind === 'wall' ? 1.8 : 1.2
+    const y = kind === 'bar' ? 0.5 : kind === 'wall' ? 1.8 : kind === 'gate' ? 2.7 : 1.2
     mesh.position.set(LANE_X[lane], y, z)
     scene.add(mesh)
     obstacles.push({ mesh, lane, kind, z, alive: true })
   }
+
+  // ---------- pickups: power-ups, item boxes, boost pads ----------
+  const emojiCache = new Map<string, THREE.Texture>()
+  function emojiTex(e: string) {
+    let t = emojiCache.get(e)
+    if (t) return t
+    const cv = document.createElement('canvas')
+    cv.width = cv.height = 64
+    const c = cv.getContext('2d')!
+    c.font = '46px serif'; c.textAlign = 'center'; c.textBaseline = 'middle'
+    c.fillText(e, 32, 37)
+    t = track(new THREE.CanvasTexture(cv))
+    t.colorSpace = THREE.SRGBColorSpace
+    emojiCache.set(e, t)
+    return t
+  }
+  const PICK_EMOJI: Record<PickKind, string> = { magnet: '🧲', shield: '🛡️', jet: '🚀', x2: '✨', box: '❓', boost: '⏩' }
+  const PICK_GLOW: Record<PickKind, string> = {
+    magnet: 'rgba(255,90,90,0.9)', shield: 'rgba(90,220,255,0.9)', jet: 'rgba(255,150,60,0.9)',
+    x2: 'rgba(255,214,120,0.95)', box: 'rgba(180,120,255,0.95)', boost: 'rgba(90,240,200,0.95)',
+  }
+  const pickups: Pickup[] = []
+  function spawnPickup(lane: number, kind: PickKind, z: number) {
+    const grp = new THREE.Group()
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(PICK_GLOW[kind]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+    glow.scale.setScalar(kind === 'boost' ? 2.8 : 2.2)
+    grp.add(glow)
+    const icon = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTex(PICK_EMOJI[kind]), transparent: true, depthWrite: false }))
+    icon.scale.setScalar(1.5)
+    grp.add(icon)
+    grp.position.set(LANE_X[lane], kind === 'boost' ? 0.6 : 1.5, z)
+    scene.add(grp)
+    pickups.push({ grp, kind, lane, z, alive: true, bob: rand() * 6 })
+  }
+
+  // ---------- power-up visuals worn by the runner ----------
+  const shieldBubble = new THREE.Mesh(
+    track(new THREE.SphereGeometry(1.9, 18, 12)),
+    track(new THREE.MeshBasicMaterial({ color: 0x5adcff, transparent: true, opacity: 0.2, depthWrite: false })),
+  )
+  shieldBubble.visible = false
+  scene.add(shieldBubble)
+  const magnetRing = new THREE.Mesh(
+    track(new THREE.TorusGeometry(1.7, 0.13, 8, 24)),
+    track(new THREE.MeshBasicMaterial({ color: 0xff5a6e, transparent: true, opacity: 0.7, depthWrite: false })),
+  )
+  magnetRing.rotation.x = -Math.PI / 2
+  magnetRing.visible = false
+  scene.add(magnetRing)
+  const jetFlame = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex('rgba(255,150,60,0.95)'), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+  jetFlame.visible = false
+  scene.add(jetFlame)
   function collectBurst(x: number, y: number, z: number) {
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: orbGlowTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
     sp.position.set(x, y, z)
@@ -429,6 +529,15 @@ export function startLionRun3D(
   let dyingT = 0
   let stage = 1
   let stunT = 0 // seconds of "bolt" stun left (race attack): no steering + slowed
+  // power-up timers (seconds) + one-shot shield + slide + combo streak
+  let magnetT = 0
+  let jetT = 0
+  let x2T = 0
+  let boostT = 0
+  let shield = false
+  let slideT = 0
+  let combo = 0
+  let comboT = 0
   let fov = 55
   // adaptive: drop pixel ratio if the phone can't hold frame rate
   let slowFrames = 0
@@ -466,6 +575,44 @@ export function startLionRun3D(
     if (state !== 'run' || stunT > 0) return
     lane = Math.max(0, Math.min(2, lane + dir))
     navigator.vibrate?.(8)
+  }
+  // swipe DOWN → slide under overhead gates for ~0.6s
+  function slide() {
+    if (state !== 'run' || stunT > 0 || jetT > 0 || slideT > 0) return
+    slideT = 0.6
+    navigator.vibrate?.(8)
+  }
+  // combo streak multiplies coin value (x2 at 10, x3 at 20); the ✨ power-up
+  // stacks on top
+  const comboMult = () => (combo >= 20 ? 3 : combo >= 10 ? 2 : 1)
+  function addCoin(n = 1) {
+    coins += n * (x2T > 0 ? 2 : 1) * comboMult()
+    combo++
+    comboT = 2.5
+  }
+  function activatePickup(kind: PickKind, lane2: number) {
+    navigator.vibrate?.(16)
+    burst(LANE_X[lane2], 1.6, 0, PICK_GLOW[kind], 2.2, 0.45)
+    if (kind === 'magnet') magnetT = 8
+    else if (kind === 'shield') shield = true
+    else if (kind === 'jet') { jetT = 5; jumps = 0 }
+    else if (kind === 'x2') x2T = 10
+    else if (kind === 'boost') { boostT = 1.8; screenFlash(0x5af0c8, 0.15) }
+    else if (kind === 'box') { addCoin(3); cb.onItemBox?.() } // race: grants a random weapon
+  }
+  // weaving past an obstacle one lane over = a near-miss whoosh + bonus
+  function nearMiss(oLane: number) {
+    burst(LANE_X[oLane], 1.5, 0.5, 'rgba(255,255,255,0.9)', 1.4, 0.28)
+    addCoin(1)
+    navigator.vibrate?.(5)
+  }
+  function reportHud() {
+    const pu: HudState['powerups'] = []
+    if (magnetT > 0) pu.push({ kind: 'magnet', tLeft: magnetT })
+    if (jetT > 0) pu.push({ kind: 'jet', tLeft: jetT })
+    if (x2T > 0) pu.push({ kind: 'x2', tLeft: x2T })
+    if (boostT > 0) pu.push({ kind: 'boost', tLeft: boostT })
+    cb.onHud?.({ score: score(), coins, combo, mult: comboMult(), shield, powerups: pu })
   }
   // an attack from the opponent lands on THIS runner (race only), each with a
   // distinct animation
@@ -538,12 +685,17 @@ export function startLionRun3D(
     })
     navigator.vibrate?.(15)
   }
-  function setGhost(distanceM: number, lane2: number, alive: boolean) {
+  function setGhost(distanceM: number, lane2: number, alive: boolean, female?: boolean) {
     ghostSeen = true
     ghostDistM = distanceM
     ghostLane = Math.max(0, Math.min(2, lane2))
     ghostAlive = alive
+    if (female !== undefined && female !== ghostFemale) {
+      ghostFemale = female
+      setLionFemale(ghost, female)
+    }
   }
+  function setSelfFemale(female: boolean) { setLionFemale(rig, female) }
 
   // ---------- mobile-first input ----------
   // Swipes trigger mid-gesture the moment the threshold is crossed; taps
@@ -574,6 +726,9 @@ export function startLionRun3D(
     } else if (dy < -34 && Math.abs(dy) > Math.abs(dx)) {
       startOrJump()
       gestureUsed = true
+    } else if (dy > 34 && Math.abs(dy) > Math.abs(dx)) {
+      slide() // swipe down = slide under gates
+      gestureUsed = true
     }
   }
   function onUp(e: PointerEvent) {
@@ -588,6 +743,7 @@ export function startLionRun3D(
     if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); startOrJump() }
     if (e.code === 'ArrowLeft') { e.preventDefault(); move(-1) }
     if (e.code === 'ArrowRight') { e.preventDefault(); move(1) }
+    if (e.code === 'ArrowDown') { e.preventDefault(); slide() }
   }
   canvas.addEventListener('pointerdown', onDown)
   canvas.addEventListener('pointermove', onMove)
@@ -603,7 +759,7 @@ export function startLionRun3D(
       const sStage = Math.min(STAGES.length, 1 + Math.floor((-z / 4) / STAGE_LEN))
       const roll = rand()
       const freeLanes = [0, 1, 2]
-      if (roll < 0.34) {
+      if (roll < 0.30) {
         const l2 = Math.floor(rand() * 3)
         spawnObstacle(l2, 'bar', z)
         // stage 4+: bars come in pairs across two lanes
@@ -611,7 +767,7 @@ export function startLionRun3D(
           freeLanes.splice(freeLanes.indexOf(l2), 1)
           spawnObstacle(freeLanes[Math.floor(rand() * freeLanes.length)], 'bar', z)
         }
-      } else if (roll < 0.72) {
+      } else if (roll < 0.58) {
         const l2 = Math.floor(rand() * 3)
         spawnObstacle(l2, 'wall', z)
         freeLanes.splice(freeLanes.indexOf(l2), 1)
@@ -621,9 +777,24 @@ export function startLionRun3D(
           spawnObstacle(l3, 'stack', z)
           freeLanes.splice(freeLanes.indexOf(l3), 1)
         }
+      } else if (roll < 0.72 && sStage >= 2) {
+        // overhead gate(s) — SLIDE under them
+        const l2 = Math.floor(rand() * 3)
+        spawnObstacle(l2, 'gate', z)
+        if (sStage >= 3 && rand() < 0.4) {
+          freeLanes.splice(freeLanes.indexOf(l2), 1)
+          spawnObstacle(freeLanes[Math.floor(rand() * freeLanes.length)], 'gate', z)
+        }
       } else {
         const l2 = Math.floor(rand() * 3)
         for (let k = 0; k < 4; k++) spawnOrb(l2, z - k * 2.2)
+      }
+      // occasional pickup: power-up, Mario-Kart item box, or a boost pad
+      if (rand() < 0.16) {
+        const pr = rand()
+        const kind: PickKind = pr < 0.2 ? 'magnet' : pr < 0.38 ? 'shield' : pr < 0.5 ? 'jet'
+          : pr < 0.66 ? 'x2' : pr < 0.84 ? 'boost' : 'box'
+        spawnPickup(Math.floor(rand() * 3), kind, z - 4)
       }
       // deterministic gap in a race (no wall-clock speed term); widen it with
       // track position so the faster later stages stay dodgeable
@@ -644,8 +815,13 @@ export function startLionRun3D(
     spawnWave()
     for (const o of obstacles) {
       if (!o.alive) continue
+      const prevZ = o.z
       o.z += dz
       o.mesh.position.z = o.z
+      if (!o.passed && prevZ < 0 && o.z >= 0) {
+        o.passed = true
+        if (state === 'run' && Math.abs(o.lane - lane) === 1) nearMiss(o.lane)
+      }
       if (o.z > 6) { o.alive = false; scene.remove(o.mesh) }
     }
     for (const orb of orbs) {
@@ -655,9 +831,21 @@ export function startLionRun3D(
       orb.holder.rotation.y = tSec * 3
       if (orb.z > 6) { orb.alive = false; scene.remove(orb.holder) }
     }
+    for (const p of pickups) {
+      if (!p.alive) continue
+      p.z += dz
+      p.grp.position.z = p.z
+      if (p.kind !== 'boost') p.grp.position.y = 1.5 + Math.sin(tSec * 3 + p.bob) * 0.2 // bob
+      p.grp.children[1] && (p.grp.rotation.y = tSec * 2)
+      if (p.z > 6) { p.alive = false; scene.remove(p.grp) }
+    }
     for (const d of dashes) {
       d.position.z += dz
       if (d.position.z > 4) d.position.z -= 24 * 9
+    }
+    for (const sl of speedLines) {
+      sl.position.z += dz * 2.4 // stream past faster than the world for a warp feel
+      if (sl.position.z > 12) sl.position.z -= 100
     }
     towerData.forEach((td) => {
       td.z += dz * 0.92
@@ -701,38 +889,86 @@ export function startLionRun3D(
         speed = Math.min(48, 16 + (stage - 1) * 4.2 + elapsed * 0.45)
         if (stunT > 0) stunT = Math.max(0, stunT - dt)
       }
-      // a bolt attack (race) drags the speed down for its duration
-      const dz = (state === 'run' && stunT > 0 ? speed * 0.32 : speed) * dt
+      // boost pad speeds you up; a bolt/freeze stun drags you down
+      const dz = speed * (state === 'run' && stunT > 0 ? 0.32 : 1) * (boostT > 0 ? 1.6 : 1) * dt
       dist += dz
+      // tick power-up / combo / slide timers
+      if (state === 'run') {
+        if (boostT > 0) boostT = Math.max(0, boostT - dt)
+        if (magnetT > 0) magnetT = Math.max(0, magnetT - dt)
+        if (x2T > 0) x2T = Math.max(0, x2T - dt)
+        if (slideT > 0) slideT = Math.max(0, slideT - dt)
+        if (comboT > 0) { comboT = Math.max(0, comboT - dt); if (comboT === 0) combo = 0 }
+      }
 
-      vy -= 24 * dt
-      lionY = Math.max(0, lionY + vy * dt)
-      if (lionY === 0 && vy < 0) { vy = 0; jumps = 0 }
+      // vertical: the jetpack flies you up (no gravity), else normal jump/gravity
+      if (jetT > 0 && state === 'run') {
+        jetT = Math.max(0, jetT - dt)
+        lionY += (5 - lionY) * Math.min(1, dt * 6)
+        vy = 0
+        jumps = 0
+      } else {
+        vy -= 24 * dt
+        lionY = Math.max(0, lionY + vy * dt)
+        if (lionY === 0 && vy < 0) { vy = 0; jumps = 0 }
+      }
       lionX += (LANE_X[lane] - lionX) * Math.min(1, dt * 11)
 
       scrollWorld(dz, tSec)
 
       if (state === 'run') {
-        // orb pickup
+        // coin orbs — collected in your lane, or reeled in while the magnet's up
         for (const orb of orbs) {
-          if (!orb.alive || Math.abs(orb.z) > 0.9 || orb.lane !== lane || lionY > 2.2) continue
+          if (!orb.alive) continue
+          if (magnetT > 0 && orb.z > -24 && orb.z < 5) {
+            orb.holder.position.x += (lionX - orb.holder.position.x) * Math.min(1, dt * 5)
+          }
+          const inReach = orb.lane === lane || (magnetT > 0 && Math.abs(orb.holder.position.x - lionX) < 1.3)
+          if (Math.abs(orb.z) > 1 || !inReach) continue
           orb.alive = false
           scene.remove(orb.holder)
-          coins++
-          collectBurst(LANE_X[orb.lane], 1.3, 0)
-          navigator.vibrate?.(8)
+          addCoin()
+          collectBurst(lionX, 1.3, 0)
+          navigator.vibrate?.(6)
         }
-        // collision at the lion's plane
-        for (const o of obstacles) {
-          if (!o.alive || Math.abs(o.z) > 0.8 || o.lane !== lane) continue
-          const clears = o.kind === 'bar' ? lionY > 1.05 : o.kind === 'stack' ? lionY > 2.5 : false
-          if (!clears) { crash(); break }
+        // power-ups / item boxes / boost pads — grabbed by lane (any height)
+        for (const p of pickups) {
+          if (!p.alive || Math.abs(p.z) > 1.4 || p.lane !== lane) continue
+          p.alive = false
+          scene.remove(p.grp)
+          activatePickup(p.kind, p.lane)
+        }
+        // collisions — the jetpack flies over everything; a shield eats one hit;
+        // bars = jump, gates = slide, walls/stacks = dodge
+        if (jetT === 0) {
+          for (const o of obstacles) {
+            if (!o.alive || Math.abs(o.z) > 0.8 || o.lane !== lane) continue
+            const clears = o.kind === 'bar' ? lionY > 1.05
+              : o.kind === 'stack' ? lionY > 2.5
+              : o.kind === 'gate' ? slideT > 0
+              : false
+            if (!clears) {
+              if (shield) {
+                shield = false
+                o.alive = false
+                scene.remove(o.mesh)
+                burst(lionX, 1.5, 0, 'rgba(90,220,255,0.95)', 3.2, 0.5)
+                screenFlash(0x5adcff, 0.22)
+                shakeT = Math.max(shakeT, 0.3)
+                navigator.vibrate?.(30)
+              } else {
+                crash()
+              }
+              break
+            }
+          }
         }
         const s = score()
         if (s !== shownScore) {
           shownScore = s
           cb.onScore?.(s, coins)
         }
+        reportHud()
         cb.onProgress?.(distM(), lane, true)
       }
     }
@@ -769,6 +1005,11 @@ export function startLionRun3D(
       flashT = Math.max(0, flashT - rawDt)
       scene.background = bgColor.clone().lerp(flashColor, Math.min(0.85, flashT * 2.2))
     }
+    // speed lines fade + stretch with velocity (and blast during a boost pad)
+    const warp = Math.max(0, Math.min(0.7, (speed - 28) / 22)) + (boostT > 0 ? 0.5 : 0)
+    speedLineMat.opacity += (Math.min(0.85, warp) - speedLineMat.opacity) * Math.min(1, rawDt * 5)
+    const stretch = 1 + warp * 4 + (boostT > 0 ? 4 : 0)
+    for (const sl of speedLines) sl.scale.z = stretch
     if (rainMat.opacity > 0.02) {
       const pos = rainGeo.attributes.position
       for (let i = 0; i < pos.count; i++) {
@@ -792,16 +1033,35 @@ export function startLionRun3D(
       }
     }
 
-    // lion pose — gallop, lean into lane changes, tuck in the air
+    // lion pose — gallop, lean into lane changes, tuck in the air, flatten to slide
+    const sliding = slideT > 0
     rig.group.position.set(lionX, lionY, 0)
     rig.group.rotation.z = (LANE_X[lane] - lionX) * -0.06
     const airborne = lionY > 0.05
     rig.legs.forEach((leg, i) => {
       leg.rotation.x = airborne ? 0.5 : Math.sin(tSec * 14 + (i % 2) * Math.PI) * 0.7
     })
-    rig.body.scale.y = 1 + (airborne ? 0.04 : Math.sin(tSec * 14) * 0.04)
+    rig.body.scale.y = sliding ? 0.5 : 1 + (airborne ? 0.04 : Math.sin(tSec * 14) * 0.04)
     rig.tail.rotation.x = Math.sin(tSec * 8) * 0.3
     rig.headGroup.rotation.y = Math.PI / 2
+    // power-up auras + x2 mane glow
+    shieldBubble.visible = shield
+    if (shield) {
+      shieldBubble.position.set(lionX, lionY + 0.9, 0)
+      ;(shieldBubble.material as THREE.MeshBasicMaterial).opacity = 0.16 + Math.sin(tSec * 6) * 0.06
+    }
+    magnetRing.visible = magnetT > 0
+    if (magnetT > 0) {
+      magnetRing.position.set(lionX, 0.3, 0)
+      magnetRing.rotation.z = tSec * 3
+      magnetRing.scale.setScalar(1 + Math.sin(tSec * 8) * 0.12)
+    }
+    jetFlame.visible = jetT > 0
+    if (jetT > 0) {
+      jetFlame.position.set(lionX, lionY - 0.6, 0.2)
+      jetFlame.scale.setScalar(1.8 + Math.sin(tSec * 30) * 0.5)
+    }
+    rig.maneMat.emissiveIntensity = x2T > 0 ? 0.9 : 0.35
     // grounding shadow shrinks while airborne
     shadow.position.x = lionX
     const sh = Math.max(0.35, 1 - lionY * 0.28)
@@ -836,7 +1096,7 @@ export function startLionRun3D(
     // camera: fly-around swoop into a speed-pumped chase cam with crash shake
     shakeT = Math.max(0, shakeT - rawDt)
     const shake = shakeT > 0 ? Math.sin(tSec * 70) * shakeT * 0.6 : 0
-    const targetFov = 55 + Math.max(0, speed - 16) * 0.5
+    const targetFov = 55 + Math.max(0, speed - 16) * 0.5 + (boostT > 0 ? 12 : 0)
     fov += (Math.min(70, targetFov) - fov) * Math.min(1, rawDt * 3)
     if (Math.abs(camera.fov - fov) > 0.1) {
       camera.fov = fov
@@ -863,16 +1123,19 @@ export function startLionRun3D(
       if (++slowFrames > 60) {
         loweredDpr = true
         renderer.setPixelRatio(1)
+        bloomOn = false // drop bloom too on weak phones
       }
     } else if (slowFrames > 0 && rawDt < 0.03) slowFrames--
 
-    renderer.render(scene, camera)
+    if (bloomOn && composer) composer.render()
+    else renderer.render(scene, camera)
   }
 
   function resize() {
     const rect = canvas.parentElement?.getBoundingClientRect()
     if (!rect || rect.width === 0) return
     renderer.setSize(rect.width, rect.height, false)
+    composer?.setSize(rect.width, rect.height)
     camera.aspect = rect.width / rect.height
     camera.updateProjectionMatrix()
   }
@@ -903,11 +1166,13 @@ export function startLionRun3D(
         m.geometry?.dispose()
       })
       disposables.forEach((d) => d.dispose())
+      composer?.dispose()
       renderer.dispose()
     },
     begin,
     injectAttack,
     setGhost,
     fireFx,
+    setSelfFemale,
   }
 }

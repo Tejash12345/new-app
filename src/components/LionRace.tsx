@@ -17,14 +17,26 @@ import { X } from 'lucide-react'
 // type-only import so three.js stays in the lazy chunk (a runtime import would
 // pull the whole 3D engine into the main bundle); the engine is dynamically
 // imported when a race actually starts, mirroring CityPage.
-import type { Run3DHandle, AttackKind } from '../game/lionRun3d'
+import type { Run3DHandle, AttackKind, HudState } from '../game/lionRun3d'
 import { MascotImg } from './ui'
 
+const EMOTES = ['😜', '😂', '🔥', '💪', '😎', '👋', '😱', '🦁']
+
+// deterministic confetti pieces (no Math.random during render)
+const CONFETTI = Array.from({ length: 24 }, (_, i) => ({
+  left: (i * 41) % 100,
+  delay: (i % 8) * 0.14,
+  dur: 1.7 + (i % 5) * 0.35,
+  color: ['#ff5f9e', '#ffd23f', '#41d4ff', '#7c5cff', '#33d9b2', '#ff6f61'][i % 6],
+  size: 6 + (i % 4) * 3,
+}))
+
 export type RacePayload =
-  | { a: 'state'; from: string; dist: number; lane: number; alive: boolean }
+  | { a: 'state'; from: string; dist: number; lane: number; alive: boolean; female?: boolean }
   | { a: 'attack'; from: string; kind: AttackKind }
   | { a: 'dead'; from: string; dist: number }
   | { a: 'rematch'; from: string; seed: number }
+  | { a: 'emote'; from: string; e: string }
 
 // Omit distributes over each union member (plain Omit<Union,K> would collapse
 // to just the shared keys), so the outbound (no `from`) payload keeps its shape
@@ -86,6 +98,20 @@ export function LionRace({
   const [failed, setFailed] = useState(false)
   const [ready, setReady] = useState(false) // engine (lazy chunk) has booted
   const [stageName, setStageName] = useState('MIDNIGHT')
+  const [hud, setHud] = useState<HudState | null>(null) // power-ups / combo / shield
+  const [freeWeapon, setFreeWeapon] = useState<AttackKind | null>(null) // from an item box
+  const [emotePop, setEmotePop] = useState<{ e: string; mine: boolean } | null>(null)
+  const [emoteOpen, setEmoteOpen] = useState(false)
+  // lion vs lioness — persisted, seeded from the Diet gender choice if set
+  const [myFemale, setMyFemale] = useState(() => {
+    try {
+      const v = localStorage.getItem('fl-lioness')
+      if (v != null) return v === '1'
+      return JSON.parse(localStorage.getItem('diet-plan') ?? '{}')?.gender === 'Female'
+    } catch { return false }
+  })
+  const femaleRef = useRef(myFemale)
+  femaleRef.current = myFemale
 
   const handleRef = useRef<Run3DHandle | null>(null)
   const lastSent = useRef(0)
@@ -135,12 +161,18 @@ export function LionRace({
         onStart: () => {},
         onScore: (_s, coins) => setMyCoins(coins),
         onStage: (_n, name) => setStageName(name),
+        onHud: (h2) => setHud(h2),
+        onItemBox: () => {
+          // Mario-Kart: an item box grants ONE free random weapon (any range, no cost)
+          const k = ATTACKS[Math.floor(Math.random() * ATTACKS.length)].kind
+          setFreeWeapon(k)
+        },
         onProgress: (dist, lane, alive) => {
           setMyDist(dist)
           const now = performance.now()
           if (now - lastSent.current > 90) {
             lastSent.current = now
-            sendRef.current({ a: 'state', dist: Math.round(dist), lane, alive })
+            sendRef.current({ a: 'state', dist: Math.round(dist), lane, alive, female: femaleRef.current })
           }
         },
         onOver: (r) => {
@@ -152,7 +184,7 @@ export function LionRace({
           // safety: if the opponent goes silent after we die, settle anyway
           setTimeout(() => resolve(), 8000)
         },
-      }, { seed: curSeed, race: true, oppName: opp.name })
+      }, { seed: curSeed, race: true, oppName: opp.name, female: femaleRef.current })
       if (!h) { setFailed(true); return }
       handle = h
       handleRef.current = h
@@ -183,7 +215,7 @@ export function LionRace({
         oppDistRef.current = p.dist
         setOppDist(p.dist)
         setOppAlive(p.alive)
-        handleRef.current?.setGhost(p.dist, p.lane, p.alive) // show their lion racing in my scene
+        handleRef.current?.setGhost(p.dist, p.lane, p.alive, p.female) // show their lion (or lioness) racing in my scene
       } else if (p.a === 'attack') {
         handleRef.current?.injectAttack(p.kind)
         setFlash(p.kind)
@@ -197,6 +229,9 @@ export function LionRace({
         maybeResolve()
       } else if (p.a === 'rematch') {
         setCurSeed(p.seed)
+      } else if (p.a === 'emote') {
+        setEmotePop({ e: p.e, mine: false })
+        setTimeout(() => setEmotePop(null), 1800)
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -210,6 +245,27 @@ export function LionRace({
     sendRef.current({ a: 'attack', kind: atk.kind })
     handleRef.current?.fireFx(atk.kind) // launch a projectile at the rival's ghost
     navigator.vibrate?.(20)
+  }
+  function fireFree() {
+    // an item-box weapon fires for free, ignoring range/coins
+    if (!freeWeapon || !myAlive || !oppAlive || phase !== 'racing') return
+    sendRef.current({ a: 'attack', kind: freeWeapon })
+    handleRef.current?.fireFx(freeWeapon)
+    setFreeWeapon(null)
+    navigator.vibrate?.(20)
+  }
+  function sendEmote(e: string) {
+    setEmoteOpen(false)
+    setEmotePop({ e, mine: true })
+    setTimeout(() => setEmotePop(null), 1800)
+    sendRef.current({ a: 'emote', e })
+  }
+  function toggleGender() {
+    const nx = !myFemale
+    setMyFemale(nx)
+    femaleRef.current = nx
+    try { localStorage.setItem('fl-lioness', nx ? '1' : '0') } catch { /* private mode */ }
+    handleRef.current?.setSelfFemale(nx)
   }
   function rematch() {
     const s = Math.floor(Math.random() * 1e9)
@@ -270,12 +326,52 @@ export function LionRace({
         ))}
       </div>
 
-      {/* ---- countdown ---- */}
+      {/* ---- power-up / combo / shield HUD ---- */}
+      {phase === 'racing' && hud && (hud.powerups.length > 0 || hud.combo >= 5 || hud.shield) && (
+        <div className="relative z-20 mt-1.5 flex flex-wrap items-center justify-center gap-1.5 px-3">
+          {hud.shield && <span className="rounded-full bg-cyan-500/25 px-2 py-0.5 text-[11px] font-black text-cyan-200 ring-1 ring-cyan-300/50">🛡️ Shield</span>}
+          {hud.powerups.map((p) => (
+            <span key={p.kind} className="rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-black text-white">
+              {p.kind === 'magnet' ? '🧲' : p.kind === 'jet' ? '🚀' : p.kind === 'x2' ? '✨' : '⏩'} {Math.ceil(p.tLeft)}s
+            </span>
+          ))}
+          {hud.combo >= 5 && <span className="rounded-full bg-amber-500/30 px-2 py-0.5 text-[11px] font-black text-amber-200">🔥 x{hud.mult} · {hud.combo} combo</span>}
+        </div>
+      )}
+
+      {/* ---- emote control + popup ---- */}
+      {phase === 'racing' && (
+        <div className="absolute right-11 z-30" style={{ top: 'calc(0.3rem + env(safe-area-inset-top))' }}>
+          <button onClick={() => setEmoteOpen((o) => !o)} aria-label="Send emote"
+            className="rounded-full bg-white/10 p-1.5 text-lg leading-none active:scale-90">😜</button>
+          {emoteOpen && (
+            <div className="absolute right-0 mt-1 grid grid-cols-4 gap-1 rounded-2xl bg-black/75 p-2">
+              {EMOTES.map((e) => (
+                <button key={e} onClick={() => sendEmote(e)} className="text-2xl leading-none active:scale-90">{e}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {emotePop && (
+        <div className="pointer-events-none absolute inset-x-0 z-30 flex justify-center" style={{ top: '28%' }}>
+          <div className="animate-bounce rounded-2xl bg-black/55 px-4 py-2 text-center">
+            <div className="text-5xl leading-none">{emotePop.e}</div>
+            <div className="mt-1 text-xs font-bold text-white/85">{emotePop.mine ? 'You' : opp.name.split(' ')[0]}</div>
+          </div>
+        </div>
+      )}
+
+      {/* ---- countdown + lion/lioness picker ---- */}
       {phase === 'countdown' && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center">
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6">
           <div className="animate-pulse text-7xl font-black text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)]">
             {count > 0 ? count : 'GO!'}
           </div>
+          <button onClick={toggleGender}
+            className="rounded-full bg-white/12 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/20 active:scale-95">
+            {myFemale ? '🌸 Racing as Lioness — tap for Lion' : '🦁 Racing as Lion — tap for Lioness'}
+          </button>
         </div>
       )}
 
@@ -283,6 +379,16 @@ export function LionRace({
       {flash && (
         <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center">
           <div className="rounded-2xl bg-black/55 px-5 py-3 text-lg font-black text-white">{flashLabel}</div>
+        </div>
+      )}
+
+      {/* ---- item-box free weapon (Mario-Kart) ---- */}
+      {phase === 'racing' && myAlive && freeWeapon && (
+        <div className="absolute inset-x-0 z-20 flex justify-center" style={{ bottom: 'calc(9.2rem + env(safe-area-inset-bottom))' }}>
+          <button onClick={fireFree} onPointerDown={(e) => e.preventDefault()}
+            className="animate-pulse rounded-full bg-gradient-to-r from-fuchsia-500 to-purple-600 px-4 py-2 text-sm font-black text-white shadow-lg active:scale-95">
+            🎁 FREE {ATTACKS.find((a) => a.kind === freeWeapon)?.icon} — tap to fire!
+          </button>
         </div>
       )}
 
@@ -320,7 +426,15 @@ export function LionRace({
       {/* ---- winner screen ---- */}
       {phase === 'over' && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 px-6 backdrop-blur-sm">
-          <div className="glass-strong w-full max-w-sm rounded-3xl p-6 text-center">
+          {winner === 'me' && (
+            <div className="pointer-events-none absolute inset-0 overflow-hidden">
+              {CONFETTI.map((c, i) => (
+                <span key={i} className="fl-confetti absolute block rounded-sm"
+                  style={{ left: `${c.left}%`, width: c.size, height: c.size * 1.6, background: c.color, animationDelay: `${c.delay}s`, animationDuration: `${c.dur}s` }} />
+              ))}
+            </div>
+          )}
+          <div className="glass-strong relative w-full max-w-sm rounded-3xl p-6 text-center">
             <div className="text-5xl">{winner === 'me' ? '🏆' : winner === 'opp' ? '😿' : '🤝'}</div>
             <div className="mt-2 text-2xl font-black text-slate-900 dark:text-white">
               {winner === 'me' ? 'You WIN!' : winner === 'opp' ? `${opp.name.split(' ')[0]} wins` : "It's a tie!"}
