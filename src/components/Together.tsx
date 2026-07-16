@@ -766,7 +766,11 @@ export function TogetherOverlay({
       {/* same synced background as the chat, drifting behind the player */}
       {chatBg ? <ChatBackground bg={chatBg} /> : null}
       <div className="relative z-10 flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-between gap-2 px-3 pb-2 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:px-4">
+      {/* small fixed top padding — NO env(safe-area-inset-top): the Flutter
+          wrapper already wraps the WebView in a SafeArea, so adding it here
+          double-counted the status bar = a big empty gap that also pushed the
+          type bar off the bottom */}
+      <div className="flex items-center justify-between gap-2 px-3 pb-1.5 pt-2 sm:px-4">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-white">
           {current.kind === 'media' && !current.isVideo
             ? <Music size={18} className="shrink-0 text-amber-400" />

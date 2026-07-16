@@ -655,12 +655,12 @@ function FriendsChat() {
           navigator.vibrate?.([40, 40, 40])
         }
         if (p.a === 'close') setTgInvite(null)
-        // forward sync, emotes and join/leave presence into the open overlay;
-        // never let an overlay error break the realtime pipeline (a thrown
-        // handler killed message processing in prod)
-        if (p.a === 'state' || p.a === 'emote' || p.a === 'join' || p.a === 'close' || p.a === 'float') {
-          try { tgOverlayHandler.current(p) } catch { /* overlay mid-boot */ }
-        }
+        // forward EVERY event into the open overlay (it ignores its own events
+        // and handles each type). The old whitelist dropped 'next' + 'queue',
+        // so auto-advance / suggested-video switches + queue updates never
+        // reached the partner — that's why they stayed stuck on the old video.
+        // Never let an overlay error break the realtime pipeline.
+        try { tgOverlayHandler.current(p) } catch { /* overlay mid-boot */ }
       })
       .on('broadcast', { event: 'focus' }, ({ payload }) => {
         const p = payload as { a: 'start' | 'quit' | 'done'; from: string; start?: number; min?: number }
