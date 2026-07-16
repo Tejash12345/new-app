@@ -571,7 +571,15 @@ export function TogetherOverlay({
     if (!ytVideoId) return
     const yt = ytRef.current
     if (yt) {
-      try { yt.loadVideoById(ytVideoId) } catch { /* player rebooting */ }
+      try {
+        // if the viewer hasn't unlocked sound yet, MUTE before the swap —
+        // browsers block UNMUTED autoplay, which is why an auto-advanced video
+        // stayed black/paused for the follower. Muted autoplay is always
+        // allowed, so the new video actually shows (the tap-for-sound pill
+        // stays available).
+        if (needsTapRef.current) { try { yt.mute() } catch { /* not ready */ } }
+        yt.loadVideoById(ytVideoId)
+      } catch { /* player rebooting */ }
       setUiPlaying(true)
     }
   }, [ytVideoId])
@@ -753,7 +761,9 @@ export function TogetherOverlay({
 
       <div ref={boxRef}
         style={!fs && isVideo
-          ? { aspectRatio: String(current.kind === 'youtube' ? 16 / 9 : (videoAspect ?? 16 / 9)), maxHeight: '55vh' }
+          // cap the video shorter when the auto-play "More like this" row is on
+          // screen, so the chat + type bar always stay visible below it
+          ? { aspectRatio: String(current.kind === 'youtube' ? 16 / 9 : (videoAspect ?? 16 / 9)), maxHeight: sugs.length > 0 ? '38vh' : '50vh' }
           : undefined}
         className={cn('relative shrink-0 overflow-hidden bg-black',
           fs ? 'h-full w-full rounded-none' : 'mx-3 rounded-3xl ring-1 ring-white/15',
@@ -1090,9 +1100,9 @@ export function TogetherOverlay({
             {sugs.map((s) => (
               <button key={s.videoId}
                 onClick={() => pushQueueItem({ qid: `q${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: s.videoId, label: s.title.slice(0, 48) })}
-                className="w-32 shrink-0 text-left active:scale-95">
+                className="w-24 shrink-0 text-left active:scale-95">
                 {s.thumb && <img src={s.thumb} alt="" loading="lazy" className="aspect-video w-full rounded-lg object-cover ring-1 ring-white/10" />}
-                <span className="mt-0.5 line-clamp-2 text-[10px] font-semibold leading-tight text-white/80">{s.title}</span>
+                <span className="mt-0.5 line-clamp-1 text-[10px] font-semibold leading-tight text-white/80">{s.title}</span>
               </button>
             ))}
           </div>
