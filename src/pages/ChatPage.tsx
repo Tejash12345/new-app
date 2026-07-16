@@ -753,6 +753,10 @@ function FriendsChat() {
   function openTogether(s: TogetherSession, opts?: { skipCard?: boolean }) {
     setTgMenuOpen(false)
     setLinkPrompt(null)
+    // already watching together? this is a SWITCH — just change the session and
+    // let the open overlay broadcast a play-now 'next' (no redundant invite),
+    // so both phones jump to the new video instead of the partner staying put.
+    if (tg) { setTg(s); return }
     setTg(s)
     const meta = s.kind === 'youtube'
       ? { videoId: s.videoId }

@@ -304,12 +304,18 @@ export function TogetherOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   // floating emoji reactions, mirrored on both screens
-  const [emotes, setEmotes] = useState<{ id: number; e: string; x: number }[]>([])
+  const [emotes, setEmotes] = useState<{ id: number; e: string; x: number; s: number }[]>([])
   const emoteSeq = useRef(0)
   const pushEmote = useCallback((e: string) => {
-    const id = ++emoteSeq.current
-    setEmotes((list) => [...list.slice(-14), { id, e, x: 8 + Math.random() * 84 }])
-    setTimeout(() => setEmotes((list) => list.filter((x) => x.id !== id)), 2600)
+    // ONE tap → a BURST of floating emojis (staggered, varied size/position) so
+    // a single press reads like a flurry — no tapping over and over
+    for (let i = 0; i < 6; i++) {
+      setTimeout(() => {
+        const id = ++emoteSeq.current
+        setEmotes((list) => [...list.slice(-24), { id, e, x: 6 + Math.random() * 88, s: 0.7 + Math.random() * 0.8 }])
+        setTimeout(() => setEmotes((list) => list.filter((x) => x.id !== id)), 2600)
+      }, i * 100)
+    }
   }, [])
   // floating chat messages — live-stream style bubbles that drift up over the
   // video (mine on the right, partner's on the left), mirrored on both screens
@@ -391,6 +397,23 @@ export function TogetherOverlay({
     void fetchSuggestions(current.videoId).then((s) => { if (!dead) setSugs(s) })
     return () => { dead = true }
   }, [current.kind, current.kind === 'youtube' ? current.videoId : ''])
+
+  // If the parent starts a DIFFERENT video while the overlay is already open
+  // (tapping "Watch YouTube" again), switch to it AND tell the partner via a
+  // play-now 'next'. `current` is useState(session) so a prop change alone is
+  // ignored — which is exactly why the follower stayed stuck on the first video.
+  const sessKey = session.kind === 'youtube' ? `y:${session.videoId}`
+    : session.kind === 'drive' ? `d:${session.fileId}` : `m:${session.msgId}`
+  const firstSess = useRef(true)
+  useEffect(() => {
+    if (firstSess.current) { firstSess.current = false; return }
+    if (session.kind === 'media') { setCurrent(session); return } // media switch: local
+    const item: QueueItem = session.kind === 'youtube'
+      ? { qid: `sw${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: session.videoId, label: 'YouTube video' }
+      : { qid: `sw${Date.now()}-${++qSeq.current}`, kind: 'drive', fileId: session.fileId, label: session.name ?? 'Drive video' }
+    applyNext(item, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessKey])
 
   /** The video finished — queue first, else roll straight into a similar
    *  video (endless auto-play), never a dead stop. */
@@ -1018,9 +1041,9 @@ export function TogetherOverlay({
         <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
           {emotes.map((em) => (
             <motion.div key={em.id}
-              initial={{ opacity: 1, y: 0, scale: 0.8 }}
-              animate={{ opacity: 0, y: -180, scale: 1.5 }}
-              transition={{ duration: 2.4, ease: 'easeOut' }}
+              initial={{ opacity: 1, y: 0, scale: 0.6 * em.s }}
+              animate={{ opacity: 0, y: -160 - em.s * 70, scale: 1.4 * em.s }}
+              transition={{ duration: 2.2 + em.s * 0.4, ease: 'easeOut' }}
               className="absolute bottom-2 text-2xl"
               style={{ left: `${em.x}%` }}>
               {em.e}
@@ -1109,20 +1132,22 @@ export function TogetherOverlay({
         </div>
       )}
 
-      {/* chat rides along under the player (single instance — moves into
-          the fullscreen sheet when that's open) */}
-      {!(fs && fsChat) && chatNode}
-
-      {/* live emote bar — scrolls horizontally through the full set */}
-      <div className="flex shrink-0 items-center gap-1 overflow-x-auto px-3 pb-1.5">
+      {/* live emote bar — a compact strip ABOVE the chat so the type bar stays
+          pinned at the very bottom and never hides behind the emojis */}
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto px-3 py-1">
         {TG_EMOJIS.map((e) => (
           <button key={e} onClick={() => { pushEmote(e); sendTg({ a: 'emote', e }) }}
-            className="shrink-0 rounded-full bg-white/10 px-2.5 py-1 text-lg transition hover:bg-white/20 active:scale-90">
+            className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-base transition hover:bg-white/20 active:scale-90">
             {e}
           </button>
         ))}
       </div>
       {callNode}
+
+      {/* chat + type bar LAST → the composer is pinned at the bottom, always
+          visible above the keyboard (single instance — moves into the
+          fullscreen sheet when that's open) */}
+      {!(fs && fsChat) && chatNode}
       </div>
     </motion.div>
   )
