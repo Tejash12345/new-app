@@ -19,6 +19,7 @@ import { GlassCard, Page, Input, Button, Empty, ProgressRing } from '../componen
 import { cn } from '../lib/utils'
 import { chatMediaPath, deleteMediaBlob, getMediaBlob, objectUrlFor, putMediaBlob } from '../lib/mediaStore'
 import { TogetherOverlay, ytIdFrom, driveIdFrom, playableKind, type TogetherSession, type TgPayload } from '../components/Together'
+import { LionRace, type RacePayload, type RaceOutbound } from '../components/LionRace'
 
 type DMessage = {
   id: string
@@ -26,7 +27,7 @@ type DMessage = {
   recipient_id: string
   body: string
   created_at: string
-  kind?: 'text' | 'image' | 'audio' | 'file' | 'post' | 'focus' | 'tg'
+  kind?: 'text' | 'image' | 'audio' | 'file' | 'post' | 'focus' | 'tg' | 'race'
   file_url?: string | null
   file_name?: string | null
   // WhatsApp-style reply: id of the quoted message + a snapshot of its
@@ -81,6 +82,7 @@ function snippetOf(m: DMessage) {
   if (m.kind === 'post') return '📰 Shared post'
   if (m.kind === 'focus') return '⚡ Focus Together invite'
   if (m.kind === 'tg') return '🎬 Watch together'
+  if (m.kind === 'race') return '🦁 Lion Race'
   return (m.body || '').slice(0, 90)
 }
 
@@ -409,6 +411,12 @@ function FriendsChat() {
   const sendTg = (p: Omit<TgPayload, 'from'>) => {
     if (user) channelRef.current?.send({ type: 'broadcast', event: 'tg', payload: { ...p, from: user.id } })
   }
+  // Lion Race — a live head-to-head runner against this friend
+  const [race, setRace] = useState<{ seed: number } | null>(null)
+  const raceHandler = useRef<(p: RacePayload) => void>(() => {})
+  const sendRace = (p: RaceOutbound) => {
+    if (user) channelRef.current?.send({ type: 'broadcast', event: 'race', payload: { ...p, from: user.id } })
+  }
   // calls are handled app-wide by CallHost (rings on any page); chat only
   // needs the start button
   const callApi = useApp((s) => s.callApi)
@@ -665,6 +673,11 @@ function FriendsChat() {
         if (p.a === 'quit') setDuo((cur) => cur && { ...cur, partnerLeft: true })
         if (p.a === 'done') setDuo((cur) => cur && { ...cur, partnerDone: true })
       })
+      .on('broadcast', { event: 'race' }, ({ payload }) => {
+        // forward live race telemetry/attacks into the open race overlay;
+        // never let a handler error break the realtime pipeline
+        try { raceHandler.current(payload as RacePayload) } catch { /* overlay mid-boot */ }
+      })
       .subscribe()
     channelRef.current = channel
     markRead()
@@ -779,6 +792,30 @@ function FriendsChat() {
     } catch {
       return m.file_url
     }
+  }
+
+  // ---- Lion Race: a live head-to-head runner both friends run in lockstep ----
+
+  /** Post the 🦁 race invite card (carries the shared track seed). */
+  async function sendRaceInvite() {
+    if (!user || !active) return
+    setTgMenuOpen(false)
+    const seed = Math.floor(Math.random() * 1e9)
+    const row: Record<string, unknown> = {
+      sender_id: user.id, recipient_id: active.friend_id,
+      body: '🦁 Lion Race — tap to run together!',
+      kind: 'race', file_name: JSON.stringify({ seed }), ...expiryFields(),
+    }
+    const { data, error } = await supabase.from('direct_messages').insert(row).select().single()
+    if (error) { setSendError(`Not sent: ${error.message}`); return }
+    const real = data as DMessage
+    setMessages((m) => [...m, real])
+    getSocket()?.emit('dm', real)
+    channelRef.current?.send({ type: 'broadcast', event: 'msg', payload: real })
+  }
+  /** Both friends tap "Race!" on the card to enter the seeded run together. */
+  function raceSeed(m: DMessage): number {
+    try { return Number(JSON.parse(m.file_name ?? '{}').seed) || 1 } catch { return 1 }
   }
 
   // ---- Focus Together: a live synced focus session for both friends ----
@@ -1396,6 +1433,10 @@ function FriendsChat() {
                         className="flex w-full items-center gap-2.5 whitespace-nowrap rounded-xl px-2.5 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
                         <FileText size={15} className="shrink-0 text-amber-500" /> Play from Drive
                       </button>
+                      <button onClick={() => { setTgMenuOpen(false); sendRaceInvite() }}
+                        className="flex w-full items-center gap-2.5 whitespace-nowrap rounded-xl px-2.5 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-500/10 dark:text-slate-200">
+                        <span className="shrink-0 text-[15px] leading-none">🦁</span> Lion Race
+                      </button>
                       <div className="px-2.5 pb-1 pt-0.5 text-[10px] text-slate-400">
                         Tip: any song, video or Drive link sent in this chat gets a Play together button under it.
                       </div>
@@ -1683,6 +1724,23 @@ function FriendsChat() {
                             <button onClick={() => startDuo(duoMin(m))} disabled={!!duo}
                               className="mt-2.5 w-full rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 py-2 text-sm font-black uppercase tracking-wide text-white shadow transition active:scale-95 disabled:opacity-50">
                               {mine ? 'Start now' : `Focus with ${fname(active).split(' ')[0]}`}
+                            </button>
+                          </div>
+                          <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}{tick}</span>
+                        </div>
+                      ) : m.kind === 'race' ? (
+                        <div className={cn('flex min-w-0 flex-col', mine ? 'items-end' : 'items-start')}>
+                          <div className="min-w-0 max-w-full rounded-2xl border border-brand-400/40 bg-gradient-to-br from-brand-500/15 to-purple-500/10 p-3.5 sm:max-w-md">
+                            <div className="flex items-center gap-2.5">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-purple-500 text-xl shadow">🦁</div>
+                              <div className="min-w-0">
+                                <div className="text-sm font-extrabold text-slate-900 dark:text-white">Lion Race</div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">Same track · furthest lion wins 🏁</div>
+                              </div>
+                            </div>
+                            <button onClick={() => setRace({ seed: raceSeed(m) })} disabled={!!race}
+                              className="mt-2.5 w-full rounded-xl bg-gradient-to-r from-brand-500 to-purple-500 py-2 text-sm font-black uppercase tracking-wide text-white shadow transition active:scale-95 disabled:opacity-50">
+                              {mine ? 'Race now' : `Race ${fname(active).split(' ')[0]}`}
                             </button>
                           </div>
                           <span className="mt-0.5 px-1 text-[10px] text-slate-400">{time}{tick}</span>
@@ -2077,6 +2135,18 @@ function FriendsChat() {
           </div>
         )
       })()}
+
+      {/* ---- Lion Race: live head-to-head runner overlay ---- */}
+      {race && active && user && (
+        <LionRace
+          me={{ id: user.id, name: 'You', avatarUrl: avatarFor(user.id) || undefined }}
+          opp={{ id: active.friend_id, name: fname(active), avatarUrl: avatarFor(active.friend_id) || active.avatar_url || undefined }}
+          seed={race.seed}
+          send={sendRace}
+          register={(fn) => { raceHandler.current = fn }}
+          onClose={() => setRace(null)}
+        />
+      )}
     </div>
   )
 }

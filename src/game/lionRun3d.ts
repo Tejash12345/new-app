@@ -24,7 +24,20 @@ import * as THREE from 'three'
 import { buildLion } from './lionModel'
 import type { RunResult } from './lionRun'
 
-export type Run3DHandle = { destroy: () => void }
+export type AttackKind = 'rocket' | 'bolt' | 'wall'
+export type Run3DHandle = {
+  destroy: () => void
+  // race extras (no-ops in solo): start on a synced countdown + take hits
+  begin: () => void
+  injectAttack: (kind: AttackKind) => void
+}
+export type Run3DOpts = {
+  // a shared seed makes the obstacle/orb track identical on both racers'
+  // devices so a friend race is fair (same climate + hazards at every metre)
+  seed?: number
+  // race mode: don't self-start on tap (a synced countdown calls begin())
+  race?: boolean
+}
 
 type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack'; z: number; alive: boolean }
 type Orb = { holder: THREE.Group; lane: number; z: number; alive: boolean }
@@ -33,14 +46,30 @@ type Burst = { sprite: THREE.Sprite; t: number }
 const LANE_X = [-3, 0, 3]
 const STAGE_LEN = 400 // metres per stage
 
-// per-stage world grade: sky, fog, road dashes, neon palette, name
+// per-stage world grade: sky, fog, road dashes, neon palette, name.
+// `day` (0 night → 1 daylight) drives ambient light / star + neon fade, and
+// `rain` toggles the storm downpour — so a long run sweeps through real
+// weather: midnight → dawn → bright morning → downpour → storm → golden day.
 const STAGES = [
-  { name: 'MIDNIGHT', bg: 0x07061a, fog: 0x140f2e, dash: 0xffb454, neon: [0xff4fa3, 0x00e5c3, 0x8f7bff, 0x4fd6ff] },
-  { name: 'CYBER', bg: 0x0a0418, fog: 0x2a0f3e, dash: 0x00e5c3, neon: [0x00f0ff, 0xff2fd6, 0x00f0ff, 0xff2fd6] },
-  { name: 'STORM', bg: 0x0a0e1e, fog: 0x1c2a4e, dash: 0xcfe0ff, neon: [0x4fa0ff, 0xffffff, 0x4fa0ff, 0x9db8e8] },
-  { name: 'INFERNO', bg: 0x160608, fog: 0x3e1210, dash: 0xff7b3a, neon: [0xff7b3a, 0xff4646, 0xffb454, 0xff4646] },
-  { name: 'GOLDEN DAWN', bg: 0x241536, fog: 0x6e3a2a, dash: 0xffd678, neon: [0xffd678, 0xffb454, 0xffd678, 0xffb454] },
+  { name: 'MIDNIGHT', bg: 0x07061a, fog: 0x140f2e, dash: 0xffb454, neon: [0xff4fa3, 0x00e5c3, 0x8f7bff, 0x4fd6ff], day: 0, rain: false },
+  { name: 'DAWN', bg: 0x2a1c46, fog: 0x6e4a52, dash: 0xffd678, neon: [0xff8fb0, 0xffd678, 0xff8f6a, 0xffb454], day: 0.4, rain: false },
+  { name: 'MORNING', bg: 0x8ec9ff, fog: 0xcfe6ff, dash: 0xffffff, neon: [0x6fd0ff, 0xffd678, 0x9be0a8, 0x8ec9ff], day: 1, rain: false },
+  { name: 'DOWNPOUR', bg: 0x2a3242, fog: 0x49566a, dash: 0xcfe0ff, neon: [0x4fa0ff, 0xcfe0ff, 0x4fa0ff, 0x9db8e8], day: 0.55, rain: true },
+  { name: 'STORM', bg: 0x0a0e1e, fog: 0x1c2a4e, dash: 0xcfe0ff, neon: [0x4fa0ff, 0xffffff, 0x4fa0ff, 0x9db8e8], day: 0.2, rain: true },
+  { name: 'GOLDEN DAY', bg: 0x7ec0ff, fog: 0xe6f2ff, dash: 0xffd678, neon: [0xffd678, 0xffb454, 0xffd678, 0x9be0a8], day: 1, rain: false },
 ]
+
+// small deterministic PRNG (mulberry32) so a seeded race lays down the exact
+// same track on both devices
+function mulberry32(seed: number) {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
 
 export function startLionRun3D(
   canvas: HTMLCanvasElement,
@@ -49,8 +78,14 @@ export function startLionRun3D(
     onOver: (r: RunResult & { stage?: number }) => void
     onScore?: (score: number, coins: number) => void
     onStage?: (stage: number, name: string) => void
+    // race telemetry: fires every frame with live distance/lane/alive so the
+    // caller can broadcast it to the opponent (throttled by the caller)
+    onProgress?: (distanceM: number, lane: number, alive: boolean) => void
   },
+  opts: Run3DOpts = {},
 ): Run3DHandle | null {
+  // deterministic in a seeded race, plain Math.random for solo runs
+  const rand = opts.seed != null ? mulberry32(opts.seed) : Math.random
   let renderer: THREE.WebGLRenderer
   try {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
@@ -69,8 +104,9 @@ export function startLionRun3D(
   const disposables: { dispose: () => void }[] = []
   const track = <T extends { dispose: () => void }>(x: T): T => { disposables.push(x); return x }
 
-  // ---------- lights ----------
-  scene.add(new THREE.AmbientLight(0x8f86c8, 0.55))
+  // ---------- lights (intensities lerp with the stage's day factor) ----------
+  const ambient = new THREE.AmbientLight(0x8f86c8, 0.55)
+  scene.add(ambient)
   const key = new THREE.DirectionalLight(0xffd9a0, 0.9)
   key.position.set(6, 14, 8)
   scene.add(key)
@@ -166,7 +202,8 @@ export function startLionRun3D(
     }
     starGeo.setAttribute('position', new THREE.BufferAttribute(pts, 3))
   }
-  scene.add(new THREE.Points(starGeo, track(new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, transparent: true, opacity: 0.8, sizeAttenuation: false }))))
+  const starMat = track(new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, transparent: true, opacity: 0.8, sizeAttenuation: false }))
+  scene.add(new THREE.Points(starGeo, starMat))
   const softGlowTex = (color: string) => {
     const cv = document.createElement('canvas')
     cv.width = cv.height = 64
@@ -273,6 +310,7 @@ export function startLionRun3D(
   let swoopT = 0
   let dyingT = 0
   let stage = 1
+  let stunT = 0 // seconds of "bolt" stun left (race attack): no steering + slowed
   let fov = 55
   // adaptive: drop pixel ratio if the phone can't hold frame rate
   let slowFrames = 0
@@ -284,15 +322,22 @@ export function startLionRun3D(
     return Math.floor(dist / 2) + coins * 10
   }
 
+  // kick off the run — from a tap in solo, or from the synced countdown
+  // (begin()) in a race
+  function begin() {
+    if (state !== 'ready') return
+    state = 'swoop'
+    swoopT = 0
+    cb.onStart()
+    cb.onStage?.(1, STAGES[0].name)
+  }
   function startOrJump() {
     if (state === 'ready') {
-      state = 'swoop'
-      swoopT = 0
-      cb.onStart()
-      cb.onStage?.(1, STAGES[0].name)
+      // in a race the countdown starts everyone together — ignore taps
+      if (!opts.race) begin()
       return
     }
-    if (state !== 'run') return
+    if (state !== 'run' || stunT > 0) return
     if (jumps < 2) {
       vy = jumps === 0 ? 9.4 : 8.2
       jumps++
@@ -300,9 +345,27 @@ export function startLionRun3D(
     }
   }
   function move(dir: -1 | 1) {
-    if (state !== 'run') return
+    if (state !== 'run' || stunT > 0) return
     lane = Math.max(0, Math.min(2, lane + dir))
     navigator.vibrate?.(8)
+  }
+  // an attack from the opponent lands on THIS runner (race only)
+  function injectAttack(kind: AttackKind) {
+    if (state !== 'run') return
+    if (kind === 'bolt') {
+      stunT = 1.2
+      navigator.vibrate?.([40, 30, 40])
+      return
+    }
+    if (kind === 'rocket') {
+      // a wall drops into your current lane a short way ahead — dodge it
+      spawnObstacle(lane, 'wall', -42)
+    } else {
+      // two lanes blocked, one escape — decided by the shared PRNG
+      const open = Math.floor(rand() * 3)
+      for (let l = 0; l < 3; l++) if (l !== open) spawnObstacle(l, 'wall', -48)
+    }
+    navigator.vibrate?.(30)
   }
 
   // ---------- mobile-first input ----------
@@ -358,31 +421,36 @@ export function startLionRun3D(
   function spawnWave() {
     while (nextSpawnZ > -180) {
       const z = nextSpawnZ
-      const roll = Math.random()
+      // difficulty is keyed to TRACK POSITION (not the player's wall-clock
+      // stage) so a seeded race lays the same hazards for both runners
+      const sStage = Math.min(STAGES.length, 1 + Math.floor((-z / 4) / STAGE_LEN))
+      const roll = rand()
       const freeLanes = [0, 1, 2]
       if (roll < 0.34) {
-        const l2 = Math.floor(Math.random() * 3)
+        const l2 = Math.floor(rand() * 3)
         spawnObstacle(l2, 'bar', z)
         // stage 4+: bars come in pairs across two lanes
-        if (stage >= 4 && Math.random() < 0.5) {
+        if (sStage >= 4 && rand() < 0.5) {
           freeLanes.splice(freeLanes.indexOf(l2), 1)
-          spawnObstacle(freeLanes[Math.floor(Math.random() * freeLanes.length)], 'bar', z)
+          spawnObstacle(freeLanes[Math.floor(rand() * freeLanes.length)], 'bar', z)
         }
       } else if (roll < 0.72) {
-        const l2 = Math.floor(Math.random() * 3)
+        const l2 = Math.floor(rand() * 3)
         spawnObstacle(l2, 'wall', z)
         freeLanes.splice(freeLanes.indexOf(l2), 1)
         // stage 2+: a crate stack narrows the escape to one lane
-        if (stage >= 2 && Math.random() < 0.35 + stage * 0.08) {
-          const l3 = freeLanes[Math.floor(Math.random() * freeLanes.length)]
+        if (sStage >= 2 && rand() < 0.35 + sStage * 0.08) {
+          const l3 = freeLanes[Math.floor(rand() * freeLanes.length)]
           spawnObstacle(l3, 'stack', z)
           freeLanes.splice(freeLanes.indexOf(l3), 1)
         }
       } else {
-        const l2 = Math.floor(Math.random() * 3)
+        const l2 = Math.floor(rand() * 3)
         for (let k = 0; k < 4; k++) spawnOrb(l2, z - k * 2.2)
       }
-      nextSpawnZ -= Math.max(12, 16 + Math.random() * 14 - stage * 1.5) + speed * 0.35
+      // deterministic gap in a race (no speed term, which is wall-clock bound)
+      const gapExtra = opts.seed != null ? 12 : speed * 0.35
+      nextSpawnZ -= Math.max(12, 16 + rand() * 14 - sStage * 1.5) + gapExtra
     }
   }
 
@@ -451,8 +519,10 @@ export function startLionRun3D(
           navigator.vibrate?.([30, 30, 30])
         }
         speed = Math.min(38, 16 + (stage - 1) * 3.5 + elapsed * 0.35)
+        if (stunT > 0) stunT = Math.max(0, stunT - dt)
       }
-      const dz = speed * dt
+      // a bolt attack (race) drags the speed down for its duration
+      const dz = (state === 'run' && stunT > 0 ? speed * 0.32 : speed) * dt
       dist += dz
 
       vy -= 24 * dt
@@ -483,6 +553,7 @@ export function startLionRun3D(
           shownScore = s
           cb.onScore?.(s, coins)
         }
+        cb.onProgress?.(distM(), lane, true)
       }
     }
 
@@ -503,7 +574,16 @@ export function startLionRun3D(
     ;(scene.fog as THREE.Fog).color.copy(state === 'dying' ? new THREE.Color(0x481420) : fogColor)
     dashMat.color.lerp(new THREE.Color(theme.dash), Math.min(1, rawDt * 1.4))
     neonStrips.forEach((ns, i) => ns.mat.color.lerp(new THREE.Color(theme.neon[i % 4]), Math.min(1, rawDt * 1.4)))
-    rainMat.opacity += ((stage === 3 ? 0.6 : 0) - rainMat.opacity) * Math.min(1, rawDt * 2)
+    // climate: fade lights up toward daylight, stars/moon/neon down; rain per stage
+    const k = Math.min(1, rawDt * 1.4)
+    const day = theme.day
+    ambient.intensity += (0.5 + day * 0.95 - ambient.intensity) * k
+    key.intensity += (0.85 + day * 0.55 - key.intensity) * k
+    starMat.opacity += (0.8 * (1 - day) - starMat.opacity) * k
+    const moonMat = moon.material as THREE.SpriteMaterial
+    moonMat.opacity += ((1 - day) - moonMat.opacity) * k
+    towerMat.emissiveIntensity += (0.9 * (1 - day * 0.7) - towerMat.emissiveIntensity) * k
+    rainMat.opacity += ((theme.rain ? 0.6 : 0) - rainMat.opacity) * Math.min(1, rawDt * 2)
     if (rainMat.opacity > 0.02) {
       const pos = rainGeo.attributes.position
       for (let i = 0; i < pos.count; i++) {
@@ -610,5 +690,7 @@ export function startLionRun3D(
       disposables.forEach((d) => d.dispose())
       renderer.dispose()
     },
+    begin,
+    injectAttack,
   }
 }
