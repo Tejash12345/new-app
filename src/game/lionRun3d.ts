@@ -24,12 +24,16 @@ import * as THREE from 'three'
 import { buildLion } from './lionModel'
 import type { RunResult } from './lionRun'
 
-export type AttackKind = 'rocket' | 'bolt' | 'wall'
+export type AttackKind = 'rocket' | 'bolt' | 'fire' | 'freeze' | 'tornado'
 export type Run3DHandle = {
   destroy: () => void
   // race extras (no-ops in solo): start on a synced countdown + take hits
   begin: () => void
   injectAttack: (kind: AttackKind) => void
+  // Asphalt-Nitro-style rival: show the opponent's lion racing in this scene,
+  // placed from their broadcast distance/lane; and a launch VFX when I attack
+  setGhost: (distanceM: number, lane: number, alive: boolean) => void
+  fireFx: (kind: AttackKind) => void
 }
 export type Run3DOpts = {
   // a shared seed makes the obstacle/orb track identical on both racers'
@@ -37,6 +41,8 @@ export type Run3DOpts = {
   seed?: number
   // race mode: don't self-start on tap (a synced countdown calls begin())
   race?: boolean
+  // the opponent's name, floated above their ghost lion in a race
+  oppName?: string
 }
 
 type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack'; z: number; alive: boolean }
@@ -250,6 +256,118 @@ export function startLionRun3D(
   shadow.position.y = 0.02
   scene.add(shadow)
 
+  // ---------- opponent "ghost" lion (race) — placed from their live state ----------
+  const ghost = buildLion()
+  ghost.group.rotation.y = Math.PI / 2
+  ghost.group.scale.setScalar(0.5)
+  ghost.maneMat.color.set(0x3ad6ff) // cool cyan so the rival reads instantly
+  ghost.bodyMat.color.set(0x14384a)
+  ghost.group.visible = false
+  scene.add(ghost.group)
+  const ghostShadow = new THREE.Mesh(
+    track(new THREE.CircleGeometry(1.1, 16)),
+    track(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false })),
+  )
+  ghostShadow.rotation.x = -Math.PI / 2
+  ghostShadow.position.y = 0.02
+  ghostShadow.visible = false
+  scene.add(ghostShadow)
+  // floating name tag above the rival lion
+  let ghostLabel: THREE.Sprite | null = null
+  if (opts.oppName) {
+    const cv = document.createElement('canvas')
+    cv.width = 256; cv.height = 64
+    const c = cv.getContext('2d')!
+    const name = `🦁 ${opts.oppName.slice(0, 12)}`
+    c.font = 'bold 30px Inter, sans-serif'
+    c.textAlign = 'center'; c.textBaseline = 'middle'
+    const w = c.measureText(name).width + 36
+    c.fillStyle = 'rgba(6,8,20,0.6)'
+    c.beginPath(); c.roundRect(128 - w / 2, 12, w, 40, 20); c.fill()
+    c.fillStyle = '#8ee7ff'
+    c.fillText(name, 128, 33)
+    const tex = track(new THREE.CanvasTexture(cv))
+    tex.colorSpace = THREE.SRGBColorSpace
+    ghostLabel = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false }))
+    ghostLabel.scale.set(4, 1, 1)
+    ghostLabel.visible = false
+    scene.add(ghostLabel)
+  }
+  let ghostDistM = 0
+  let ghostLane = 1
+  let ghostAlive = false
+  let ghostSeen = false
+  let ghostX = 0
+  let ghostZ = -8
+
+  // ---------- animated attack VFX ----------
+  type Fx = { update: (dt: number, tSec: number) => boolean; cleanup: () => void }
+  const fxList: Fx[] = []
+  let flashT = 0
+  const flashColor = new THREE.Color(0xffffff)
+  let rollT = 0
+  let rollDir = 1
+  const glowCache = new Map<string, THREE.Texture>()
+  const glowTex = (color: string) => {
+    let t = glowCache.get(color)
+    if (!t) { t = softGlowTex(color); glowCache.set(color, t) }
+    return t
+  }
+  const rocketGeo = track(new THREE.CapsuleGeometry(0.26, 0.9, 4, 8))
+  const rocketMat = track(new THREE.MeshBasicMaterial({ color: 0xffe1b0 }))
+  const tornadoGeo = track(new THREE.ConeGeometry(1.7, 5, 14, 1, true))
+  function screenFlash(hex: number, dur: number) { flashColor.set(hex); flashT = Math.max(flashT, dur) }
+  function burst(x: number, y: number, z: number, color: string, size: number, dur: number) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(color), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+    sp.position.set(x, y, z)
+    scene.add(sp)
+    let t = 0
+    fxList.push({
+      update: (dt) => { t += dt; sp.scale.setScalar(size * (0.4 + (t / dur) * 2.2)); sp.material.opacity = Math.max(0, 1 - t / dur); return t < dur },
+      cleanup: () => { scene.remove(sp); sp.material.dispose() },
+    })
+  }
+  function rocketIn(lane: number, zStop: number, onArrive: () => void) {
+    const m = new THREE.Mesh(rocketGeo, rocketMat)
+    m.rotation.x = Math.PI / 2
+    const trail = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex('rgba(255,150,60,0.9)'), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+    trail.scale.setScalar(2.4)
+    m.add(trail)
+    m.position.set(LANE_X[lane], 1.5, -95)
+    scene.add(m)
+    let done = false
+    fxList.push({
+      update: (dt) => {
+        m.position.z += 150 * dt
+        m.rotation.z += dt * 18
+        if (m.position.z >= zStop && !done) {
+          done = true
+          burst(LANE_X[lane], 1.3, zStop, 'rgba(255,140,50,0.95)', 2.6, 0.5)
+          shakeT = Math.max(shakeT, 0.4)
+          onArrive()
+          return false
+        }
+        return true
+      },
+      cleanup: () => { scene.remove(m) },
+    })
+  }
+  function tornadoIn(lane: number) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xbecfe4, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
+    const m = new THREE.Mesh(tornadoGeo, mat)
+    m.position.set(LANE_X[lane], 2.6, -60)
+    scene.add(m)
+    fxList.push({
+      update: (dt, tSec) => {
+        m.position.z += 24 * dt
+        m.rotation.y = tSec * 13
+        m.scale.x = m.scale.z = 1 + Math.sin(tSec * 11) * 0.18
+        return m.position.z < 9
+      },
+      cleanup: () => { scene.remove(m); mat.dispose() },
+    })
+  }
+
   // ---------- obstacle + orb pools ----------
   const barMat = track(new THREE.MeshLambertMaterial({ color: 0xffb454, emissive: 0xffb454, emissiveIntensity: 0.25 }))
   const wallMat = track(new THREE.MeshLambertMaterial({ color: 0x8a2f3c, emissive: 0xff4655, emissiveIntensity: 0.2 }))
@@ -349,23 +467,82 @@ export function startLionRun3D(
     lane = Math.max(0, Math.min(2, lane + dir))
     navigator.vibrate?.(8)
   }
-  // an attack from the opponent lands on THIS runner (race only)
+  // an attack from the opponent lands on THIS runner (race only), each with a
+  // distinct animation
   function injectAttack(kind: AttackKind) {
     if (state !== 'run') return
+    navigator.vibrate?.(30)
     if (kind === 'bolt') {
-      stunT = 1.2
+      // thunder: white flash + shake + a stun
+      stunT = Math.max(stunT, 1.2)
+      screenFlash(0xffffff, 0.42)
+      shakeT = Math.max(shakeT, 0.5)
+      burst(lionX, 3.4, -2, 'rgba(200,225,255,0.95)', 2.6, 0.4)
       navigator.vibrate?.([40, 30, 40])
       return
     }
-    if (kind === 'rocket') {
-      // a wall drops into your current lane a short way ahead — dodge it
-      spawnObstacle(lane, 'wall', -42)
-    } else {
-      // two lanes blocked, one escape — decided by the shared PRNG
-      const open = Math.floor(rand() * 3)
-      for (let l = 0; l < 3; l++) if (l !== open) spawnObstacle(l, 'wall', -48)
+    if (kind === 'freeze') {
+      // ice: a longer, heavier slow + blue frost flash
+      stunT = Math.max(stunT, 1.8)
+      screenFlash(0x8fdcff, 0.55)
+      burst(lionX, 1.6, -3, 'rgba(150,220,255,0.9)', 3, 0.6)
+      return
     }
-    navigator.vibrate?.(30)
+    if (kind === 'tornado') {
+      // twister: blocks two lanes + spins the camera
+      rollT = 0.9
+      rollDir = rand() < 0.5 ? -1 : 1
+      const open = Math.floor(rand() * 3)
+      for (let l = 0; l < 3; l++) if (l !== open) spawnObstacle(l, 'wall', -52)
+      tornadoIn(Math.floor(rand() * 3))
+      screenFlash(0x9db8e8, 0.25)
+      return
+    }
+    if (kind === 'fire') {
+      // fireball: a low flame wall to JUMP + orange burst
+      spawnObstacle(lane, 'bar', -44)
+      burst(LANE_X[lane], 0.9, -44, 'rgba(255,95,30,0.95)', 2.8, 0.6)
+      screenFlash(0xff5a1e, 0.3)
+      return
+    }
+    // rocket: streaks in and explodes on a wall dropped in your lane — dodge it
+    spawnObstacle(lane, 'wall', -42)
+    rocketIn(lane, -42, () => {})
+    screenFlash(0xff8a3a, 0.18)
+  }
+  // I fired at the opponent — a projectile streaks from my lion to their ghost
+  function fireFx(kind: AttackKind) {
+    const color = kind === 'bolt' ? 'rgba(190,225,255,0.95)'
+      : kind === 'freeze' ? 'rgba(150,220,255,0.95)'
+      : kind === 'fire' ? 'rgba(255,120,40,0.95)'
+      : kind === 'tornado' ? 'rgba(200,215,235,0.95)'
+      : 'rgba(255,170,80,0.95)'
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(color), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+    const fromV = new THREE.Vector3(lionX, 1.5, 0.5)
+    const toV = new THREE.Vector3(ghostX, 1.5, ghostZ)
+    sp.position.copy(fromV)
+    sp.scale.setScalar(1.5)
+    scene.add(sp)
+    let t = 0
+    const dur = 0.5
+    fxList.push({
+      update: (dt) => {
+        t += dt
+        const k = Math.min(1, t / dur)
+        sp.position.lerpVectors(fromV, toV, k)
+        sp.scale.setScalar(1.5 - k * 0.7)
+        if (k >= 1) { burst(toV.x, 1.4, toV.z, color, 1.8, 0.4); return false }
+        return true
+      },
+      cleanup: () => { scene.remove(sp); sp.material.dispose() },
+    })
+    navigator.vibrate?.(15)
+  }
+  function setGhost(distanceM: number, lane2: number, alive: boolean) {
+    ghostSeen = true
+    ghostDistM = distanceM
+    ghostLane = Math.max(0, Math.min(2, lane2))
+    ghostAlive = alive
   }
 
   // ---------- mobile-first input ----------
@@ -448,8 +625,9 @@ export function startLionRun3D(
         const l2 = Math.floor(rand() * 3)
         for (let k = 0; k < 4; k++) spawnOrb(l2, z - k * 2.2)
       }
-      // deterministic gap in a race (no speed term, which is wall-clock bound)
-      const gapExtra = opts.seed != null ? 12 : speed * 0.35
+      // deterministic gap in a race (no wall-clock speed term); widen it with
+      // track position so the faster later stages stay dodgeable
+      const gapExtra = opts.seed != null ? 12 + sStage * 3 : speed * 0.35
       nextSpawnZ -= Math.max(12, 16 + rand() * 14 - sStage * 1.5) + gapExtra
     }
   }
@@ -518,7 +696,9 @@ export function startLionRun3D(
           cb.onStage?.(stage, STAGES[stage - 1].name)
           navigator.vibrate?.([30, 30, 30])
         }
-        speed = Math.min(38, 16 + (stage - 1) * 3.5 + elapsed * 0.35)
+        // ramps higher + faster the further you run (the longer you survive,
+        // the more it accelerates) — tops out fast enough to feel frantic
+        speed = Math.min(48, 16 + (stage - 1) * 4.2 + elapsed * 0.45)
         if (stunT > 0) stunT = Math.max(0, stunT - dt)
       }
       // a bolt attack (race) drags the speed down for its duration
@@ -584,6 +764,11 @@ export function startLionRun3D(
     moonMat.opacity += ((1 - day) - moonMat.opacity) * k
     towerMat.emissiveIntensity += (0.9 * (1 - day * 0.7) - towerMat.emissiveIntensity) * k
     rainMat.opacity += ((theme.rain ? 0.6 : 0) - rainMat.opacity) * Math.min(1, rawDt * 2)
+    // attack screen-flash (thunder white / fire orange / freeze blue) fades out
+    if (flashT > 0) {
+      flashT = Math.max(0, flashT - rawDt)
+      scene.background = bgColor.clone().lerp(flashColor, Math.min(0.85, flashT * 2.2))
+    }
     if (rainMat.opacity > 0.02) {
       const pos = rainGeo.attributes.position
       for (let i = 0; i < pos.count; i++) {
@@ -623,6 +808,31 @@ export function startLionRun3D(
     shadow.scale.setScalar(sh)
     ;(shadow.material as THREE.MeshBasicMaterial).opacity = 0.4 * sh
 
+    // ---- rival ghost lion: placed from their broadcast distance/lane ----
+    if (ghostSeen) {
+      const show = ghostAlive
+      ghost.group.visible = show
+      ghostShadow.visible = show
+      if (ghostLabel) ghostLabel.visible = show
+      // ahead of me = negative z; clamp to a visible band so a runaway leader
+      // still shows at the horizon and a straggler sits just behind
+      const targetZ = Math.max(-62, Math.min(7, -(ghostDistM - distM()) * 4))
+      ghostZ += (targetZ - ghostZ) * Math.min(1, rawDt * 6)
+      ghostX += (LANE_X[ghostLane] - ghostX) * Math.min(1, rawDt * 8)
+      ghost.group.position.set(ghostX, 0, ghostZ)
+      ghost.group.rotation.z = (LANE_X[ghostLane] - ghostX) * -0.06
+      ghost.legs.forEach((leg, i) => { leg.rotation.x = Math.sin(tSec * 13 + (i % 2) * Math.PI) * 0.7 })
+      ghost.body.scale.y = 1 + Math.sin(tSec * 13) * 0.04
+      ghost.headGroup.rotation.y = Math.PI / 2
+      ghostShadow.position.set(ghostX, 0.02, ghostZ)
+      if (ghostLabel) ghostLabel.position.set(ghostX, 3.5, ghostZ)
+    }
+
+    // ---- animated attack VFX ----
+    for (let i = fxList.length - 1; i >= 0; i--) {
+      if (!fxList[i].update(rawDt, tSec)) { fxList[i].cleanup(); fxList.splice(i, 1) }
+    }
+
     // camera: fly-around swoop into a speed-pumped chase cam with crash shake
     shakeT = Math.max(0, shakeT - rawDt)
     const shake = shakeT > 0 ? Math.sin(tSec * 70) * shakeT * 0.6 : 0
@@ -641,6 +851,11 @@ export function startLionRun3D(
     } else {
       camera.position.set(lionX * 0.5 + shake, 5.6 + lionY * 0.25, 11.5)
       camera.lookAt(lionX * 0.55, 1.3 + lionY * 0.35, -14)
+    }
+    // tornado disorient: roll the camera for its duration (after lookAt)
+    if (rollT > 0) {
+      rollT = Math.max(0, rollT - rawDt)
+      camera.rotation.z += Math.sin(tSec * 9) * rollT * 0.35 * rollDir
     }
 
     // adaptive pixel ratio for weaker phones
@@ -692,5 +907,7 @@ export function startLionRun3D(
     },
     begin,
     injectAttack,
+    setGhost,
+    fireFx,
   }
 }

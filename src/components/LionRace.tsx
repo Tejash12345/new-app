@@ -32,10 +32,15 @@ export type RaceOutbound = RacePayload extends infer T ? (T extends RacePayload 
 
 type Face = { name: string; avatarUrl?: string; id: string }
 
-const ATTACKS: { kind: AttackKind; icon: string; label: string; cost: number; color: string }[] = [
-  { kind: 'rocket', icon: '🚀', label: 'Rocket', cost: 5, color: 'from-rose-500 to-orange-500' },
-  { kind: 'bolt', icon: '⚡', label: 'Bolt', cost: 4, color: 'from-amber-400 to-yellow-500' },
-  { kind: 'wall', icon: '🧱', label: 'Wall', cost: 7, color: 'from-sky-500 to-indigo-500' },
+// each weapon has a RANGE (max metres between the two lions to fire it) — a
+// rocket reaches far, a twister needs you almost neck-and-neck. The button only
+// arms when the rival is inside that range AND you have the coins.
+const ATTACKS: { kind: AttackKind; icon: string; label: string; cost: number; range: number; color: string }[] = [
+  { kind: 'rocket', icon: '🚀', label: 'Rocket', cost: 5, range: 70, color: 'from-rose-500 to-orange-500' },
+  { kind: 'bolt', icon: '⚡', label: 'Thunder', cost: 4, range: 30, color: 'from-amber-400 to-yellow-400' },
+  { kind: 'fire', icon: '🔥', label: 'Fire', cost: 5, range: 15, color: 'from-orange-500 to-red-600' },
+  { kind: 'freeze', icon: '❄️', label: 'Freeze', cost: 6, range: 8, color: 'from-cyan-400 to-sky-500' },
+  { kind: 'tornado', icon: '🌪️', label: 'Twister', cost: 8, range: 3, color: 'from-slate-400 to-slate-600' },
 ]
 
 function Face({ face, dist, alive, mine }: { face: Face; dist: number; alive: boolean; mine?: boolean }) {
@@ -147,7 +152,7 @@ export function LionRace({
           // safety: if the opponent goes silent after we die, settle anyway
           setTimeout(() => resolve(), 8000)
         },
-      }, { seed: curSeed, race: true })
+      }, { seed: curSeed, race: true, oppName: opp.name })
       if (!h) { setFailed(true); return }
       handle = h
       handleRef.current = h
@@ -178,6 +183,7 @@ export function LionRace({
         oppDistRef.current = p.dist
         setOppDist(p.dist)
         setOppAlive(p.alive)
+        handleRef.current?.setGhost(p.dist, p.lane, p.alive) // show their lion racing in my scene
       } else if (p.a === 'attack') {
         handleRef.current?.injectAttack(p.kind)
         setFlash(p.kind)
@@ -197,10 +203,12 @@ export function LionRace({
   }, [register, me.id])
 
   const ammo = myCoins - spent
-  function fire(kind: AttackKind, cost: number) {
-    if (ammo < cost || !myAlive || !oppAlive || phase !== 'racing') return
-    setSpent((s) => s + cost)
-    sendRef.current({ a: 'attack', kind })
+  const gap = Math.abs(Math.round(myDist) - Math.round(oppDist)) // metres between the lions
+  function fire(atk: (typeof ATTACKS)[number]) {
+    if (ammo < atk.cost || !myAlive || !oppAlive || phase !== 'racing' || gap > atk.range) return
+    setSpent((s) => s + atk.cost)
+    sendRef.current({ a: 'attack', kind: atk.kind })
+    handleRef.current?.fireFx(atk.kind) // launch a projectile at the rival's ghost
     navigator.vibrate?.(20)
   }
   function rematch() {
@@ -214,7 +222,11 @@ export function LionRace({
   }
 
   const leader = Math.max(myDist, oppDist, 60)
-  const flashLabel = flash === 'rocket' ? '🚀 Rocket incoming!' : flash === 'bolt' ? '⚡ Stunned!' : flash === 'wall' ? '🧱 Wall drop!' : ''
+  const flashLabel = flash === 'rocket' ? '🚀 Rocket incoming!'
+    : flash === 'bolt' ? '⚡ Thunder strike!'
+    : flash === 'fire' ? '🔥 Fireball!'
+    : flash === 'freeze' ? '❄️ Frozen!'
+    : flash === 'tornado' ? '🌪️ Twister!' : ''
 
   return (
     <div className="fixed inset-0 z-[92] flex flex-col bg-[#06050d]">
@@ -276,27 +288,32 @@ export function LionRace({
 
       {/* ---- attack buttons ---- */}
       {phase === 'racing' && myAlive && (
-        <div className="absolute inset-x-0 z-20 flex items-end justify-center gap-3"
+        <div className="absolute inset-x-0 z-20 flex items-end justify-center gap-1.5 px-2 sm:gap-2"
           style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
           {ATTACKS.map((atk) => {
-            const ready = ammo >= atk.cost && oppAlive
+            const inRange = oppAlive && gap <= atk.range
+            const ready = ammo >= atk.cost && inRange
             return (
               <button key={atk.kind}
                 onPointerDown={(e) => e.preventDefault()}
-                onClick={() => fire(atk.kind, atk.cost)}
+                onClick={() => fire(atk)}
                 disabled={!ready}
-                className={`flex h-16 w-16 flex-col items-center justify-center rounded-2xl bg-gradient-to-br ${atk.color} text-white shadow-lg transition active:scale-90 ${ready ? '' : 'opacity-35 grayscale'}`}>
+                className={`relative flex h-[68px] w-[18%] max-w-16 flex-col items-center justify-center rounded-2xl bg-gradient-to-br ${atk.color} text-white shadow-lg transition active:scale-90 ${ready ? '' : 'opacity-35 grayscale'}`}>
                 <span className="text-2xl leading-none">{atk.icon}</span>
-                <span className="mt-0.5 text-[10px] font-black">{atk.cost}🪙</span>
+                <span className="mt-0.5 text-[9px] font-black">{atk.cost}🪙</span>
+                <span className={`text-[9px] font-black ${inRange ? 'text-emerald-200' : 'opacity-80'}`}>≤{atk.range}m</span>
               </button>
             )
           })}
         </div>
       )}
       {phase === 'racing' && (
-        <div className="absolute inset-x-0 z-20 text-center"
-          style={{ bottom: 'calc(6rem + env(safe-area-inset-bottom))' }}>
+        <div className="absolute inset-x-0 z-20 flex flex-col items-center gap-1 text-center"
+          style={{ bottom: 'calc(6.2rem + env(safe-area-inset-bottom))' }}>
           <span className="rounded-full bg-black/50 px-3 py-1 text-xs font-bold text-amber-300">🪙 {ammo} coins — grab orbs to attack</span>
+          <span className="rounded-full bg-black/50 px-3 py-1 text-[11px] font-bold text-white/85">
+            ↔ {gap}m to {opp.name.split(' ')[0]} — get closer for stronger hits
+          </span>
         </div>
       )}
 

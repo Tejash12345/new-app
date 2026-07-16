@@ -30,6 +30,7 @@ supabase/.temp/
 
 # dev-only visual harness for Lion City renderers (needs puppeteer-core + local Chrome)
 _city-harness.html
+_race-harness.html
 _shot*.mjs
 _city-*.png
 
