@@ -24,8 +24,10 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { buildLion, setLionFemale } from './lionModel'
 import { skinById } from '../lib/lionSkins'
+import { haptic } from '../lib/prefs'
 import type { RunResult } from './lionRun'
 
 export type AttackKind = 'rocket' | 'bolt' | 'fire' | 'freeze' | 'tornado'
@@ -126,7 +128,19 @@ export function startLionRun3D(
   } catch {
     return null
   }
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
+  // phones: cap DPR a touch lower than desktop so shadows + PBR stay smooth
+  const lowEnd = (navigator.hardwareConcurrency || 4) <= 4
+  renderer.setPixelRatio(Math.min(lowEnd ? 1.5 : 2, window.devicePixelRatio || 1))
+  // cinematic colour grading — ACES filmic tone-map turns the flat neon into a
+  // photographed look; the sRGB output space keeps colours true
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.toneMappingExposure = 1.15
+  // soft real-time shadows ground the lion in the world (skipped on weak phones)
+  const shadows = !lowEnd
+  if (shadows) {
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  }
 
   const scene = new THREE.Scene()
   const bgColor = new THREE.Color(STAGES[0].bg)
@@ -137,6 +151,16 @@ export function startLionRun3D(
 
   const disposables: { dispose: () => void }[] = []
   const track = <T extends { dispose: () => void }>(x: T): T => { disposables.push(x); return x }
+
+  // image-based lighting: a built-in room environment (no file to download) gives
+  // every PBR surface realistic soft reflections + fill light. Free, offline-safe.
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04)
+    scene.environment = envRT.texture
+    scene.environmentIntensity = 0.35 // subtle — the scene is a neon night, not a studio
+    disposables.push({ dispose: () => { envRT.dispose(); pmrem.dispose() } })
+  } catch { /* PMREM unsupported → lights still light the scene */ }
 
   // ---------- bloom post-processing (cinematic neon glow on lights/orbs/FX) ----------
   let composer: EffectComposer | null = null
@@ -153,6 +177,19 @@ export function startLionRun3D(
   scene.add(ambient)
   const key = new THREE.DirectionalLight(0xffd9a0, 0.9)
   key.position.set(6, 14, 8)
+  if (shadows) {
+    key.castShadow = true
+    key.shadow.mapSize.set(1024, 1024)
+    key.shadow.camera.near = 1
+    key.shadow.camera.far = 60
+    key.shadow.camera.left = -12; key.shadow.camera.right = 12
+    key.shadow.camera.top = 14; key.shadow.camera.bottom = -14
+    key.shadow.bias = -0.0006
+    key.shadow.normalBias = 0.02
+    // the lion barely moves in Z (world scrolls past), so aim the shadow box at it
+    key.target.position.set(0, 0, -2)
+    scene.add(key.target)
+  }
   scene.add(key)
   // cool rim/back light — carves a cinematic edge on the lion for a realer look
   const rim = new THREE.DirectionalLight(0x9fc0ff, 0.6)
@@ -162,12 +199,14 @@ export function startLionRun3D(
   // ---------- road ----------
   const road = new THREE.Mesh(
     track(new THREE.PlaneGeometry(11, 260)),
-    track(new THREE.MeshLambertMaterial({ color: 0x131120 })),
+    // wet-asphalt PBR: slightly glossy so the neon + shadows read on it
+    track(new THREE.MeshStandardMaterial({ color: 0x131120, roughness: 0.55, metalness: 0.15 })),
   )
   road.rotation.x = -Math.PI / 2
   road.position.z = -100
+  if (shadows) road.receiveShadow = true
   scene.add(road)
-  const shoulderMat = track(new THREE.MeshLambertMaterial({ color: 0x1e1b30 }))
+  const shoulderMat = track(new THREE.MeshStandardMaterial({ color: 0x1e1b30, roughness: 0.7, metalness: 0.1 }))
   for (const sx of [-6.4, 6.4]) {
     const sh = new THREE.Mesh(track(new THREE.PlaneGeometry(1.6, 260)), shoulderMat)
     sh.rotation.x = -Math.PI / 2
@@ -302,6 +341,7 @@ export function startLionRun3D(
   rig.maneMat.emissiveIntensity = 0.35
   rig.bodyMat.color.setHex(mySkin.body)
   let myTrail: string | null = mySkin.trail // skin's signature glow trail
+  if (shadows) rig.group.traverse((o) => { (o as THREE.Mesh).castShadow = true })
   scene.add(rig.group)
   const shadow = new THREE.Mesh(
     track(new THREE.CircleGeometry(1.1, 16)),
@@ -467,15 +507,15 @@ export function startLionRun3D(
   }
 
   // ---------- obstacle + orb pools ----------
-  const barMat = track(new THREE.MeshLambertMaterial({ color: 0xffb454, emissive: 0xffb454, emissiveIntensity: 0.25 }))
-  const wallMat = track(new THREE.MeshLambertMaterial({ color: 0x8a2f3c, emissive: 0xff4655, emissiveIntensity: 0.2 }))
-  const crateMat = track(new THREE.MeshLambertMaterial({ color: 0x7a4e26 }))
+  const barMat = track(new THREE.MeshStandardMaterial({ color: 0xffb454, emissive: 0xffb454, emissiveIntensity: 0.25, roughness: 0.5, metalness: 0.3 }))
+  const wallMat = track(new THREE.MeshStandardMaterial({ color: 0x8a2f3c, emissive: 0xff4655, emissiveIntensity: 0.2, roughness: 0.6, metalness: 0.1 }))
+  const crateMat = track(new THREE.MeshStandardMaterial({ color: 0x7a4e26, roughness: 0.85, metalness: 0.05 }))
   const barGeo = track(new THREE.BoxGeometry(2.6, 1, 0.5))
   const wallGeo = track(new THREE.BoxGeometry(2.7, 3.6, 0.7))
   const stackGeo = track(new THREE.BoxGeometry(2.4, 2.4, 1.2))
   // an overhead gate you SLIDE under (swipe down) — jumping into it = crash
   const gateGeo = track(new THREE.BoxGeometry(2.7, 0.7, 0.6))
-  const gateMat = track(new THREE.MeshLambertMaterial({ color: 0x2f6f8a, emissive: 0x33d6ff, emissiveIntensity: 0.35 }))
+  const gateMat = track(new THREE.MeshStandardMaterial({ color: 0x2f6f8a, emissive: 0x33d6ff, emissiveIntensity: 0.35, roughness: 0.5, metalness: 0.4 }))
   const obstacles: Obstacle[] = []
 
   const orbGeo = track(new THREE.SphereGeometry(0.32, 10, 8))
@@ -499,6 +539,7 @@ export function startLionRun3D(
     const mesh = new THREE.Mesh(geo, mat)
     const y = kind === 'bar' ? 0.5 : kind === 'wall' ? 1.8 : kind === 'gate' ? 2.7 : 1.2
     mesh.position.set(LANE_X[lane], y, z)
+    if (shadows && (kind === 'wall' || kind === 'stack')) { mesh.castShadow = true; mesh.receiveShadow = true }
     scene.add(mesh)
     obstacles.push({ mesh, lane, kind, z, alive: true })
   }
@@ -623,19 +664,19 @@ export function startLionRun3D(
     if (jumps < 2) {
       vy = jumps === 0 ? 9.4 : 8.2
       jumps++
-      navigator.vibrate?.(12)
+      haptic(12)
     }
   }
   function move(dir: -1 | 1) {
     if (state !== 'run' || stunT > 0) return
     lane = Math.max(0, Math.min(2, lane + dir))
-    navigator.vibrate?.(8)
+    haptic(8)
   }
   // swipe DOWN → slide under overhead gates for ~0.6s
   function slide() {
     if (state !== 'run' || stunT > 0 || jetT > 0 || slideT > 0) return
     slideT = 0.6
-    navigator.vibrate?.(8)
+    haptic(8)
   }
   // combo streak multiplies coin value (x2 at 10, x3 at 20); the ✨ power-up
   // stacks on top
@@ -646,7 +687,7 @@ export function startLionRun3D(
     comboT = 2.5
   }
   function activatePickup(kind: PickKind, lane2: number) {
-    navigator.vibrate?.(16)
+    haptic(16)
     burst(LANE_X[lane2], 1.6, 0, PICK_GLOW[kind], 2.2, 0.45)
     if (kind === 'magnet') magnetT = 8
     else if (kind === 'shield') shield = true
@@ -659,7 +700,7 @@ export function startLionRun3D(
   function nearMiss(oLane: number) {
     burst(LANE_X[oLane], 1.5, 0.5, 'rgba(255,255,255,0.9)', 1.4, 0.28)
     addCoin(1)
-    navigator.vibrate?.(5)
+    haptic(5)
   }
   function reportHud() {
     const pu: HudState['powerups'] = []
@@ -673,14 +714,14 @@ export function startLionRun3D(
   // distinct animation
   function injectAttack(kind: AttackKind) {
     if (state !== 'run') return
-    navigator.vibrate?.(30)
+    haptic(30)
     if (kind === 'bolt') {
       // thunder: white flash + shake + a stun
       stunT = Math.max(stunT, 1.2)
       screenFlash(0xffffff, 0.42)
       shakeT = Math.max(shakeT, 0.5)
       burst(lionX, 3.4, -2, 'rgba(200,225,255,0.95)', 2.6, 0.4)
-      navigator.vibrate?.([40, 30, 40])
+      haptic([40, 30, 40])
       return
     }
     if (kind === 'freeze') {
@@ -738,7 +779,7 @@ export function startLionRun3D(
       },
       cleanup: () => { scene.remove(sp); sp.material.dispose() },
     })
-    navigator.vibrate?.(15)
+    haptic(15)
   }
   function setGhost(distanceM: number, lane2: number, alive: boolean, female?: boolean, skin?: string) {
     ghostSeen = true
@@ -874,7 +915,7 @@ export function startLionRun3D(
     state = 'dying'
     dyingT = 0
     shakeT = 0.55
-    navigator.vibrate?.([60, 40, 120])
+    haptic([60, 40, 120])
   }
 
   function scrollWorld(dz: number, tSec: number) {
@@ -949,7 +990,7 @@ export function startLionRun3D(
         if (ns !== stage) {
           stage = ns
           cb.onStage?.(stage, STAGES[stage - 1].name)
-          navigator.vibrate?.([30, 30, 30])
+          haptic([30, 30, 30])
         }
         // keeps accelerating the further/longer you run — noticeably faster
         // deep into a run (per-stage jump + a steady time ramp), capped high
@@ -996,7 +1037,7 @@ export function startLionRun3D(
           scene.remove(orb.holder)
           addCoin()
           collectBurst(lionX, 1.3, 0)
-          navigator.vibrate?.(6)
+          haptic(6)
         }
         // power-ups / item boxes / boost pads — grabbed by lane (any height)
         for (const p of pickups) {
@@ -1022,7 +1063,7 @@ export function startLionRun3D(
                 burst(lionX, 1.5, 0, 'rgba(90,220,255,0.95)', 3.2, 0.5)
                 screenFlash(0x5adcff, 0.22)
                 shakeT = Math.max(shakeT, 0.3)
-                navigator.vibrate?.(30)
+                haptic(30)
               } else {
                 crash()
               }

@@ -12,10 +12,42 @@ export type LionRig = {
   headGroup: THREE.Group
   tail: THREE.Mesh
   legs: THREE.Mesh[]
-  bodyMat: THREE.MeshLambertMaterial
-  maneMat: THREE.MeshLambertMaterial
+  bodyMat: THREE.MeshStandardMaterial
+  maneMat: THREE.MeshStandardMaterial
   mane: THREE.Mesh
   flower: THREE.Group
+}
+
+// A procedural fur texture (fine directional noise) built once on a canvas — no
+// file to download. Used as a bump + roughness map so the coat catches light
+// like real fur instead of reading as smooth plastic. Shared by every lion.
+let _furTex: THREE.Texture | null = null
+function furTexture(): THREE.Texture {
+  if (_furTex) return _furTex
+  const s = 128
+  const cv = document.createElement('canvas')
+  cv.width = s; cv.height = s
+  const ctx = cv.getContext('2d')!
+  ctx.fillStyle = '#808080'
+  ctx.fillRect(0, 0, s, s)
+  // short vertical hair strokes at varying brightness = a fur normal/roughness
+  for (let i = 0; i < 4200; i++) {
+    const x = Math.random() * s
+    const y = Math.random() * s
+    const len = 2 + Math.random() * 4
+    const g = 90 + Math.floor(Math.random() * 130)
+    ctx.strokeStyle = `rgb(${g},${g},${g})`
+    ctx.lineWidth = Math.random() < 0.5 ? 1 : 0.6
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.lineTo(x + (Math.random() - 0.5), y + len)
+    ctx.stroke()
+  }
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.repeat.set(4, 4)
+  _furTex = tex
+  return tex
 }
 
 /** A lioness hides the mane and wears a little flower; a lion shows the mane. */
@@ -26,11 +58,15 @@ export function setLionFemale(rig: LionRig, female: boolean) {
 
 export function buildLion(opts?: { female?: boolean }): LionRig {
   const group = new THREE.Group()
-  const bodyMat = new THREE.MeshLambertMaterial({ color: 0xc98a4b, emissive: 0xffa64d, emissiveIntensity: 0 })
-  const maneMat = new THREE.MeshLambertMaterial({ color: 0x7a4a1c, emissive: 0xcc7a26, emissiveIntensity: 0 })
-  const bellyMat = new THREE.MeshLambertMaterial({ color: 0xe8c79a })
-  const darkMat = new THREE.MeshLambertMaterial({ color: 0x2a1a0e })
-  const muzzleMat = new THREE.MeshLambertMaterial({ color: 0xf0d6ad })
+  const fur = furTexture()
+  // PBR coat: matte fur (high roughness) with the fur texture breaking up the
+  // roughness + a gentle bump so light rakes across the hair. Reacts to the
+  // scene's real lights + environment for a lifelike look.
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc98a4b, emissive: 0xffa64d, emissiveIntensity: 0, roughness: 0.92, metalness: 0.02, roughnessMap: fur, bumpMap: fur, bumpScale: 0.6 })
+  const maneMat = new THREE.MeshStandardMaterial({ color: 0x7a4a1c, emissive: 0xcc7a26, emissiveIntensity: 0, roughness: 0.98, metalness: 0, roughnessMap: fur, bumpMap: fur, bumpScale: 1.1 })
+  const bellyMat = new THREE.MeshStandardMaterial({ color: 0xe8c79a, roughness: 0.9, metalness: 0.02, roughnessMap: fur })
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x2a1a0e, roughness: 0.35, metalness: 0.05 }) // wet nose / eyes — slight sheen
+  const muzzleMat = new THREE.MeshStandardMaterial({ color: 0xf0d6ad, roughness: 0.8, metalness: 0.02 })
 
   // ---- torso: a real-animal silhouette from chest (front) + haunch (rear) +
   // barrel + a lighter underbelly (+x = front, -x = rear, ±z = sides) ----
@@ -133,14 +169,14 @@ export function buildLion(opts?: { female?: boolean }): LionRig {
 
   // a little flower for the lioness (shown when female, hidden for a lion)
   const flower = new THREE.Group()
-  const petalMat = new THREE.MeshLambertMaterial({ color: 0xff8fc8 })
+  const petalMat = new THREE.MeshStandardMaterial({ color: 0xff8fc8, roughness: 0.6, metalness: 0 })
   for (let i = 0; i < 5; i++) {
     const petal = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 5), petalMat)
     const a = (i / 5) * Math.PI * 2
     petal.position.set(Math.cos(a) * 0.22, 0, Math.sin(a) * 0.22)
     flower.add(petal)
   }
-  flower.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 5), new THREE.MeshLambertMaterial({ color: 0xffe14d })))
+  flower.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 5), new THREE.MeshStandardMaterial({ color: 0xffe14d, roughness: 0.5 })))
   flower.position.set(0.55, 0.72, 0.32)
   headGroup.add(flower)
 
