@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video, Wand2 } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video, Wand2, Pencil, Check } from 'lucide-react'
 import { ChatBackground } from '../components/ChatBackground'
 import { CHAT_BGS, isCustomBg, customBgUrl, makeCustomBg, type ChatBgId } from '../lib/chatBg'
 import { prepareMascotImage } from '../lib/mascot'
@@ -42,7 +42,12 @@ type DMessage = {
   reactions?: Record<string, string>
   // disappearing messages: set when the chat's shared timer was on at send
   expires_at?: string | null
+  // WhatsApp-style edit: set when the sender edited the text (shows "edited")
+  edited_at?: string | null
 }
+
+// WhatsApp lets you edit a message for 15 minutes after sending
+const EDIT_WINDOW_MS = 15 * 60 * 1000
 
 const TTL_OPTIONS = [
   { label: 'Off', s: 0 },
@@ -385,6 +390,10 @@ function FriendsChat() {
   const [recSeconds, setRecSeconds] = useState(0)
   const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null)
   const [replyTo, setReplyTo] = useState<DMessage | null>(null)
+  // the message currently being edited (WhatsApp-style) — mutually exclusive
+  // with replyTo; the composer becomes a Save box while this is set
+  const [editing, setEditing] = useState<DMessage | null>(null)
+  const composerRef = useRef<HTMLInputElement>(null)
   const [flashId, setFlashId] = useState<string | null>(null)
   const [reactFor, setReactFor] = useState<DMessage | null>(null)
   const [reactMore, setReactMore] = useState(false)
@@ -574,6 +583,7 @@ function FriendsChat() {
     let cancelled = false
     setMessages([])
     setReplyTo(null)
+    setEditing(null)
 
     supabase
       .from('direct_messages')
@@ -634,6 +644,10 @@ function FriendsChat() {
       .on('broadcast', { event: 'react' }, ({ payload }) => {
         const { id, reactions } = payload as { id: string; reactions: Record<string, string> }
         setMessages((prev) => prev.map((x) => (x.id === id ? { ...x, reactions } : x)))
+      })
+      .on('broadcast', { event: 'edit' }, ({ payload }) => {
+        const { id, body, edited_at } = payload as { id: string; body: string; edited_at: string }
+        setMessages((prev) => prev.map((x) => (x.id === id ? { ...x, body, edited_at } : x)))
       })
       .on('broadcast', { event: 'read' }, ({ payload }) => {
         const p = payload as { from: string; at: string }
@@ -1107,6 +1121,62 @@ function FriendsChat() {
     if (await confirmDialog(`Delete ${what}? It disappears for both of you.`, { yesLabel: 'Delete', noLabel: 'Cancel' })) {
       remove(m.id)
     }
+  }
+
+  // ---- edit a message (WhatsApp-style: your own text, within 15 min) ----
+
+  /** Can this message still be edited? (mine, plain text, sent < 15 min ago) */
+  function canEdit(m: DMessage) {
+    return (
+      m.sender_id === user?.id &&
+      (!m.kind || m.kind === 'text') &&
+      !m.id.startsWith('tmp-') &&
+      Date.now() - new Date(m.created_at).getTime() < EDIT_WINDOW_MS
+    )
+  }
+
+  /** Load a message into the composer for editing. */
+  function startEdit(m: DMessage) {
+    setReplyTo(null)
+    setEditing(m)
+    setInput(m.body)
+    setSendError(null)
+    setSuggestions([])
+    setTimeout(() => composerRef.current?.focus(), 0)
+  }
+
+  function cancelEdit() {
+    setEditing(null)
+    setInput('')
+  }
+
+  /** Save the edit — only the author can, server-checked, synced live. */
+  async function saveEdit() {
+    if (!editing || !user) return
+    const body = input.trim()
+    if (!body) return
+    const target = editing
+    if (body === target.body) { cancelEdit(); return } // nothing changed
+    const at = new Date().toISOString()
+    cancelEdit()
+    // optimistic — show the new text + "edited" tag immediately
+    setMessages((list) => list.map((x) => (x.id === target.id ? { ...x, body, edited_at: at } : x)))
+    const { data, error } = await supabase.rpc('edit_dm', { p_id: target.id, p_body: body })
+    if (error || data === null) {
+      // roll back to the original text
+      setMessages((list) => list.map((x) => (x.id === target.id ? { ...x, body: target.body, edited_at: target.edited_at } : x)))
+      setSendError(
+        error && /function|schema|does not exist/i.test(error.message)
+          ? 'Editing needs a quick DB update — run upgrade-36.sql in the Supabase SQL Editor.'
+          : 'Could not edit — messages can only be edited within 15 minutes of sending.',
+      )
+      return
+    }
+    const editedAt = (data as string) ?? at
+    setMessages((list) => list.map((x) => (x.id === target.id ? { ...x, body, edited_at: editedAt } : x)))
+    // sync the new text to the other side while they have the chat open
+    getSocket()?.emit('dm:edit', { id: target.id, body, edited_at: editedAt, to: active?.friend_id })
+    channelRef.current?.send({ type: 'broadcast', event: 'edit', payload: { id: target.id, body, edited_at: editedAt } })
   }
 
   // ---- photos, documents, voice notes ----
@@ -1686,6 +1756,12 @@ function FriendsChat() {
                           <Trash2 size={14} />
                         </button>
                       )}
+                      {canEdit(m) && (
+                        <button onClick={() => startEdit(m)} aria-label="Edit message"
+                          className="shrink-0 p-1.5 text-slate-400 transition hover:text-brand-500 lg:opacity-0 lg:group-hover:opacity-100">
+                          <Pencil size={14} />
+                        </button>
+                      )}
                       {mine && (
                         <button onClick={() => setReplyTo(m)} aria-label="Reply to message"
                           className="shrink-0 p-1.5 text-slate-400 transition hover:text-brand-500 lg:opacity-0 lg:group-hover:opacity-100">
@@ -1807,7 +1883,7 @@ function FriendsChat() {
                           <>
                             {m.body}
                             {/* WhatsApp-style inline time, bottom-right of the bubble */}
-                            <span className={cn('float-right ml-2 mt-1.5 text-[10px] leading-none', mine ? 'text-white/70' : 'text-slate-400')}>{time}{tick}</span>
+                            <span className={cn('float-right ml-2 mt-1.5 text-[10px] leading-none', mine ? 'text-white/70' : 'text-slate-400')}>{m.edited_at ? 'edited · ' : ''}{time}{tick}</span>
                           </>
                         )}
                       </div>
@@ -1880,8 +1956,22 @@ function FriendsChat() {
                 ))}
               </div>
             )}
+            {/* edit bar — WhatsApp-style, pinned above the composer while editing */}
+            {editing && (
+              <div className="mt-3 flex items-center gap-2.5 rounded-2xl border-l-4 border-brand-500 bg-brand-500/10 px-3 py-2">
+                <Pencil size={15} className="shrink-0 text-brand-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-brand-600 dark:text-brand-300">Edit message</div>
+                  <div className="truncate text-xs text-slate-500 dark:text-slate-300">{editing.body}</div>
+                </div>
+                <button onPointerDown={(e) => e.preventDefault()} onClick={cancelEdit} aria-label="Cancel edit"
+                  className="shrink-0 rounded-full p-1.5 text-slate-400 hover:bg-slate-500/10">
+                  <X size={15} />
+                </button>
+              </div>
+            )}
             {/* reply preview — WhatsApp-style bar pinned above the composer */}
-            {replyTo && (
+            {replyTo && !editing && (
               <div className="mt-3 flex items-center gap-2.5 rounded-2xl border-l-4 border-brand-500 bg-brand-500/10 px-3 py-2">
                 <Reply size={15} className="shrink-0 text-brand-500" />
                 <div className="min-w-0 flex-1">
@@ -1918,29 +2008,33 @@ function FriendsChat() {
                 <input ref={fileInputRef} type="file" hidden
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) sendMedia(f, 'file'); e.target.value = '' }} />
                 <div className="flex min-w-0 flex-1 items-center rounded-full border border-slate-200/60 bg-white/70 px-1.5 dark:border-white/10 dark:bg-white/10">
-                  <button onClick={suggestReplies} title="Leo suggests replies" disabled={suggestBusy || messages.length === 0}
+                  <button onClick={suggestReplies} title="Leo suggests replies" disabled={suggestBusy || messages.length === 0 || !!editing}
                     className={cn('shrink-0 rounded-full p-2 text-slate-400 transition hover:text-brand-500 disabled:opacity-40',
                       suggestBusy && 'animate-pulse text-brand-500')}>
                     <Sparkles size={21} />
                   </button>
                   <input
+                    ref={composerRef}
                     className="min-w-0 flex-1 bg-transparent px-1.5 py-3 text-[15px] text-slate-900 outline-none placeholder:text-slate-400 dark:text-white"
-                    placeholder="Message…" value={input} maxLength={500}
+                    placeholder={editing ? 'Edit message…' : 'Message…'} value={input} maxLength={500}
                     onChange={(e) => {
                       setInput(e.target.value)
                       const now = Date.now()
-                      if (user && active && now - lastTypingSent.current > 1200) {
+                      if (!editing && user && active && now - lastTypingSent.current > 1200) {
                         lastTypingSent.current = now
                         getSocket()?.emit('typing', { to: active.friend_id })
                         channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { from: user.id } })
                       }
                     }}
-                    onKeyDown={(e) => e.key === 'Enter' && send()} />
-                  <button onClick={() => fileInputRef.current?.click()} title="Send a document" disabled={uploading}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { if (editing) saveEdit(); else send() }
+                      else if (e.key === 'Escape' && editing) cancelEdit()
+                    }} />
+                  <button onClick={() => fileInputRef.current?.click()} title="Send a document" disabled={uploading || !!editing}
                     className="shrink-0 rounded-full p-2 text-slate-400 transition hover:text-brand-500 disabled:opacity-40">
                     <Paperclip size={21} />
                   </button>
-                  <button onClick={() => imageInputRef.current?.click()} title="Send a photo" disabled={uploading}
+                  <button onClick={() => imageInputRef.current?.click()} title="Send a photo" disabled={uploading || !!editing}
                     className="shrink-0 rounded-full p-2 text-slate-400 transition hover:text-brand-500 disabled:opacity-40">
                     <ImageIcon size={21} />
                   </button>
@@ -1948,13 +2042,13 @@ function FriendsChat() {
                 <button
                   // sending must not steal focus from the text input — the blur
                   // is what closes the Android keyboard after every message
-                  onPointerDown={(e) => { if (input.trim()) e.preventDefault() }}
-                  onClick={() => (input.trim() ? send() : startRecording())}
+                  onPointerDown={(e) => { if (editing || input.trim()) e.preventDefault() }}
+                  onClick={() => (editing ? saveEdit() : input.trim() ? send() : startRecording())}
                   disabled={uploading}
-                  aria-label={input.trim() ? 'Send message' : 'Record a voice message'}
+                  aria-label={editing ? 'Save edit' : input.trim() ? 'Send message' : 'Record a voice message'}
                   className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-brand-500 to-brand-400 text-white shadow-lg shadow-brand-500/30 transition active:scale-95 disabled:opacity-50"
                 >
-                  {input.trim() ? <Send size={20} /> : <Mic size={22} />}
+                  {editing ? <Check size={22} /> : input.trim() ? <Send size={20} /> : <Mic size={22} />}
                 </button>
               </div>
             )}
