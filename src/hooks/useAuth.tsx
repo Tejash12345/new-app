@@ -1,10 +1,43 @@
 import {
-  createContext, useContext, useEffect, useState, type ReactNode,
+  createContext, useContext, useEffect, useRef, useState, type ReactNode,
 } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { syncMascotsFromSettings } from '../lib/mascot'
 import type { Profile, Settings } from '../lib/types'
+
+// ---- session backup, so a flaky token refresh can't kick you to login ----
+// Mobile WebViews often drop a token refresh (network blip on resume, or a
+// refresh-token rotation race). supabase-js reacts by emitting SIGNED_OUT with
+// a null session — which used to bounce the user straight to the login screen
+// even though their login was still valid. We keep a copy of the last good
+// tokens in a separate key and, on an UNEXPECTED sign-out, try to restore the
+// session before ever showing login. Only a real logout or a truly dead refresh
+// token drops you out.
+const BACKUP_KEY = 'fl-session-backup'
+function readBackup(): { access_token: string; refresh_token: string } | null {
+  try { const r = localStorage.getItem(BACKUP_KEY); return r ? JSON.parse(r) : null } catch { return null }
+}
+function writeBackup(s: Session) {
+  try { localStorage.setItem(BACKUP_KEY, JSON.stringify({ access_token: s.access_token, refresh_token: s.refresh_token })) } catch { /* quota / private mode */ }
+}
+function clearBackup() {
+  try { localStorage.removeItem(BACKUP_KEY) } catch { /* ignore */ }
+}
+/** Try to re-establish the session from the backup refresh token (2 tries, for
+ *  transient network failures). Returns true if a session came back. */
+async function tryRecover(): Promise<boolean> {
+  const b = readBackup()
+  if (!b?.refresh_token) return false
+  for (let i = 0; i < 2; i++) {
+    try {
+      const { data, error } = await supabase.auth.setSession(b)
+      if (!error && data.session) return true
+    } catch { /* keep trying */ }
+    await new Promise((r) => setTimeout(r, 1500))
+  }
+  return false
+}
 
 type AuthCtx = {
   user: User | null
@@ -24,16 +57,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  const userSignedOut = useRef(false) // true only for a deliberate Log out tap
+  const recovering = useRef(false)    // a recovery attempt is in flight
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-      setLoading(false)
+    let cancelled = false
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (cancelled) return
+      if (data.session) { writeBackup(data.session); setSession(data.session); setLoading(false); return }
+      // supabase has no stored session — try our backup before showing login
+      // (covers a wiped/rotated store where our refresh token is still good)
+      recovering.current = true
+      const ok = await tryRecover()
+      recovering.current = false
+      if (cancelled) return
+      if (!ok) setSession(null) // genuinely logged out → login screen
+      setLoading(false)         // if ok, SIGNED_IN already set the session
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s)
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      if (s) { writeBackup(s); setSession(s); return }
+      // s === null
+      if (event === 'SIGNED_OUT') {
+        if (userSignedOut.current) { userSignedOut.current = false; clearBackup(); setSession(null); return }
+        if (recovering.current) return // a recovery is already running — don't stack
+        // UNEXPECTED sign-out (failed refresh / resume / network blip): recover
+        recovering.current = true
+        void tryRecover().then((ok) => {
+          recovering.current = false
+          if (!ok) { clearBackup(); setSession(null) } // truly logged out
+          // ok → SIGNED_IN fired + session restored → no bounce to login
+        })
+      }
+      // ignore other null-session events to avoid a login flash
     })
-    return () => sub.subscription.unsubscribe()
+    return () => { cancelled = true; sub.subscription.unsubscribe() }
   }, [])
 
   async function loadProfile(userId: string) {
@@ -55,6 +112,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profile,
     loading,
     signOut: async () => {
+      userSignedOut.current = true // this is a REAL logout — don't auto-recover it
+      clearBackup()
       await supabase.auth.signOut()
     },
     refreshProfile: async () => {

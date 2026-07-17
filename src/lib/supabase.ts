@@ -12,7 +12,17 @@ const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim()
 export const SUPABASE_URL = supabaseUrl
 export const SUPABASE_ANON_KEY = supabaseAnonKey
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    // keep the session alive across app restarts + auto-refresh the token in the
+    // background (defaults, but pinned explicitly so a flaky refresh doesn't log
+    // the user out — the recovery path lives in useAuth). storageKey left at the
+    // default so existing signed-in users are NOT invalidated.
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+})
 
 // Single sign-on bridge to the Android wrapper. The native side mirrors this
 // session (FLAuth channel → recoverSession) but cannot refresh tokens itself,
