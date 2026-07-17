@@ -109,7 +109,7 @@ export function SettingsPage() {
       const ext = (file.name.split('.').pop() || 'jpg').replace(/[^\w]+/g, '').slice(0, 5) || 'jpg'
       const path = `${user.id}/avatar-${Date.now()}.${ext}`
       const { error: upErr } = await supabase.storage
-        .from('avatars').upload(path, file, { contentType: file.type || undefined })
+        .from('avatars').upload(path, file, { contentType: file.type || undefined, cacheControl: '31536000' })
       if (upErr) {
         setAvatarErr(/bucket.*not.*found/i.test(upErr.message)
           ? 'Avatar storage missing — run upgrade-11.sql in Supabase first.'
@@ -155,7 +155,7 @@ export function SettingsPage() {
       const ext = blob.type.includes('webp') ? 'webp' : 'png'
       const path = `${user.id}/mascot-${kind}-${Date.now()}.${ext}`
       const { error: upErr } = await supabase.storage
-        .from('avatars').upload(path, blob, { contentType: blob.type })
+        .from('avatars').upload(path, blob, { contentType: blob.type, cacheControl: '31536000' })
       if (upErr) {
         setMascotErr(/bucket.*not.*found/i.test(upErr.message)
           ? 'Image storage missing — run upgrade-11.sql in Supabase first.'

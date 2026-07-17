@@ -951,7 +951,9 @@ function FriendsChat() {
       // checks (storage.foldername(name))[1] = auth.uid(), so a "chat-bg/…"
       // prefix was silently rejected. Same folder convention as avatar/mascot.
       const path = `${user.id}/chat-bg-${Date.now()}.jpg`
-      const { error } = await supabase.storage.from('avatars').upload(path, blob, { contentType: blob.type, upsert: true })
+      // immutable path (timestamped) → cache a year so repeat views never
+      // re-hit Supabase egress (free tier = 5 GB/mo)
+      const { error } = await supabase.storage.from('avatars').upload(path, blob, { contentType: blob.type, upsert: true, cacheControl: '31536000' })
       if (error) throw error
       const url = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
       await changeBg(makeCustomBg(url))
@@ -1193,7 +1195,7 @@ function FriendsChat() {
     const path = `${user.id}/${Date.now()}-${safeName}`
     const { error: upErr } = await supabase.storage
       .from('chat-media')
-      .upload(path, file, { contentType: file.type || undefined })
+      .upload(path, file, { contentType: file.type || undefined, cacheControl: '31536000' })
     if (upErr) {
       setUploading(false)
       setSendError(

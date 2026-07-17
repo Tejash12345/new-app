@@ -464,7 +464,7 @@ function CreateCapsuleModal({
     const ext = file.name.split('.').pop() || (kind === 'voice' ? 'webm' : 'bin')
     const path = `${userId}/${newId()}.${ext}`
     const { error: upErr } = await supabase.storage.from('capsules')
-      .upload(path, file, { contentType: file.type || undefined })
+      .upload(path, file, { contentType: file.type || undefined, cacheControl: '31536000' })
     if (upErr) throw upErr
     return supabase.storage.from('capsules').getPublicUrl(path).data.publicUrl
   }

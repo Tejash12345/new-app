@@ -190,7 +190,7 @@ export function StoriesBar() {
     try {
       const ext = (file.name.split('.').pop() || 'jpg').replace(/[^\w]+/g, '').slice(0, 5) || 'jpg'
       const path = `${user.id}/${Date.now()}.${ext}`
-      const { error: upErr } = await supabase.storage.from('stories').upload(path, file, { contentType: file.type || undefined })
+      const { error: upErr } = await supabase.storage.from('stories').upload(path, file, { contentType: file.type || undefined, cacheControl: '31536000' })
       if (upErr) {
         void noticeDialog(/bucket.*not.*found/i.test(upErr.message) ? 'Stories storage missing — run upgrade-14.sql in Supabase first.' : `Upload failed: ${upErr.message}`)
         return

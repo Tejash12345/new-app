@@ -1188,7 +1188,7 @@ function Composer({ open, onClose, onPosted }: { open: boolean; onClose: () => v
       const safe = file.name.replace(/[^\w.\-]+/g, '_').slice(-80)
       const path = `${user.id}/${Date.now()}-${safe}`
       const { error: upErr } = await supabase.storage
-        .from('feed-media').upload(path, file, { contentType: file.type || undefined })
+        .from('feed-media').upload(path, file, { contentType: file.type || undefined, cacheControl: '31536000' })
       if (upErr) {
         setBusy(false)
         setError(/bucket.*not.*found/i.test(upErr.message)
