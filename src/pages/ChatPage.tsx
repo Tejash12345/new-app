@@ -393,10 +393,11 @@ function FriendsChat() {
   const avatarFor = useAvatars()
   const [friends, setFriends] = useState<Friend[]>([])
   const [active, setActive] = useState<Friend | null>(null)
-  // the OPEN peer's freshest last_seen, fetched directly on open (+ refreshed on
-  // the tick) so status is right immediately — even arriving from a notification
-  // before the friends list or presence channel has synced
+  // the OPEN peer's freshest profile (name / avatar / last_seen), fetched directly
+  // on open (+ refreshed on the tick) so the name + status show immediately — even
+  // arriving from a notification before the friends list or presence has synced
   const [peerLastSeen, setPeerLastSeen] = useState<string | null>(null)
+  const [peerProfile, setPeerProfile] = useState<{ full_name?: string; avatar_url?: string } | null>(null)
   const [messages, setMessages] = useState<DMessage[]>([])
   const [input, setInput] = useState('')
   const [unread, setUnread] = useState<Record<string, number>>({})
@@ -605,10 +606,15 @@ function FriendsChat() {
   // header shows the true online state instantly — the friends list / presence
   // channel can lag by seconds when you land here from a push notification
   useEffect(() => {
-    if (!active?.friend_id) { setPeerLastSeen(null); return }
+    if (!active?.friend_id) { setPeerLastSeen(null); setPeerProfile(null); return }
     let cancelled = false
-    supabase.from('profiles').select('last_seen').eq('id', active.friend_id).single()
-      .then(({ data }) => { if (!cancelled && data) setPeerLastSeen((data as { last_seen?: string }).last_seen ?? null) })
+    supabase.from('profiles').select('full_name, avatar_url, last_seen').eq('id', active.friend_id).single()
+      .then(({ data }) => {
+        if (cancelled || !data) return
+        const d = data as { full_name?: string; avatar_url?: string; last_seen?: string }
+        setPeerLastSeen(d.last_seen ?? null)
+        setPeerProfile({ full_name: d.full_name, avatar_url: d.avatar_url })
+      })
     return () => { cancelled = true }
   }, [active?.friend_id, tick])
 
@@ -626,6 +632,7 @@ function FriendsChat() {
     setEditing(null)
     setMsgSearch(null)
     setStarOnly(false)
+    setPeerProfile(null)
     setStarred(new Set(loadStarred(pairKey)))
 
     supabase
@@ -1523,17 +1530,21 @@ function FriendsChat() {
               </button>
               {(() => {
                 // use the freshest record (friends reload every 15s) so last_seen is current,
-                // and prefer the directly-fetched peerLastSeen (accurate the instant we open)
+                // and prefer the directly-fetched peer profile — the name/avatar/status are
+                // then right the instant we open, even from a notification where `active`
+                // only carries the friend id (no name yet, friends list not loaded)
                 const fresh = friends.find((f) => f.friend_id === active.friend_id) ?? active
                 const bestSeen = peerLastSeen ?? fresh.last_seen
                 const on = isOnline(active.friend_id, bestSeen)
+                const peerName = (fresh.full_name || '').trim() || (peerProfile?.full_name || '').trim() || fname(active)
+                const peerAvatar = avatarFor(active.friend_id) || fresh.avatar_url || active.avatar_url || peerProfile?.avatar_url
                 return (
                   <>
-                    <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} online={on} size={9} />
+                    <Avatar id={active.friend_id} name={peerName} url={peerAvatar} online={on} size={9} />
                     {/* min-w-0 so long names truncate instead of pushing the
                         header buttons off a 320px screen */}
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-bold text-slate-900 dark:text-white">{fname(active)}</div>
+                      <div className="truncate font-bold text-slate-900 dark:text-white">{peerName}</div>
                       {typingUsers[active.friend_id] ? (
                         <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
                       ) : (
