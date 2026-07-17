@@ -179,7 +179,7 @@ export function CommandPalette() {
       const { data } = await supabase.rpc('search_users', { q })
       const rows = (data as { id: string; full_name: string; email: string; avatar_url?: string }[]) ?? []
       setPeople(rows.slice(0, 8).map((r) => {
-        const name = (r.full_name || '').trim() || (r.email || '').split('@')[0] || 'Student'
+        const name = (r.full_name || '').trim() || (r.email || '').split('@')[0] || 'Friend'
         return {
           id: `person-${r.id}`,
           label: name,

@@ -85,7 +85,7 @@ export function AuthPage() {
           </motion.div>
           <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">FocusLion</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            The student productivity app that guards your time.
+            The productivity app that guards your time.
           </p>
         </div>
 

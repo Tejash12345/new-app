@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorOff, MonitorUp, Music, Pause, Phone, PhoneOff, Play, Plus, RotateCcw, RotateCw, SwitchCamera, Video, VideoOff, Volume1, Volume2, X } from 'lucide-react'
+import { ChevronDown, Clapperboard, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorOff, MonitorUp, Music, Pause, Phone, PhoneOff, Play, Plus, RotateCcw, RotateCw, SwitchCamera, Video, VideoOff, Volume1, Volume2, X, Gauge, Repeat, Repeat1, Shuffle, Search, SlidersHorizontal, PictureInPicture2, Moon, Bookmark, Clock, History, ListMusic, Link2, VolumeX, ArrowUp, ArrowDown, Trash2, Zap, Smile, SkipForward, RefreshCw } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { callAudioStart, callAudioSpeaker, callAudioEnd } from '../lib/callAudio'
 import { hasNativeScreen, nativeScreenStart, nativeScreenStop } from '../lib/nativeScreen'
@@ -35,6 +35,8 @@ export type QueueItem = { qid: string; kind: 'youtube' | 'drive'; videoId?: stri
 
 export type TgPayload = {
   a: 'open' | 'state' | 'close' | 'emote' | 'join' | 'queue' | 'next' | 'float'
+    // advanced synced extras (forwarded to the overlay like every other tg event)
+    | 'speed' | 'loop' | 'countdown' | 'skipvote' | 'resync'
   from: string
   kind?: TogetherSession['kind']
   videoId?: string
@@ -51,6 +53,9 @@ export type TgPayload = {
   item?: QueueItem
   text?: string   // 'float' — chat message text to drift over the video
   mine?: boolean  // 'float' — true when it's the local user's own message
+  rate?: number   // 'speed' — synced playback rate (0.5–2)
+  on?: boolean    // 'loop' — repeat-current-video on/off
+  n?: number      // 'countdown' — seconds left in the shared 3-2-1 countdown
 }
 
 // reaction emojis for the watch-together bar (tap → floats up on both screens)
@@ -97,6 +102,8 @@ type YTPlayer = {
   getPlayerState: () => number
   mute: () => void
   unMute: () => void
+  setPlaybackRate: (r: number) => void
+  setVolume: (v: number) => void
   destroy: () => void
 }
 
@@ -104,6 +111,25 @@ function fmtTime(s: number) {
   const m = Math.floor(s / 60)
   return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 }
+
+// tiny localStorage helpers for the watch-together extras (history / playlists
+// / resume / bookmarks) — never throw, so private-mode or a full quota is safe
+function loadStore<T>(key: string, fallback: T): T {
+  try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback } catch { return fallback }
+}
+function saveStore(key: string, val: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(val)) } catch { /* quota / private mode */ }
+}
+
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
+// a wider emoji palette behind the "+" for reacting with anything
+const TG_EMOJIS_MORE = [
+  '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '🥲', '☺️', '😊', '😇', '🙂', '🙃', '😉', '😌',
+  '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🥳',
+  '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '☹️', '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤',
+  '😠', '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '🤗', '🤔', '🫡', '🤭', '🫢',
+  '🔥', '💯', '✨', '⭐', '🎉', '🎊', '👏', '🙌', '🙏', '💪', '👍', '👎', '👀', '💀', '🫶', '❤️',
+]
 
 // YouTube Data API — powers "More like this" + endless auto-play. A client
 // key is normal for this API; it should be restricted to YouTube Data API +
@@ -330,6 +356,65 @@ export function TogetherOverlay({
     setTimeout(() => setFloatMsgs((list) => list.filter((x) => x.id !== id)), 5200)
   }, [])
 
+  // ---------- advanced watch-together extras (all additive to the core sync) ----------
+  // synced playback speed (both phones)
+  const [speed, setSpeed] = useState(1)
+  const speedRef = useRef(1)
+  useEffect(() => { speedRef.current = speed })
+  // synced loop-current-video
+  const [loop, setLoop] = useState(false)
+  const loopRef = useRef(false)
+  useEffect(() => { loopRef.current = loop })
+  // per-DEVICE volume + mute (local, not synced — each person sets their own)
+  const [localVol, setLocalVol] = useState(1)
+  const [localMuted, setLocalMuted] = useState(false)
+  // night dimmer + fit mode (local viewing comfort)
+  const [dimmer, setDimmer] = useState(0)
+  const [fitCover, setFitCover] = useState(false)
+  // shared 3-2-1 countdown before playing together
+  const [countdown, setCountdown] = useState<number | null>(null)
+  const countdownRunning = useRef(false)
+  // skip-vote: advance only when BOTH tap skip within the window
+  const partnerSkipAt = useRef(0)
+  const mySkipAtRef = useRef(0)
+  const [myVotedSkip, setMyVotedSkip] = useState(false)
+  // reaction markers dropped on the seek bar (from either side's emotes)
+  const [seekMarks, setSeekMarks] = useState<{ id: number; pct: number; e: string }[]>([])
+  const markSeq = useRef(0)
+  // hype meter — a decaying count of recent reactions from both phones
+  const hypeTimes = useRef<number[]>([])
+  const [hype, setHype] = useState(0)
+  // panels
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [emojiOpen, setEmojiOpen] = useState(false)
+  const [searchQ, setSearchQ] = useState('')
+  const [searchResults, setSearchResults] = useState<YtSuggestion[]>([])
+  const [searchBusy, setSearchBusy] = useState(false)
+  // bookmarks for the current video (jump back to a moment) — local
+  const [bookmarks, setBookmarks] = useState<{ id: number; t: number }[]>([])
+  // sleep timer — auto-leave after N minutes
+  const [sleepMin, setSleepMin] = useState(0)
+  const sleepAt = useRef(0)
+  // resume-where-you-left-off offer (local, per video)
+  const [resumeAt, setResumeAt] = useState<number | null>(null)
+  const resumeDismissed = useRef(false)
+  // recently-watched + saved playlists (localStorage)
+  const [history, setHistory] = useState<QueueItem[]>(() => loadStore<QueueItem[]>('fl-tg-history', []))
+  const [playlists, setPlaylists] = useState<{ name: string; items: QueueItem[] }[]>(() => loadStore('fl-tg-playlists', []))
+  // how many videos we've rolled through this hangout
+  const [videosWatched, setVideosWatched] = useState(1)
+  // partner's play state (for the status dot)
+  const partnerPlayingRef = useRef(false)
+  const [partnerPlaying, setPartnerPlaying] = useState(false)
+  // live playback position for keyboard-shortcut seeking (avoids stale closures)
+  const curRef = useRef(0)
+
+  // a stable per-video key for localStorage (resume / bookmarks)
+  const videoKey = current.kind === 'youtube' ? `y:${current.videoId}`
+    : current.kind === 'drive' ? `d:${current.fileId}`
+    : `m:${current.msgId}`
+
   /** One face for both player types — every control goes through here. */
   const player = useCallback(() => {
     const yt = currentRef.current.kind === 'youtube' ? ytRef.current : null
@@ -343,8 +428,34 @@ export function TogetherOverlay({
       pause: () => { yt?.pauseVideo(); el?.pause() },
       seek: (v: number) => { yt?.seekTo(v, true); if (el) el.currentTime = v },
       mute: (m: boolean) => { if (yt) { if (m) yt.mute(); else yt.unMute() } if (el) el.muted = m },
+      rate: (r: number) => { try { yt?.setPlaybackRate(r) } catch { /* not ready */ } if (el) el.playbackRate = r },
+      vol: (v: number) => { try { yt?.setVolume(Math.round(v * 100)) } catch { /* not ready */ } if (el) el.volume = v },
+      el: () => el, // the raw <video> (null for YouTube) — used by Picture-in-Picture
     }
   }, [])
+
+  // a reaction bumps the hype meter (decays over ~6s) on BOTH phones
+  const bumpHype = useCallback(() => {
+    const now = Date.now()
+    hypeTimes.current = [...hypeTimes.current.filter((x) => now - x < 6000), now]
+    setHype(hypeTimes.current.length)
+  }, [])
+  // drop a reaction dot on the seek bar at a given % of the video
+  const pushMark = useCallback((e: string, pct: number) => {
+    const id = ++markSeq.current
+    setSeekMarks((list) => [...list.slice(-11), { id, pct: Math.max(0, Math.min(100, pct)), e }])
+    setTimeout(() => setSeekMarks((list) => list.filter((m) => m.id !== id)), 12000)
+  }, [])
+  /** React with an emoji — floats on both screens, drops a seek-bar marker, bumps hype. */
+  const react = useCallback((e: string) => {
+    pushEmote(e)
+    bumpHype()
+    const api = player()
+    const d = api.ready ? api.d() : 0
+    const t = api.ready ? api.t() : 0
+    if (d > 0) pushMark(e, (t / d) * 100)
+    sendTg({ a: 'emote', e, t })
+  }, [pushEmote, bumpHype, pushMark, player, sendTg])
 
   const broadcastState = useCallback((playing: boolean, t: number) => {
     const exp = expectedEcho.current
@@ -385,6 +496,7 @@ export function TogetherOverlay({
     setCur(0)
     setDur(0)
     setCurrent(sessionFromItem(item))
+    setVideosWatched((n) => n + 1)
     pushNotice(`▶ Up next: ${item.label}`)
     if (broadcast) sendTgRef.current({ a: 'next', item, items: remaining })
   }, [pushNotice])
@@ -417,10 +529,17 @@ export function TogetherOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessKey])
 
-  /** The video finished — queue first, else roll straight into a similar
-   *  video (endless auto-play), never a dead stop. */
+  /** The video finished — loop it, else queue, else roll straight into a
+   *  similar video (endless auto-play), never a dead stop. */
   const handleEnded = useCallback(() => {
     if (Date.now() < advanceLock.current) return
+    // loop-current: both phones hit ENDED ~together and restart on their own,
+    // so no broadcast (which would ping-pong); the heartbeat trims any drift
+    if (loopRef.current) {
+      const api = player()
+      if (api.ready) { api.seek(0); api.play(); setUiPlaying(true) }
+      return
+    }
     const next = queueRef.current[0]
     if (next) {
       advanceLock.current = Date.now() + 3000
@@ -434,7 +553,29 @@ export function TogetherOverlay({
       return
     }
     setUiPlaying(false)
-  }, [applyNext])
+  }, [applyNext, player])
+
+  /** Shared 3-2-1 countdown → both phones play together at zero. `broadcast`
+   *  is true on the phone that pressed the button (it tells the partner). */
+  const runCountdown = useCallback((n: number, broadcast: boolean) => {
+    if (countdownRunning.current) return
+    countdownRunning.current = true
+    if (broadcast) sendTgRef.current({ a: 'countdown', n })
+    navigator.vibrate?.(20)
+    setCountdown(n)
+    let left = n
+    const iv = setInterval(() => {
+      left -= 1
+      if (left > 0) { setCountdown(left); navigator.vibrate?.(20) }
+      else {
+        clearInterval(iv)
+        setCountdown(null)
+        countdownRunning.current = false
+        const api = player()
+        if (api.ready) { api.play(); setUiPlaying(true) }
+      }
+    }, 1000)
+  }, [player])
   function pushQueueItem(item: QueueItem) {
     const items = [...queueRef.current, item]
     setQueue(items)
@@ -442,16 +583,25 @@ export function TogetherOverlay({
     pushNotice('🎬 Added to Up Next — for both of you')
   }
   async function addToQueue() {
-    const yt = ytIdFrom(addUrl)
-    const drive = yt ? null : driveIdFrom(addUrl)
-    if (!yt && !drive) return
+    // accept a whole BATCH of links pasted at once (one per line or space-sep)
+    const tokens = addUrl.split(/[\s\n]+/).filter(Boolean)
+    const parsed = tokens
+      .map((tok) => { const y = ytIdFrom(tok); return y ? { kind: 'youtube' as const, id: y } : (() => { const d = driveIdFrom(tok); return d ? { kind: 'drive' as const, id: d } : null })() })
+      .filter(Boolean) as { kind: 'youtube' | 'drive'; id: string }[]
+    if (!parsed.length) return
     setAddUrl('')
     setAddOpen(false)
-    // queue entries carry the real video title so Up Next reads like a playlist
-    const label = yt ? (await fetchYtTitle(yt))?.slice(0, 48) ?? 'YouTube video' : 'Drive video'
-    pushQueueItem(yt
-      ? { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: yt, label }
-      : { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'drive', fileId: drive!, label })
+    const built: QueueItem[] = []
+    for (const p of parsed) {
+      const label = p.kind === 'youtube' ? (await fetchYtTitle(p.id))?.slice(0, 48) ?? 'YouTube video' : 'Drive video'
+      built.push(p.kind === 'youtube'
+        ? { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: p.id, label }
+        : { qid: `q${Date.now()}-${++qSeq.current}`, kind: 'drive', fileId: p.id, label })
+    }
+    const items = [...queueRef.current, ...built]
+    setQueue(items)
+    sendTgRef.current({ a: 'queue', items })
+    pushNotice(built.length > 1 ? `🎬 Added ${built.length} to Up Next` : '🎬 Added to Up Next — for both of you')
   }
   function removeFromQueue(qid: string) {
     const items = queueRef.current.filter((q) => q.qid !== qid)
@@ -465,6 +615,35 @@ export function TogetherOverlay({
       if (p.from === meId) return
       if (p.a === 'emote' && p.e) {
         pushEmote(p.e)
+        bumpHype()
+        // drop the partner's reaction on the seek bar at the moment they reacted
+        if (p.t != null) { const d = player().d(); if (d > 0) pushMark(p.e, (p.t / d) * 100) }
+        return
+      }
+      if (p.a === 'speed' && p.rate) {
+        setSpeed(p.rate)
+        player().rate(p.rate)
+        return
+      }
+      if (p.a === 'loop') {
+        setLoop(!!p.on)
+        pushNotice(p.on ? '🔁 Loop on' : '➡ Loop off')
+        return
+      }
+      if (p.a === 'countdown' && p.n != null) {
+        runCountdown(p.n, false)
+        return
+      }
+      if (p.a === 'skipvote') {
+        partnerSkipAt.current = Date.now()
+        if (Date.now() - mySkipAtRef.current < 9000) { setMyVotedSkip(false); handleEnded() }
+        else pushNotice(`⏭ ${partnerName} wants to skip — tap Skip to agree`)
+        return
+      }
+      if (p.a === 'resync') {
+        // partner asked us to re-broadcast where we are so they can snap to it
+        const api = player()
+        if (api.ready) sendTgRef.current({ a: 'state', playing: api.playing(), t: api.t(), at: Date.now(), hard: true })
         return
       }
       if (p.a === 'float' && p.text) {
@@ -502,6 +681,8 @@ export function TogetherOverlay({
       }
       if (p.a !== 'state' || p.t == null || p.at == null) return
       setPartnerHere(true)
+      partnerPlayingRef.current = !!p.playing
+      setPartnerPlaying(!!p.playing)
       // before this device's first tap: start muted automatically (silent
       // autoplay is allowed) and offer a tap-for-sound pill instead
       if (needsTapRef.current) {
@@ -665,7 +846,9 @@ export function TogetherOverlay({
       const api = player()
       if (!api.ready) return
       try {
-        setCur(api.t() || 0)
+        const t = api.t() || 0
+        curRef.current = t
+        setCur(t)
         setDur(api.d() || 0)
       } catch { /* player booting */ }
     }, 500)
@@ -685,6 +868,182 @@ export function TogetherOverlay({
   const title = current.kind === 'youtube'
     ? (ytTitle ?? 'YouTube video')
     : ('name' in current && current.name) ? current.name : 'Watching together'
+
+  // the current video as a queue/history/playlist entry
+  const currentItem: QueueItem | null = current.kind === 'youtube'
+    ? { qid: `c${current.videoId}`, kind: 'youtube', videoId: current.videoId, label: title }
+    : current.kind === 'drive'
+      ? { qid: `c${current.fileId}`, kind: 'drive', fileId: current.fileId, label: title }
+      : null
+
+  // re-apply per-device settings after every video swap (YouTube resets rate /
+  // volume on loadVideoById, so speed + volume must be pushed back on)
+  useEffect(() => {
+    const tid = setTimeout(() => {
+      const api = player()
+      if (!api.ready) return
+      api.rate(speedRef.current)
+      api.vol(localVol)
+      if (localMuted) api.mute(true)
+    }, 1200)
+    return () => clearTimeout(tid)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoKey])
+  // apply speed the instant it changes locally
+  useEffect(() => { const api = player(); if (api.ready) api.rate(speed) }, [speed, player])
+  // apply per-device volume + mute
+  useEffect(() => { const api = player(); if (api.ready) api.vol(localVol) }, [localVol, player])
+  useEffect(() => { const api = player(); if (api.ready) api.mute(localMuted) }, [localMuted, player])
+
+  // hype meter decays — recompute every second from the recent-reaction ring
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const now = Date.now()
+      hypeTimes.current = hypeTimes.current.filter((x) => now - x < 6000)
+      setHype(hypeTimes.current.length)
+    }, 1000)
+    return () => clearInterval(iv)
+  }, [])
+
+  // sleep timer — auto-leave the session after N minutes
+  useEffect(() => {
+    if (!sleepMin) { sleepAt.current = 0; return }
+    sleepAt.current = Date.now() + sleepMin * 60_000
+    const iv = setInterval(() => {
+      if (sleepAt.current && Date.now() >= sleepAt.current) { sendTgRef.current({ a: 'close' }); closeRef.current() }
+    }, 5000)
+    return () => clearInterval(iv)
+  }, [sleepMin])
+
+  // save playback position every few seconds → offer "Resume" next time
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const api = player()
+      if (api.ready && api.playing()) { const t = api.t(); if (t > 5) saveStore(`fl-tg-pos-${videoKey}`, t) }
+    }, 5000)
+    return () => clearInterval(iv)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoKey])
+  // on a new video: load its saved position (offer resume) + its bookmarks
+  useEffect(() => {
+    resumeDismissed.current = false
+    const saved = loadStore<number>(`fl-tg-pos-${videoKey}`, 0)
+    setResumeAt(saved > 30 ? saved : null)
+    setBookmarks(loadStore(`fl-tg-bm-${videoKey}`, []))
+    setSeekMarks([])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoKey])
+  // remember every video we watch → "Recently watched"
+  useEffect(() => {
+    if (!currentItem) return
+    const k = currentItem.videoId || currentItem.fileId
+    setHistory((prev) => {
+      const next = [currentItem, ...prev.filter((x) => (x.videoId || x.fileId) !== k)].slice(0, 24)
+      saveStore('fl-tg-history', next)
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoKey, title])
+
+  // desktop keyboard shortcuts (space / arrows / f / m) — ignored while typing
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      const el = ev.target as HTMLElement
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      if (ev.key === ' ') { ev.preventDefault(); togglePlay() }
+      else if (ev.key === 'ArrowLeft') seekBoth(Math.max(0, curRef.current - 5))
+      else if (ev.key === 'ArrowRight') seekBoth(curRef.current + 5)
+      else if (ev.key === 'f' || ev.key === 'F') toggleFs()
+      else if (ev.key === 'm' || ev.key === 'M') setLocalMuted((m) => !m)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ---- advanced control helpers (called from the UI) ----
+  function setSpeedBoth(r: number) { setSpeed(r); const api = player(); if (api.ready) api.rate(r); sendTg({ a: 'speed', rate: r }) }
+  function toggleLoop() { const on = !loopRef.current; setLoop(on); sendTg({ a: 'loop', on }); pushNotice(on ? '🔁 Loop on' : '➡ Loop off') }
+  function resyncNow() { sendTg({ a: 'resync' }); pushNotice(`🔄 Re-syncing with ${partnerName}…`) }
+  function voteSkip() {
+    const now = Date.now()
+    mySkipAtRef.current = now
+    if (now - partnerSkipAt.current < 9000) { setMyVotedSkip(false); handleEnded() }
+    else { setMyVotedSkip(true); sendTg({ a: 'skipvote' }); pushNotice(`⏭ Waiting for ${partnerName} to agree`); setTimeout(() => setMyVotedSkip(false), 9000) }
+  }
+  async function togglePiP() {
+    const el = player().el()
+    if (!el) { pushNotice('Picture-in-picture works for video files'); return }
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture()
+      else await el.requestPictureInPicture()
+    } catch { pushNotice('Picture-in-picture is not available here') }
+  }
+  function copyLink() {
+    const url = current.kind === 'youtube' ? `https://youtu.be/${current.videoId}?t=${Math.floor(cur)}`
+      : current.kind === 'drive' ? `https://drive.google.com/file/d/${current.fileId}/view` : ''
+    if (!url) { pushNotice('Nothing to copy for this item'); return }
+    navigator.clipboard?.writeText(url).then(() => pushNotice('🔗 Link copied'), () => pushNotice('Could not copy'))
+  }
+  function shuffleQueue() {
+    const arr = [...queueRef.current]
+    for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[arr[i], arr[j]] = [arr[j], arr[i]] }
+    setQueue(arr); sendTgRef.current({ a: 'queue', items: arr }); pushNotice('🔀 Queue shuffled')
+  }
+  function clearQueue() { setQueue([]); sendTgRef.current({ a: 'queue', items: [] }); pushNotice('🗑 Queue cleared') }
+  function moveQueue(qid: string, dir: -1 | 1) {
+    const arr = [...queueRef.current]
+    const i = arr.findIndex((q) => q.qid === qid)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= arr.length) return
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+    setQueue(arr); sendTgRef.current({ a: 'queue', items: arr })
+  }
+  function playNow(item: QueueItem) { applyNext(item, true) }
+  function addBookmark() {
+    const t = Math.floor(player().t())
+    const next = [...bookmarks, { id: Date.now(), t }].sort((a, b) => a.t - b.t).slice(-12)
+    setBookmarks(next); saveStore(`fl-tg-bm-${videoKey}`, next); pushNotice(`🔖 Bookmarked ${fmtTime(t)}`)
+  }
+  function removeBookmark(id: number) {
+    const next = bookmarks.filter((b) => b.id !== id)
+    setBookmarks(next); saveStore(`fl-tg-bm-${videoKey}`, next)
+  }
+  function savePlaylist() {
+    const items = [...(currentItem ? [currentItem] : []), ...queueRef.current]
+    if (!items.length) { pushNotice('Nothing to save yet'); return }
+    setPlaylists((prev) => {
+      const next = [{ name: title.slice(0, 40), items }, ...prev].slice(0, 12)
+      saveStore('fl-tg-playlists', next)
+      return next
+    })
+    pushNotice('💾 Saved to your playlists')
+  }
+  function loadPlaylist(pl: { name: string; items: QueueItem[] }) {
+    if (!pl.items.length) return
+    applyNext(pl.items[0], true, pl.items)
+    setMoreOpen(false); pushNotice(`▶ Playing “${pl.name}”`)
+  }
+  function deletePlaylist(idx: number) {
+    setPlaylists((prev) => { const next = prev.filter((_, i) => i !== idx); saveStore('fl-tg-playlists', next); return next })
+  }
+  async function runSearch() {
+    const q = searchQ.trim()
+    if (!q) return
+    setSearchBusy(true)
+    try {
+      const r = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=12&q=${encodeURIComponent(q)}&key=${YT_KEY}`)
+      const j = (await r.json()) as { items?: { id?: { videoId?: string }; snippet?: { title?: string; thumbnails?: { medium?: { url?: string } } } }[] }
+      setSearchResults((j.items ?? [])
+        .filter((i) => i.id?.videoId && i.snippet?.title)
+        .map((i) => ({
+          videoId: i.id!.videoId!,
+          title: (i.snippet!.title ?? '').replace(/&amp;/g, '&').replace(/&#39;/g, '’').replace(/&quot;/g, '"'),
+          thumb: i.snippet!.thumbnails?.medium?.url ?? '',
+        })))
+    } catch { pushNotice('Search failed — check the connection') }
+    finally { setSearchBusy(false) }
+  }
 
   /** First real tap on this device — unblocks playback and catches up to the partner. */
   function tapStart() {
@@ -783,10 +1142,18 @@ export function TogetherOverlay({
           {current.kind === 'media' && !current.isVideo
             ? <Music size={18} className="shrink-0 text-amber-400" />
             : <Clapperboard size={18} className="shrink-0 text-red-400" />}
-          <span className="truncate text-sm font-bold">{title} · with {partnerName}</span>
+          <span className="truncate text-sm font-bold">{title}</span>
+          {/* live partner status dot: green = with you & playing, amber = paused, grey = away */}
+          <span title={partnerHere ? (partnerPlaying ? `${partnerName} watching` : `${partnerName} paused`) : `${partnerName} away`}
+            className={cn('h-2 w-2 shrink-0 rounded-full', !partnerHere ? 'bg-white/30' : partnerPlaying ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400')} />
           <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 font-mono text-[10px] font-bold text-white/70">
             {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}
           </span>
+          {hype >= 3 && (
+            <span className="shrink-0 animate-pulse rounded-full bg-orange-500/25 px-2 py-0.5 text-[10px] font-black text-orange-300">
+              🔥 {hype}
+            </span>
+          )}
         </div>
         <button onClick={() => { sendTg({ a: 'close' }); onClose() }} aria-label="Leave together session"
           className="shrink-0 rounded-full p-2 text-white/70 hover:bg-white/10">
@@ -832,7 +1199,7 @@ export function TogetherOverlay({
                 src={driveStreamUrl(current.fileId)}
                 playsInline
                 preload="auto"
-                className="absolute inset-0 h-full w-full object-contain"
+                className={cn('absolute inset-0 h-full w-full', fitCover ? 'object-cover' : 'object-contain')}
                 onLoadStart={() => { driveProgressRef.current = Date.now() }}
                 onProgress={() => { driveProgressRef.current = Date.now() }}
                 onLoadedMetadata={(e) => {
@@ -865,7 +1232,7 @@ export function TogetherOverlay({
                 ref={mediaRef}
                 src={mediaUrl}
                 playsInline
-                className={cn('h-full w-full', current.isVideo ? 'object-contain' : 'opacity-0')}
+                className={cn('h-full w-full', current.isVideo ? (fitCover ? 'object-cover' : 'object-contain') : 'opacity-0')}
                 onLoadedMetadata={(e) => {
                   const v = e.currentTarget
                   if (v.videoWidth && v.videoHeight) setVideoAspect(v.videoWidth / v.videoHeight)
@@ -911,16 +1278,23 @@ export function TogetherOverlay({
               <RotateCcw size={16} />
             </button>
             <span className="shrink-0 font-mono text-[10px] font-bold text-white/85">{fmtTime(scrub ?? cur)}</span>
-            <input
-              type="range" min={0} max={Math.max(1, dur)} step={1}
-              value={Math.min(scrub ?? cur, Math.max(1, dur))}
-              onChange={(e) => setScrub(Number(e.target.value))}
-              onPointerUp={() => { if (scrub != null) { seekBoth(scrub); setScrub(null) } }}
-              onTouchEnd={() => { if (scrub != null) { seekBoth(scrub); setScrub(null) } }}
-              onKeyUp={() => { if (scrub != null) { seekBoth(scrub); setScrub(null) } }}
-              aria-label="Seek for both"
-              className="h-1.5 min-w-0 flex-1 cursor-pointer accent-amber-400"
-            />
+            {/* seek bar with live reaction markers floating just above it */}
+            <div className="relative flex min-w-0 flex-1 items-center">
+              {seekMarks.map((mk) => (
+                <span key={mk.id} className="pointer-events-none absolute -top-3 -translate-x-1/2 text-[11px]" style={{ left: `${mk.pct}%` }}>{mk.e}</span>
+              ))}
+              <input
+                type="range" min={0} max={Math.max(1, dur)} step={1}
+                value={Math.min(scrub ?? cur, Math.max(1, dur))}
+                onChange={(e) => setScrub(Number(e.target.value))}
+                onPointerUp={() => { if (scrub != null) { seekBoth(scrub); setScrub(null) } }}
+                onTouchEnd={() => { if (scrub != null) { seekBoth(scrub); setScrub(null) } }}
+                onKeyUp={() => { if (scrub != null) { seekBoth(scrub); setScrub(null) } }}
+                aria-label="Seek for both"
+                className="h-1.5 w-full cursor-pointer accent-amber-400"
+              />
+            </div>
+            <span className="shrink-0 font-mono text-[10px] font-bold text-white/50">-{fmtTime(Math.max(0, dur - cur))}</span>
             <button onClick={() => seekBoth(Math.min(dur || cur + 10, cur + 10))} aria-label="Forward 10 seconds"
               className="flex shrink-0 items-center rounded-full p-1 text-white/85 active:scale-90">
               <RotateCw size={16} />
@@ -1010,7 +1384,7 @@ export function TogetherOverlay({
           <div className="absolute inset-x-0 bottom-[52px] z-[9] flex h-[46%] flex-col rounded-t-2xl bg-black/80 backdrop-blur-sm">
             <div className="flex shrink-0 items-center gap-1 overflow-x-auto px-2 py-1">
               {TG_EMOJIS.map((e) => (
-                <button key={e} onClick={() => { pushEmote(e); sendTg({ a: 'emote', e }) }}
+                <button key={e} onClick={() => react(e)}
                   className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-base active:scale-90">
                   {e}
                 </button>
@@ -1078,6 +1452,27 @@ export function TogetherOverlay({
             </motion.div>
           ))}
         </div>
+        {/* night dimmer — a soft black veil for late-night watching (local) */}
+        {dimmer > 0 && <div className="pointer-events-none absolute inset-0 z-[15] bg-black" style={{ opacity: dimmer }} />}
+        {/* shared 3-2-1 countdown before playing together */}
+        {countdown != null && (
+          <div className="pointer-events-none absolute inset-0 z-[40] flex flex-col items-center justify-center gap-1 bg-black/60">
+            <motion.span key={countdown} initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+              className="text-7xl font-black text-white drop-shadow-lg">{countdown}</motion.span>
+            <span className="text-xs font-bold text-white/80">Playing together…</span>
+          </div>
+        )}
+        {/* resume-where-you-left-off */}
+        {resumeAt != null && !needsTap && (
+          <div className="absolute left-1/2 top-3 z-[30] flex -translate-x-1/2 items-center gap-1.5">
+            <button onClick={() => { seekBoth(resumeAt); setResumeAt(null) }}
+              className="whitespace-nowrap rounded-full bg-white px-3.5 py-1.5 text-xs font-black text-slate-900 shadow-xl active:scale-95">
+              ⏭ Resume from {fmtTime(resumeAt)}
+            </button>
+            <button onClick={() => { setResumeAt(null); resumeDismissed.current = true }} aria-label="Dismiss resume"
+              className="rounded-full bg-black/60 p-1.5 text-white/80 active:scale-90"><X size={13} /></button>
+          </div>
+        )}
       </div>
 
       <div className="shrink-0 px-4 py-1.5 text-center text-[11px] text-white/50">
@@ -1088,13 +1483,45 @@ export function TogetherOverlay({
             : `Waiting for ${partnerName} to join…`}
       </div>
 
+      {/* quick-tools strip — horizontally scrollable so it never overflows 360px */}
+      <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto px-3 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {([
+          { key: 'search', icon: <Search size={16} />, label: 'Search', on: false, fn: () => setSearchOpen(true) },
+          { key: 'speed', icon: <Gauge size={16} />, label: `${speed}×`, on: speed !== 1, fn: () => setSpeedBoth(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]) },
+          { key: 'loop', icon: loop ? <Repeat1 size={16} /> : <Repeat size={16} />, label: 'Loop', on: loop, fn: toggleLoop },
+          { key: 'cd', icon: <Zap size={16} />, label: '3·2·1', on: false, fn: () => runCountdown(3, true) },
+          { key: 'skip', icon: <SkipForward size={16} />, label: 'Skip', on: myVotedSkip, fn: voteSkip },
+          { key: 'sync', icon: <RefreshCw size={16} />, label: 'Re-sync', on: false, fn: resyncNow },
+          { key: 'bm', icon: <Bookmark size={16} />, label: 'Mark', on: false, fn: addBookmark },
+          { key: 'pip', icon: <PictureInPicture2 size={16} />, label: 'PiP', on: false, fn: () => void togglePiP() },
+          { key: 'emoji', icon: <Smile size={16} />, label: 'React', on: emojiOpen, fn: () => setEmojiOpen((o) => !o) },
+          { key: 'link', icon: <Link2 size={16} />, label: 'Copy', on: false, fn: copyLink },
+          { key: 'more', icon: <SlidersHorizontal size={16} />, label: 'More', on: moreOpen, fn: () => setMoreOpen(true) },
+        ] as const).map((t) => (
+          <button key={t.key} onClick={t.fn} aria-label={t.label}
+            className={cn('flex shrink-0 flex-col items-center gap-0.5 rounded-2xl px-2.5 py-1 text-[9px] font-bold transition active:scale-90',
+              t.on ? 'bg-brand-500/30 text-white ring-1 ring-brand-400/60' : 'bg-white/10 text-white/80 hover:bg-white/15')}>
+            {t.icon}
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </div>
+
       {/* Up Next — shared queue, auto-plays for both when a video ends */}
       <div className="shrink-0 px-3 pb-1">
         <div className="flex items-center gap-1.5 overflow-x-auto">
           <span className="shrink-0 text-[9px] font-bold uppercase tracking-widest text-white/40">Up next</span>
+          {queue.length > 1 && (
+            <button onClick={shuffleQueue} aria-label="Shuffle queue"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 active:scale-90"><Shuffle size={12} /></button>
+          )}
+          {queue.length > 0 && (
+            <button onClick={clearQueue} aria-label="Clear queue"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 active:scale-90"><Trash2 size={12} /></button>
+          )}
           {queue.map((q) => (
             <span key={q.qid} className="flex shrink-0 items-center gap-1 rounded-full bg-white/10 py-1 pl-2.5 pr-1 text-[11px] font-semibold text-white/85">
-              {q.label}
+              <button onClick={() => playNow(q)} className="max-w-[9rem] truncate active:scale-95" title={`Play “${q.label}” now`}>{q.label}</button>
               <button onClick={() => removeFromQueue(q.qid)} aria-label={`Remove ${q.label} from queue`}
                 className="rounded-full p-0.5 text-white/50 hover:bg-white/10">
                 <X size={11} />
@@ -1148,7 +1575,7 @@ export function TogetherOverlay({
           pinned at the very bottom and never hides behind the emojis */}
       <div className="flex shrink-0 items-center gap-1 overflow-x-auto px-3 py-1">
         {TG_EMOJIS.map((e) => (
-          <button key={e} onClick={() => { pushEmote(e); sendTg({ a: 'emote', e }) }}
+          <button key={e} onClick={() => react(e)}
             className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-base transition hover:bg-white/20 active:scale-90">
             {e}
           </button>
@@ -1161,6 +1588,190 @@ export function TogetherOverlay({
           fullscreen sheet when that's open) */}
       {!(fs && fsChat) && chatNode}
       </div>
+
+      {/* ---- react panel: full emoji grid + one-tap message chips ---- */}
+      {emojiOpen && (
+        <div className="fixed inset-0 z-[95] flex items-end" onClick={() => setEmojiOpen(false)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onClick={(e) => e.stopPropagation()}
+            className="relative max-h-[70vh] w-full overflow-y-auto rounded-t-3xl bg-slate-900 p-4 pb-6 ring-1 ring-white/10">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-black text-white">React</span>
+              <button onClick={() => setEmojiOpen(false)} aria-label="Close" className="rounded-full p-1.5 text-white/60 hover:bg-white/10"><X size={16} /></button>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {['😂 lol', '🔥 this part!', '⏭ skip?', '😍 love it', '👀 watch this', '🎵 tune!', '🤯 what', '🍿 iconic'].map((m) => (
+                <button key={m} onClick={() => { pushFloatMsg(m, true); sendTg({ a: 'float', text: m }); setEmojiOpen(false) }}
+                  className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/90 active:scale-95">{m}</button>
+              ))}
+            </div>
+            <div className="grid grid-cols-8 gap-1">
+              {TG_EMOJIS_MORE.map((e, i) => (
+                <button key={`${e}-${i}`} onClick={() => react(e)}
+                  className="rounded-xl py-1.5 text-2xl transition hover:scale-125 active:scale-90">{e}</button>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* ---- YouTube search: find & queue without leaving the room ---- */}
+      {searchOpen && (
+        <div className="fixed inset-0 z-[95] flex items-end" onClick={() => setSearchOpen(false)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onClick={(e) => e.stopPropagation()}
+            className="relative max-h-[80vh] w-full overflow-y-auto rounded-t-3xl bg-slate-900 p-4 pb-6 ring-1 ring-white/10">
+            <div className="mb-2 flex items-center gap-2">
+              <input autoFocus value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+                placeholder="Search YouTube…"
+                className="min-w-0 flex-1 rounded-full bg-white/10 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/40" />
+              <button onClick={runSearch} disabled={searchBusy || !searchQ.trim()}
+                className="shrink-0 rounded-full bg-gradient-to-r from-brand-500 to-brand-600 px-4 py-2.5 text-sm font-black text-white active:scale-95 disabled:opacity-40">
+                {searchBusy ? '…' : <Search size={16} />}
+              </button>
+              <button onClick={() => setSearchOpen(false)} aria-label="Close" className="shrink-0 rounded-full p-2 text-white/60 hover:bg-white/10"><X size={16} /></button>
+            </div>
+            <div className="space-y-2">
+              {searchResults.map((s) => (
+                <div key={s.videoId} className="flex items-center gap-2.5">
+                  {s.thumb && <img src={s.thumb} alt="" loading="lazy" className="aspect-video w-24 shrink-0 rounded-lg object-cover" />}
+                  <span className="line-clamp-2 min-w-0 flex-1 text-xs font-semibold text-white/85">{s.title}</span>
+                  <button onClick={() => { playNow({ qid: `s${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: s.videoId, label: s.title.slice(0, 48) }); setSearchOpen(false) }}
+                    className="shrink-0 rounded-full bg-white p-2 text-slate-900 active:scale-90" aria-label="Play now"><Play size={14} className="fill-current" /></button>
+                  <button onClick={() => pushQueueItem({ qid: `q${Date.now()}-${++qSeq.current}`, kind: 'youtube', videoId: s.videoId, label: s.title.slice(0, 48) })}
+                    className="shrink-0 rounded-full bg-white/15 p-2 text-white active:scale-90" aria-label="Add to queue"><Plus size={14} /></button>
+                </div>
+              ))}
+              {!searchBusy && searchResults.length === 0 && <p className="py-6 text-center text-xs text-white/40">Search for anything — play it now or add it to Up Next.</p>}
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* ---- More: volume, dimmer, fit, sleep timer, reorder queue,
+              bookmarks, history, playlists, stats ---- */}
+      {moreOpen && (
+        <div className="fixed inset-0 z-[95] flex items-end" onClick={() => setMoreOpen(false)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onClick={(e) => e.stopPropagation()}
+            className="relative max-h-[85vh] w-full space-y-4 overflow-y-auto rounded-t-3xl bg-slate-900 p-4 pb-8 ring-1 ring-white/10">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-black text-white">Watch controls</span>
+              <button onClick={() => setMoreOpen(false)} aria-label="Close" className="rounded-full p-1.5 text-white/60 hover:bg-white/10"><X size={16} /></button>
+            </div>
+
+            {/* volume + mute (this device only) */}
+            <div className="flex items-center gap-3">
+              <button onClick={() => setLocalMuted((m) => !m)} aria-label={localMuted ? 'Unmute' : 'Mute'} className="shrink-0 text-white/85">
+                {localMuted || localVol === 0 ? <VolumeX size={20} /> : localVol < 0.5 ? <Volume1 size={20} /> : <Volume2 size={20} />}
+              </button>
+              <input type="range" min={0} max={1} step={0.05} value={localMuted ? 0 : localVol}
+                onChange={(e) => { setLocalVol(Number(e.target.value)); if (localMuted) setLocalMuted(false) }}
+                aria-label="Volume" className="h-1.5 flex-1 cursor-pointer accent-brand-400" />
+              <span className="w-8 shrink-0 text-right text-[11px] font-bold text-white/60">{Math.round((localMuted ? 0 : localVol) * 100)}</span>
+            </div>
+
+            {/* night dimmer + fit mode */}
+            <div className="flex items-center gap-3">
+              <Moon size={18} className="shrink-0 text-white/85" />
+              <input type="range" min={0} max={0.8} step={0.05} value={dimmer} onChange={(e) => setDimmer(Number(e.target.value))}
+                aria-label="Screen dimmer" className="h-1.5 flex-1 cursor-pointer accent-brand-400" />
+              {isVideo && current.kind !== 'youtube' && (
+                <button onClick={() => setFitCover((f) => !f)}
+                  className={cn('shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold active:scale-95', fitCover ? 'bg-brand-500/30 text-white' : 'bg-white/10 text-white/80')}>
+                  {fitCover ? 'Fill' : 'Fit'}
+                </button>
+              )}
+            </div>
+
+            {/* sleep timer */}
+            <div>
+              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/40"><Clock size={12} /> Sleep timer {sleepMin > 0 && <span className="text-brand-300">· auto-leave in {sleepMin}m</span>}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {[0, 15, 30, 45, 60].map((m) => (
+                  <button key={m} onClick={() => setSleepMin(m)}
+                    className={cn('rounded-full px-3 py-1.5 text-xs font-bold active:scale-95', sleepMin === m ? 'bg-brand-500/30 text-white ring-1 ring-brand-400/60' : 'bg-white/10 text-white/80')}>
+                    {m === 0 ? 'Off' : `${m}m`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* reorder the shared queue */}
+            {queue.length > 0 && (
+              <div>
+                <div className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-white/40">Reorder Up Next</div>
+                <div className="space-y-1.5">
+                  {queue.map((q, i) => (
+                    <div key={q.qid} className="flex items-center gap-2 rounded-xl bg-white/5 px-2.5 py-1.5">
+                      <span className="min-w-0 flex-1 truncate text-xs text-white/85">{q.label}</span>
+                      <button onClick={() => moveQueue(q.qid, -1)} disabled={i === 0} aria-label="Move up" className="rounded-full p-1 text-white/70 disabled:opacity-30 active:scale-90"><ArrowUp size={14} /></button>
+                      <button onClick={() => moveQueue(q.qid, 1)} disabled={i === queue.length - 1} aria-label="Move down" className="rounded-full p-1 text-white/70 disabled:opacity-30 active:scale-90"><ArrowDown size={14} /></button>
+                      <button onClick={() => playNow(q)} aria-label="Play now" className="rounded-full bg-white/15 p-1 text-white active:scale-90"><Play size={12} className="fill-current" /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* bookmarks for this video */}
+            {bookmarks.length > 0 && (
+              <div>
+                <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/40"><Bookmark size={12} /> Bookmarks</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {bookmarks.map((b) => (
+                    <span key={b.id} className="flex items-center gap-1 rounded-full bg-white/10 py-1 pl-2.5 pr-1 text-[11px] font-mono font-bold text-white/85">
+                      <button onClick={() => seekBoth(b.t)} className="active:scale-95">{fmtTime(b.t)}</button>
+                      <button onClick={() => removeBookmark(b.id)} aria-label="Remove bookmark" className="rounded-full p-0.5 text-white/50"><X size={10} /></button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* saved playlists */}
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/40"><ListMusic size={12} /> Playlists</span>
+                <button onClick={savePlaylist} className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/85 active:scale-95">Save current</button>
+              </div>
+              {playlists.length === 0 ? <p className="text-[11px] text-white/35">Save this video + queue as a playlist to replay later.</p> : (
+                <div className="space-y-1.5">
+                  {playlists.map((pl, i) => (
+                    <div key={i} className="flex items-center gap-2 rounded-xl bg-white/5 px-2.5 py-1.5">
+                      <button onClick={() => loadPlaylist(pl)} className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-white/85 active:scale-95">{pl.name} <span className="text-white/40">· {pl.items.length}</span></button>
+                      <button onClick={() => deletePlaylist(i)} aria-label="Delete playlist" className="rounded-full p-1 text-white/50 active:scale-90"><Trash2 size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* recently watched */}
+            {history.length > 0 && (
+              <div>
+                <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/40"><History size={12} /> Recently watched</div>
+                <div className="space-y-1.5">
+                  {history.slice(0, 8).map((h) => (
+                    <button key={h.qid} onClick={() => { playNow({ ...h, qid: `h${Date.now()}-${++qSeq.current}` }); setMoreOpen(false) }}
+                      className="flex w-full items-center gap-2 rounded-xl bg-white/5 px-2.5 py-1.5 text-left active:scale-95">
+                      <Play size={11} className="shrink-0 fill-current text-white/60" />
+                      <span className="min-w-0 flex-1 truncate text-xs text-white/85">{h.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* session stats */}
+            <div className="flex items-center justify-around rounded-2xl bg-white/5 py-2.5 text-center">
+              <div><div className="text-lg font-black text-white">{Math.floor(elapsed / 60)}m</div><div className="text-[10px] text-white/40">together</div></div>
+              <div><div className="text-lg font-black text-white">{videosWatched}</div><div className="text-[10px] text-white/40">videos</div></div>
+              <div><div className="text-lg font-black text-white">{speed}×</div><div className="text-[10px] text-white/40">speed</div></div>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </motion.div>
   )
 }

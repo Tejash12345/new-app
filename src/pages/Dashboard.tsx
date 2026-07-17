@@ -21,7 +21,7 @@ export function Dashboard() {
 
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
-  const firstName = (profile?.full_name || 'Student').split(' ')[0]
+  const firstName = (profile?.full_name || profile?.settings?.role || 'Friend').split(' ')[0]
   const [quote, author] = quoteOfTheDay()
 
   const today = todayKey()

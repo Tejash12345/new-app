@@ -15,6 +15,9 @@ export type Profile = {
 export type Settings = {
   leaderboard?: boolean
   sound?: boolean
+  /** user-facing identity/occupation shown on the profile (Student, Professional,
+   *  Parent, Teacher, …) — editable; the app no longer assumes everyone's a student */
+  role?: string
   notifications?: {
     study?: boolean
     deadlines?: boolean

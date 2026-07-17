@@ -362,8 +362,10 @@ export function Layout() {
                   </div>,
                 )}
                 <div className="min-w-0">
-                  <div className="truncate text-lg font-bold text-slate-900 dark:text-white">{profile?.full_name || 'Student'}</div>
-                  <div className="truncate text-xs text-slate-500">{profile?.email}</div>
+                  <div className="truncate text-lg font-bold text-slate-900 dark:text-white">{profile?.full_name || 'Friend'}</div>
+                  {profile?.settings?.role
+                    ? <div className="truncate text-xs font-semibold text-brand-500">{profile.settings.role}</div>
+                    : <div className="truncate text-xs text-slate-500">{profile?.email}</div>}
                 </div>
               </div>
               <div className="mx-2 my-2 flex items-center justify-between rounded-2xl bg-amber-400/15 px-4 py-2.5 text-sm font-bold text-amber-600 dark:text-amber-300">

@@ -169,7 +169,7 @@ export function FriendsPage() {
   }
 
   return (
-    <Page title="Friends" subtitle="Connect with other students, cheer each other on, study together. 🦁">
+    <Page title="Friends" subtitle="Connect with friends, cheer each other on, focus together. 🦁">
       {toast && (
         <motion.div
           initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
@@ -183,7 +183,7 @@ export function FriendsPage() {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* find friends */}
         <GlassCard>
-          <SectionTitle>Find students</SectionTitle>
+          <SectionTitle>Find people</SectionTitle>
           <div className="relative">
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <Input
@@ -197,7 +197,7 @@ export function FriendsPage() {
           <div className="mt-3 space-y-2">
             {searching && <p className="py-4 text-center text-sm text-slate-400">Searching…</p>}
             {!searching && query.trim().length >= 2 && results.length === 0 && (
-              <p className="py-4 text-center text-sm text-slate-400">No students found for "{query}".</p>
+              <p className="py-4 text-center text-sm text-slate-400">No people found for "{query}".</p>
             )}
             {results.map((r) => {
               const already = friendIds.has(r.id)
@@ -224,7 +224,7 @@ export function FriendsPage() {
           {query.trim().length < 2 && (
             <div className="mt-2">
               <div className="mb-2 mt-1 text-xs font-bold uppercase tracking-widest text-slate-400">
-                Discover students
+                Discover people
               </div>
               {suggestedFiltered.length === 0 ? (
                 <Empty emoji="🦁" text={'No one else here yet.\nInvite friends with the Share link on the Get App page!'} />
@@ -310,7 +310,7 @@ export function FriendsPage() {
             )}
 
             {accepted.length === 0 ? (
-              <Empty emoji="🤝" text="No friends yet. Search for students and send a request!" />
+              <Empty emoji="🤝" text="No friends yet. Search for people and send a request!" />
             ) : (
               <div className="space-y-2">
                 {accepted

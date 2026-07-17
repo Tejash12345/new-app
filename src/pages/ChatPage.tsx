@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video, Wand2, Pencil, Check } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video, Wand2, Pencil, Check, Search, Star, Copy, ArrowDown } from 'lucide-react'
 import { ChatBackground } from '../components/ChatBackground'
 import { CHAT_BGS, isCustomBg, customBgUrl, makeCustomBg, type ChatBgId } from '../lib/chatBg'
 import { prepareMascotImage } from '../lib/mascot'
@@ -80,6 +80,21 @@ function reactionCounts(r: Record<string, string>) {
 }
 
 /** One-line preview of a message for reply quotes (media become icons). */
+// a short, all-emoji message renders large (WhatsApp-style): contains at least
+// one emoji and no letters / digits / punctuation (ZWJ + skin tones are fine)
+function isEmojiOnly(s?: string) {
+  const t = (s ?? '').replace(/\s/g, '')
+  if (!t || [...t].length > 12) return false
+  return /\p{Extended_Pictographic}/u.test(t) && !/[\p{L}\p{N}\p{P}]/u.test(t)
+}
+// starred/bookmarked message ids, persisted per conversation
+function loadStarred(pairKey: string): string[] {
+  try { return JSON.parse(localStorage.getItem(`fl-chat-star-${pairKey}`) || '[]') as string[] } catch { return [] }
+}
+function saveStarred(pairKey: string, ids: string[]) {
+  try { localStorage.setItem(`fl-chat-star-${pairKey}`, JSON.stringify(ids)) } catch { /* quota / private mode */ }
+}
+
 function snippetOf(m: DMessage) {
   if (m.kind === 'image') return '📷 Photo'
   if (m.kind === 'audio') return '🎤 Voice message'
@@ -129,7 +144,7 @@ type Friend = { friend_id: string; full_name: string; email: string; avatar_url?
 function fname(f: Friend) {
   const n = (f.full_name || '').trim()
   if (n) return n
-  return f.email ? f.email.split('@')[0] : 'Student'
+  return f.email ? f.email.split('@')[0] : 'Friend'
 }
 
 // WhatsApp-style timestamps: a small time on every bubble, and a centered
@@ -333,7 +348,7 @@ export function ChatPage() {
   // Friends messages. The in-page toggle still switches between the two.
   const [mode, setMode] = useState<'friends' | 'rooms'>(pathname.startsWith('/community') ? 'rooms' : 'friends')
   return (
-    <Page title="Chat" subtitle="Message your friends privately, or join the student community. 🦁">
+    <Page title="Chat" subtitle="Message your friends privately, or join the community. 🦁">
       <div className="mb-4 flex gap-2">
         {(['friends', 'rooms'] as const).map((m) => (
           <button key={m} onClick={() => setMode(m)}
@@ -354,7 +369,7 @@ type Person = { id: string; full_name: string; email: string; avatar_url?: strin
 function pname(p: Person) {
   const n = (p.full_name || '').trim()
   if (n) return n
-  return p.email ? p.email.split('@')[0] : 'Student'
+  return p.email ? p.email.split('@')[0] : 'Friend'
 }
 
 /** "last seen 5 mins ago" style label from a heartbeat timestamp. */
@@ -378,6 +393,10 @@ function FriendsChat() {
   const avatarFor = useAvatars()
   const [friends, setFriends] = useState<Friend[]>([])
   const [active, setActive] = useState<Friend | null>(null)
+  // the OPEN peer's freshest last_seen, fetched directly on open (+ refreshed on
+  // the tick) so status is right immediately — even arriving from a notification
+  // before the friends list or presence channel has synced
+  const [peerLastSeen, setPeerLastSeen] = useState<string | null>(null)
   const [messages, setMessages] = useState<DMessage[]>([])
   const [input, setInput] = useState('')
   const [unread, setUnread] = useState<Record<string, number>>({})
@@ -385,6 +404,16 @@ function FriendsChat() {
   const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({})
   const [people, setPeople] = useState<Person[]>([])
   const [sentTo, setSentTo] = useState<Set<string>>(new Set())
+  // in-chat message search (null = closed) + "starred only" filter + match nav
+  const [msgSearch, setMsgSearch] = useState<string | null>(null)
+  const [starOnly, setStarOnly] = useState(false)
+  // starred/bookmarked messages for this conversation (localStorage, per pair)
+  const [starred, setStarred] = useState<Set<string>>(new Set())
+  // scroll-to-bottom pill when the user has scrolled up
+  const [showScrollDown, setShowScrollDown] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // tiny transient confirmation (e.g. "Copied")
+  const [toast, setToast] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recSeconds, setRecSeconds] = useState(0)
@@ -443,7 +472,7 @@ function FriendsChat() {
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [suggestBusy, setSuggestBusy] = useState(false)
-  const [, setTick] = useState(0)
+  const [tick, setTick] = useState(0)
   const channelRef = useRef<RealtimeChannel | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const activeIdRef = useRef<string | null>(null)
@@ -572,6 +601,17 @@ function FriendsChat() {
     return () => { clearInterval(t); clearInterval(tick) }
   }, [user?.id])
 
+  // fetch the open peer's live last_seen right away (and every 20s tick) so the
+  // header shows the true online state instantly — the friends list / presence
+  // channel can lag by seconds when you land here from a push notification
+  useEffect(() => {
+    if (!active?.friend_id) { setPeerLastSeen(null); return }
+    let cancelled = false
+    supabase.from('profiles').select('last_seen').eq('id', active.friend_id).single()
+      .then(({ data }) => { if (!cancelled && data) setPeerLastSeen((data as { last_seen?: string }).last_seen ?? null) })
+    return () => { cancelled = true }
+  }, [active?.friend_id, tick])
+
   const pairKey = useMemo(() => {
     if (!user || !active) return ''
     return [user.id, active.friend_id].sort().join('__')
@@ -584,6 +624,9 @@ function FriendsChat() {
     setMessages([])
     setReplyTo(null)
     setEditing(null)
+    setMsgSearch(null)
+    setStarOnly(false)
+    setStarred(new Set(loadStarred(pairKey)))
 
     supabase
       .from('direct_messages')
@@ -976,6 +1019,14 @@ function FriendsChat() {
 
   // hide expired messages immediately; the 20s presence tick re-runs this
   const visible = messages.filter((m) => !m.expires_at || new Date(m.expires_at).getTime() > Date.now())
+  // in-chat search / starred filter: when the search bar is open, only matching
+  // (or starred) messages render — the fastest way to find an old message
+  const searchQ = (msgSearch ?? '').trim().toLowerCase()
+  const shown = msgSearch === null
+    ? visible
+    : visible.filter((m) =>
+        (!starOnly || starred.has(m.id)) &&
+        (!searchQ || (m.body || '').toLowerCase().includes(searchQ) || (m.file_name || '').toLowerCase().includes(searchQ)))
 
   // physical cleanup of expired messages — either side may delete them
   // (upgrade-32 policy), including bucket files and the local media vault
@@ -997,6 +1048,22 @@ function FriendsChat() {
     setMessages((list) => list.filter((m) => !expired.some((e) => e.id === m.id)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, user?.id, active?.friend_id])
+
+  function flash(msg: string) { setToast(msg); setTimeout(() => setToast(null), 1500) }
+  /** Star / unstar a message (bookmarks, saved locally per conversation). */
+  function toggleStar(id: string) {
+    setStarred((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      saveStarred(pairKey, [...next])
+      return next
+    })
+  }
+  /** Copy a message's text to the clipboard. */
+  function copyMsg(text: string) {
+    navigator.clipboard?.writeText(text).then(() => flash('Copied'), () => flash('Could not copy'))
+    setReactFor(null)
+  }
 
   /** Tell the other side (and the DB) how far I've read — throttled. */
   function markRead() {
@@ -1394,7 +1461,7 @@ function FriendsChat() {
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{pname(p)}</div>
                         <div className={cn('text-xs', online ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
-                          {online ? '● Online' : 'Student'}
+                          {online ? '● Online' : 'Offline'}
                         </div>
                       </div>
                       {sent ? (
@@ -1455,9 +1522,11 @@ function FriendsChat() {
                 <ArrowLeft size={22} />
               </button>
               {(() => {
-                // use the freshest record (friends reload every 15s) so last_seen is current
+                // use the freshest record (friends reload every 15s) so last_seen is current,
+                // and prefer the directly-fetched peerLastSeen (accurate the instant we open)
                 const fresh = friends.find((f) => f.friend_id === active.friend_id) ?? active
-                const on = isOnline(active.friend_id, fresh.last_seen)
+                const bestSeen = peerLastSeen ?? fresh.last_seen
+                const on = isOnline(active.friend_id, bestSeen)
                 return (
                   <>
                     <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} online={on} size={9} />
@@ -1469,7 +1538,7 @@ function FriendsChat() {
                         <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
                       ) : (
                         <div className={cn('text-xs', on ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
-                          {on ? '● Online now' : lastSeenLabel(fresh.last_seen)}
+                          {on ? '● Online now' : lastSeenLabel(bestSeen)}
                         </div>
                       )}
                     </div>
@@ -1480,6 +1549,11 @@ function FriendsChat() {
                   `relative` so every dropdown anchors to the cluster's right edge (not a
                   single button) and opens fully on-screen */}
               <div className="relative ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
+              {/* search this conversation */}
+              <button onClick={() => setMsgSearch((s) => (s === null ? '' : null))} aria-label="Search messages"
+                className={cn('rounded-full p-2 transition hover:bg-slate-500/10', msgSearch !== null ? 'text-brand-500' : 'text-slate-400')}>
+                <Search size={18} />
+              </button>
               {/* Together — synced YouTube / music + live voice call */}
               <div>
                 <button onClick={() => setTgMenuOpen((o) => !o)} aria-label="Together menu"
@@ -1651,7 +1725,26 @@ function FriendsChat() {
               </motion.div>
             )}
 
-            <div className="flex-1 space-y-2 overflow-y-auto pr-1">
+            {/* in-chat search bar */}
+            {msgSearch !== null && (
+              <div className="mb-2 flex items-center gap-2 rounded-2xl border border-slate-200/60 bg-white/70 px-3 py-1.5 dark:border-white/10 dark:bg-white/10">
+                <Search size={15} className="shrink-0 text-slate-400" />
+                <input autoFocus value={msgSearch} onChange={(e) => setMsgSearch(e.target.value)} placeholder="Search this chat…"
+                  className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-white" />
+                <span className="shrink-0 text-[11px] font-semibold text-slate-400">{shown.length}</span>
+                <button onClick={() => setStarOnly((v) => !v)} aria-label="Show starred only"
+                  className={cn('shrink-0 rounded-full p-1.5 transition', starOnly ? 'text-amber-400' : 'text-slate-400 hover:text-amber-400')}>
+                  <Star size={16} className={cn(starOnly && 'fill-current')} />
+                </button>
+                <button onClick={() => { setMsgSearch(null); setStarOnly(false) }} aria-label="Close search"
+                  className="shrink-0 rounded-full p-1.5 text-slate-400 hover:bg-slate-500/10"><X size={15} /></button>
+              </div>
+            )}
+
+            <div ref={scrollRef} onScroll={(e) => {
+              const el = e.currentTarget
+              setShowScrollDown(el.scrollHeight - el.scrollTop - el.clientHeight > 320)
+            }} className="relative flex-1 space-y-2 overflow-y-auto pr-1">
               {ttl > 0 && (
                 <div className="flex justify-center py-1">
                   <span className="flex items-center gap-1.5 rounded-full bg-brand-500/10 px-3 py-1 text-[11px] font-semibold text-brand-500">
@@ -1659,11 +1752,11 @@ function FriendsChat() {
                   </span>
                 </div>
               )}
-              {visible.length === 0 ? (
+              {shown.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-center text-sm text-slate-400">
-                  Say hi to {fname(active).split(' ')[0]}! 👋
+                  {msgSearch !== null ? (starOnly ? 'No starred messages yet.' : `No messages match “${msgSearch}”.`) : <>Say hi to {fname(active).split(' ')[0]}! 👋</>}
                 </div>
-              ) : visible.map((m, i) => {
+              ) : shown.map((m, i) => {
                 const mine = m.sender_id === user?.id
                 const time = (m.expires_at ? '⏱ ' : '') + msgTime(m.created_at)
                 // WhatsApp ticks on my bubbles: ✓ sent → ✓✓ once they read it
@@ -1695,7 +1788,7 @@ function FriendsChat() {
                 )
                 return (
                   <Fragment key={m.id}>
-                    {isNewDay(visible[i - 1]?.created_at, m.created_at) && (
+                    {isNewDay(shown[i - 1]?.created_at, m.created_at) && (
                       <div className="flex justify-center py-1.5">
                         <span className="rounded-full bg-slate-500/10 px-3 py-1 text-[11px] font-semibold text-slate-500 dark:bg-white/10 dark:text-slate-300">
                           {dayLabel(m.created_at)}
@@ -1744,6 +1837,26 @@ function FriendsChat() {
                             </>
                           )}
                         </motion.div>
+                        {/* action row — Star / Copy / Reply, WhatsApp long-press style */}
+                        {!reactMore && (
+                          <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                            className={cn('relative z-30 mb-1 flex w-fit max-w-[calc(100vw-2.5rem)] items-center gap-0.5 rounded-full border border-slate-200 bg-white px-1 py-1 shadow-xl dark:border-white/10 dark:bg-slate-900', mine && 'ml-auto')}>
+                            <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => { toggleStar(m.id); setReactFor(null) }}
+                              className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
+                              <Star size={14} className={cn(starred.has(m.id) && 'fill-amber-400 text-amber-400')} /> {starred.has(m.id) ? 'Starred' : 'Star'}
+                            </button>
+                            {(!m.kind || m.kind === 'text') && m.body && (
+                              <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => copyMsg(m.body)}
+                                className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
+                                <Copy size={13} /> Copy
+                              </button>
+                            )}
+                            <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => { setReplyTo(m); setReactFor(null) }}
+                              className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
+                              <Reply size={13} /> Reply
+                            </button>
+                          </motion.div>
+                        )}
                       </>
                     )}
                     <SwipeReply onReply={() => setReplyTo(m)}>
@@ -1839,11 +1952,14 @@ function FriendsChat() {
                         onPointerUp={pressCancel}
                         onPointerCancel={pressCancel}
                         onPointerLeave={pressCancel}
-                        onDoubleClick={() => setReactFor(m)}
-                        className={cn('min-w-0 max-w-[70vw] select-none break-words [overflow-wrap:anywhere] sm:max-w-md rounded-2xl text-sm',
+                        onDoubleClick={() => react(m, '❤️')}
+                        className={cn('relative min-w-0 max-w-[70vw] select-none break-words [overflow-wrap:anywhere] sm:max-w-md rounded-2xl text-sm',
                         m.kind === 'image' && m.file_url ? 'overflow-hidden p-1' : 'px-3.5 py-2',
                         mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
                              : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
+                        {starred.has(m.id) && (
+                          <Star size={12} className={cn('absolute -left-1 -top-1 fill-amber-400 text-amber-400 drop-shadow', mine && '-right-1 left-auto')} />
+                        )}
                         {quoteBlock}
                         {m.kind === 'image' ? (
                           <WithLocalMedia m={m} onCached={() => markDelivered(m)}>
@@ -1883,7 +1999,7 @@ function FriendsChat() {
                           </WithLocalMedia>
                         ) : (
                           <>
-                            {m.body}
+                            {isEmojiOnly(m.body) ? <span className="text-4xl leading-tight">{m.body}</span> : m.body}
                             {/* WhatsApp-style inline time, bottom-right of the bubble */}
                             <span className={cn('float-right ml-2 mt-1.5 text-[10px] leading-none', mine ? 'text-white/70' : 'text-slate-400')}>{m.edited_at ? 'edited · ' : ''}{time}{tick}</span>
                           </>
@@ -1938,6 +2054,20 @@ function FriendsChat() {
               })}
               <div ref={bottomRef} />
             </div>
+
+            {/* jump-to-latest button when scrolled up */}
+            {showScrollDown && msgSearch === null && (
+              <button onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })} aria-label="Scroll to latest"
+                className="absolute bottom-20 right-3 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-700 shadow-lg ring-1 ring-slate-200 active:scale-90 dark:bg-slate-800 dark:text-slate-100 dark:ring-white/10">
+                <ArrowDown size={18} />
+              </button>
+            )}
+            {/* transient confirmation toast (e.g. Copied) */}
+            {toast && (
+              <div className="pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-900/90 px-4 py-2 text-xs font-bold text-white shadow-xl dark:bg-white/90 dark:text-slate-900">
+                {toast}
+              </div>
+            )}
 
             {sendError && (
               <div className="mt-2 rounded-2xl bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-500">

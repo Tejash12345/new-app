@@ -63,6 +63,8 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 export function SettingsPage() {
   const { profile, updateProfile, refreshProfile, user, signOut } = useAuth()
   const [name, setName] = useState(profile?.full_name ?? '')
+  const [role, setRole] = useState(profile?.settings?.role ?? '')
+  const [roleSaved, setRoleSaved] = useState(false)
   const [saved, setSaved] = useState(false)
   const [privacyErr, setPrivacyErr] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -227,7 +229,8 @@ export function SettingsPage() {
               </span>
             </button>
             <div className="min-w-0">
-              <div className="truncate font-bold text-slate-900 dark:text-white">{profile?.full_name || 'Student'}</div>
+              <div className="truncate font-bold text-slate-900 dark:text-white">{profile?.full_name || 'Friend'}</div>
+              {settings.role && <div className="truncate text-xs font-semibold text-brand-500">{settings.role}</div>}
               <div className="truncate text-sm text-slate-500">{user?.email}</div>
               <div className="mt-1 flex items-center gap-3">
                 <button
@@ -260,6 +263,28 @@ export function SettingsPage() {
               setSaved(true); setTimeout(() => setSaved(false), 1500)
             }}>{saved ? '✓' : 'Save'}</Button>
           </div>
+
+          {/* Your role — the app used to assume everyone's a student; now you
+              choose what shows on your profile (or type your own). */}
+          <label className="mb-1 mt-4 block text-xs font-bold uppercase tracking-wide text-slate-400">I am a…</label>
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {['Student', 'Professional', 'Parent', 'Teacher', 'Creator', 'Entrepreneur', 'Learner'].map((r) => (
+              <button key={r} type="button"
+                onClick={async () => { setRole(r); await updateProfile({ settings: { ...settings, role: r } }); setRoleSaved(true); setTimeout(() => setRoleSaved(false), 1500) }}
+                className={cn('rounded-full px-3 py-1.5 text-xs font-semibold transition active:scale-95',
+                  (role || 'Student') === r ? 'bg-brand-500 text-white' : 'bg-slate-500/10 text-slate-600 dark:bg-white/10 dark:text-slate-300')}>
+                {r}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Or type your own (e.g. Doctor, Founder)" maxLength={40} />
+            <Button onClick={async () => {
+              await updateProfile({ settings: { ...settings, role: role.trim() } })
+              setRoleSaved(true); setTimeout(() => setRoleSaved(false), 1500)
+            }}>{roleSaved ? '✓' : 'Save'}</Button>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">Shown on your profile instead of “Student”. Leave blank to hide it.</p>
         </GlassCard>
 
         <GlassCard>
