@@ -18,6 +18,7 @@ import { cn } from '../lib/utils'
 import { callAudioStart, callAudioSpeaker, callAudioEnd } from '../lib/callAudio'
 import { hasNativeScreen, nativeScreenStart, nativeScreenStop } from '../lib/nativeScreen'
 import { SUPABASE_URL } from '../lib/supabase'
+import { haptic } from '../lib/prefs'
 import { ChatBackground } from './ChatBackground'
 import type { ChatBgId } from '../lib/chatBg'
 
@@ -561,12 +562,12 @@ export function TogetherOverlay({
     if (countdownRunning.current) return
     countdownRunning.current = true
     if (broadcast) sendTgRef.current({ a: 'countdown', n })
-    navigator.vibrate?.(20)
+    haptic(20)
     setCountdown(n)
     let left = n
     const iv = setInterval(() => {
       left -= 1
-      if (left > 0) { setCountdown(left); navigator.vibrate?.(20) }
+      if (left > 0) { setCountdown(left); haptic(20) }
       else {
         clearInterval(iv)
         setCountdown(null)
@@ -664,7 +665,7 @@ export function TogetherOverlay({
       if (p.a === 'join') {
         setPartnerHere(true)
         pushNotice(`🎉 ${partnerName} joined the room`)
-        navigator.vibrate?.(15)
+        haptic(15)
         // greet the newcomer with our position — playing OR paused — plus
         // the queue, so their room matches ours exactly
         const api = player()
@@ -2260,7 +2261,7 @@ export function useVoiceCall({ meId, sendRtc }: { meId: string | undefined; send
       pendingOffer.current = p.sdp
       incomingVideoRef.current = !!p.video
       setState('incoming')
-      navigator.vibrate?.([80, 60, 80])
+      haptic([80, 60, 80])
     }
     if (p.t === 'cam') setRemoteCamOn(!!p.on)
     if (p.t === 'screen') setRemoteScreenOn(!!p.on)

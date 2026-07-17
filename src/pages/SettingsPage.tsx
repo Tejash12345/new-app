@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
 import { prepareMascotImage, setMascotLocal, useMascot, type MascotKind } from '../lib/mascot'
 import { THEMES, getStoredTheme, setTheme as applyAccentTheme, type ThemeId } from '../lib/theme'
+import { usePrefs, setPref, DEFAULT_PREFS, type Prefs } from '../lib/prefs'
 
 function MascotRow({ kind, title, desc, busy, onPick, onReset }: {
   kind: MascotKind; title: string; desc: string
@@ -57,6 +58,104 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
       className={cn('relative h-7 w-12 shrink-0 rounded-full transition-colors', on ? 'bg-brand-500' : 'bg-slate-300 dark:bg-white/15')}>
       <span className={cn('absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'left-6' : 'left-1')} />
     </button>
+  )
+}
+
+/** A labelled row that reveals its control on the right (toggle or segmented). */
+function PrefRow({ icon, title, desc, children }: { icon: string; title: string; desc: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="font-semibold text-slate-900 dark:text-white">{icon} {title}</div>
+        <div className="text-xs text-slate-500">{desc}</div>
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  )
+}
+
+/** A compact segmented control for a few string choices. */
+function Seg<T extends string>({ value, options, onChange }: { value: T; options: { v: T; label: string }[]; onChange: (v: T) => void }) {
+  return (
+    <div className="flex rounded-full bg-slate-500/10 p-0.5 dark:bg-white/10">
+      {options.map((o) => (
+        <button key={o.v} onClick={() => onChange(o.v)}
+          className={cn('rounded-full px-2.5 py-1 text-xs font-bold transition', value === o.v ? 'bg-brand-500 text-white shadow' : 'text-slate-500 dark:text-slate-300')}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** The full "Chat & appearance" preferences card — many small user-friendly options. */
+function ChatPrefsCard() {
+  const p = usePrefs()
+  const set = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPref(k, v)
+  return (
+    <GlassCard>
+      <SectionTitle>💬 Chat & appearance</SectionTitle>
+      <div className="space-y-4">
+        <PrefRow icon="🔡" title="Chat text size" desc="Make messages easier to read">
+          <Seg value={p.chatTextSize} onChange={(v) => set('chatTextSize', v)}
+            options={[{ v: 'sm', label: 'A-' }, { v: 'md', label: 'A' }, { v: 'lg', label: 'A+' }, { v: 'xl', label: 'A++' }]} />
+        </PrefRow>
+        <PrefRow icon="📐" title="Message density" desc="Cozy spacing or fit more on screen">
+          <Seg value={p.density} onChange={(v) => set('density', v)}
+            options={[{ v: 'cozy', label: 'Cozy' }, { v: 'compact', label: 'Compact' }]} />
+        </PrefRow>
+        <PrefRow icon="🫧" title="Bubble corners" desc="Rounded or crisp message bubbles">
+          <Seg value={p.bubbleCorners} onChange={(v) => set('bubbleCorners', v)}
+            options={[{ v: 'round', label: 'Round' }, { v: 'sharp', label: 'Sharp' }]} />
+        </PrefRow>
+        <PrefRow icon="🕒" title="24-hour clock" desc="Show 14:30 instead of 2:30 PM">
+          <Toggle on={p.clock24} onChange={(v) => set('clock24', v)} />
+        </PrefRow>
+        <PrefRow icon="⏎" title="Enter to send" desc="Off = Enter makes a new line">
+          <Toggle on={p.enterToSend} onChange={(v) => set('enterToSend', v)} />
+        </PrefRow>
+        <PrefRow icon="😄" title="Big emoji" desc="Emoji-only messages appear large">
+          <Toggle on={p.bigEmoji} onChange={(v) => set('bigEmoji', v)} />
+        </PrefRow>
+        <PrefRow icon="👤" title="Show avatars in chat" desc="Friend's photo beside their messages">
+          <Toggle on={p.showAvatars} onChange={(v) => set('showAvatars', v)} />
+        </PrefRow>
+        <PrefRow icon="⬇️" title="Auto-scroll to newest" desc="Jump to the latest message automatically">
+          <Toggle on={p.autoScroll} onChange={(v) => set('autoScroll', v)} />
+        </PrefRow>
+        <PrefRow icon="🌓" title="Wallpaper dim" desc="Darken the chat background for readability">
+          <input type="range" min={0} max={0.6} step={0.1} value={p.wallpaperDim}
+            onChange={(e) => set('wallpaperDim', Number(e.target.value))} className="w-24 accent-brand-500" />
+        </PrefRow>
+        <div className="my-1 border-t border-slate-200/60 dark:border-white/10" />
+        <PrefRow icon="✓✓" title="Send read receipts" desc="Let friends see when you've read their messages">
+          <Toggle on={p.readReceipts} onChange={(v) => set('readReceipts', v)} />
+        </PrefRow>
+        <PrefRow icon="✍️" title="Share typing status" desc="Show “typing…” to your friend">
+          <Toggle on={p.sendTyping} onChange={(v) => set('sendTyping', v)} />
+        </PrefRow>
+        <PrefRow icon="🕵️" title="Hide last-seen" desc="Don't show the last-seen line in chats you open">
+          <Toggle on={p.hideLastSeen} onChange={(v) => set('hideLastSeen', v)} />
+        </PrefRow>
+        <PrefRow icon="🗑️" title="Confirm before deleting" desc="Ask before removing a message">
+          <Toggle on={p.confirmDelete} onChange={(v) => set('confirmDelete', v)} />
+        </PrefRow>
+        <div className="my-1 border-t border-slate-200/60 dark:border-white/10" />
+        <PrefRow icon="📳" title="Haptic feedback" desc="Little vibrations on taps & reactions">
+          <Toggle on={p.haptics} onChange={(v) => set('haptics', v)} />
+        </PrefRow>
+        <PrefRow icon="🎞️" title="Reduce motion" desc="Calmer animations across the app">
+          <Toggle on={p.reduceMotion} onChange={(v) => set('reduceMotion', v)} />
+        </PrefRow>
+        <PrefRow icon="📥" title="Auto-download media" desc="Save incoming photos to your device vault">
+          <Toggle on={p.autoDownloadMedia} onChange={(v) => set('autoDownloadMedia', v)} />
+        </PrefRow>
+        <button onClick={() => (Object.keys(DEFAULT_PREFS) as (keyof Prefs)[]).forEach((k) => set(k, DEFAULT_PREFS[k]))}
+          className="mt-1 text-xs font-semibold text-slate-400 transition hover:text-rose-500">
+          Reset to defaults
+        </button>
+      </div>
+    </GlassCard>
   )
 }
 
@@ -351,6 +450,8 @@ export function SettingsPage() {
             </div>
           </div>
         </GlassCard>
+
+        <ChatPrefsCard />
 
         <GlassCard>
           <SectionTitle>Preferences</SectionTitle>

@@ -2,13 +2,14 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { motion, useMotionValue, useTransform } from 'framer-motion'
-import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video, Wand2, Pencil, Check, Search, Star, Copy, ArrowDown } from 'lucide-react'
+import { Send, Trash2, Users, ArrowLeft, MessageCircle, Image as ImageIcon, Paperclip, Mic, X, FileText, Play, Newspaper, Sparkles, Reply, Timer, Plus, Zap, MonitorPlay, Phone, Clapperboard, Video, Wand2, Pencil, Check, Search, Star, Copy, ArrowDown, Languages, Pin, Info, Download } from 'lucide-react'
 import { ChatBackground } from '../components/ChatBackground'
 import { CHAT_BGS, isCustomBg, customBgUrl, makeCustomBg, type ChatBgId } from '../lib/chatBg'
 import { prepareMascotImage } from '../lib/mascot'
 import { supabase } from '../lib/supabase'
 import { getSocket } from '../lib/socket'
-import { smartReplies } from '../lib/ai'
+import { smartReplies, translateMessage } from '../lib/ai'
+import { usePrefs, getPref, haptic, chatTextClass } from '../lib/prefs'
 import { Lightbox } from '../components/Lightbox'
 import { confirmDialog, useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
@@ -150,7 +151,7 @@ function fname(f: Friend) {
 // WhatsApp-style timestamps: a small time on every bubble, and a centered
 // Today / Yesterday / weekday / date chip whenever the day changes.
 function msgTime(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: !getPref('clock24') })
 }
 function dayLabel(iso: string) {
   const d = new Date(iso)
@@ -281,7 +282,7 @@ function SwipeReply({ children, onReply }: { children: ReactNode; onReply: () =>
         onDragEnd={(_, info) => {
           if (info.offset.x > 48) {
             onReply()
-            navigator.vibrate?.(10)
+            haptic(10)
           }
         }}
       >
@@ -391,6 +392,7 @@ function FriendsChat() {
   const [searchParams, setSearchParams] = useSearchParams()
   const isOnline = useOnlineCheck()
   const avatarFor = useAvatars()
+  const prefs = usePrefs()
   const [friends, setFriends] = useState<Friend[]>([])
   const [active, setActive] = useState<Friend | null>(null)
   // the OPEN peer's freshest profile (name / avatar / last_seen), fetched directly
@@ -415,6 +417,14 @@ function FriendsChat() {
   const scrollRef = useRef<HTMLDivElement>(null)
   // tiny transient confirmation (e.g. "Copied")
   const [toast, setToast] = useState<string | null>(null)
+  // AI translations shown under a message: {msgId: translated text | '…'}
+  const [translations, setTranslations] = useState<Record<string, string>>({})
+  // pinned message id for this conversation (localStorage per pair)
+  const [pinnedId, setPinnedId] = useState<string | null>(null)
+  // message whose details (sent/read time) are being shown
+  const [infoFor, setInfoFor] = useState<DMessage | null>(null)
+  // voice-note playback speed (applies to all voice messages)
+  const [voiceSpeed, setVoiceSpeed] = useState(1)
   const [uploading, setUploading] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recSeconds, setRecSeconds] = useState(0)
@@ -633,7 +643,10 @@ function FriendsChat() {
     setMsgSearch(null)
     setStarOnly(false)
     setPeerProfile(null)
+    setTranslations({})
+    setInfoFor(null)
     setStarred(new Set(loadStarred(pairKey)))
+    try { setPinnedId(localStorage.getItem(`fl-chat-pin-${pairKey}`)) } catch { setPinnedId(null) }
 
     supabase
       .from('direct_messages')
@@ -716,7 +729,7 @@ function FriendsChat() {
           if (p.kind === 'youtube' && p.videoId) setTgInvite({ kind: 'youtube', videoId: p.videoId })
           if (p.kind === 'media' && p.msgId) setTgInvite({ kind: 'media', msgId: p.msgId, name: p.name, isVideo: p.isVideo })
           if (p.kind === 'drive' && p.fileId) setTgInvite({ kind: 'drive', fileId: p.fileId, name: p.name })
-          navigator.vibrate?.([40, 40, 40])
+          haptic([40, 40, 40])
         }
         if (p.a === 'close') setTgInvite(null)
         // forward EVERY event into the open overlay (it ignores its own events
@@ -750,7 +763,7 @@ function FriendsChat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pairKey])
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  useEffect(() => { if (prefs.autoScroll) bottomRef.current?.scrollIntoView({ behavior: prefs.reduceMotion ? 'auto' : 'smooth' }) }, [messages, prefs.autoScroll, prefs.reduceMotion])
 
   /** Reply columns for the message being composed (empty when not replying). */
   function replyFields() {
@@ -914,7 +927,7 @@ function FriendsChat() {
     const start = Date.now()
     setDuo({ start, min, partnerOk: false, done: false, partnerLeft: false, partnerDone: false })
     channelRef.current?.send({ type: 'broadcast', event: 'focus', payload: { a: 'start', from: user.id, start, min } })
-    navigator.vibrate?.(20)
+    haptic(20)
   }
 
   async function quitDuo() {
@@ -953,7 +966,7 @@ function FriendsChat() {
     await addXp(base + 5, `Focus Together with ${fname(active)}`)
     await touchStudyStreak()
     channelRef.current?.send({ type: 'broadcast', event: 'focus', payload: { a: 'done', from: user.id } })
-    navigator.vibrate?.([40, 40, 80])
+    haptic([40, 40, 80])
   }
 
   /** Change the shared disappearing-messages timer — both sides see it instantly. */
@@ -1034,6 +1047,7 @@ function FriendsChat() {
     : visible.filter((m) =>
         (!starOnly || starred.has(m.id)) &&
         (!searchQ || (m.body || '').toLowerCase().includes(searchQ) || (m.file_name || '').toLowerCase().includes(searchQ)))
+  const pinned = pinnedId ? visible.find((x) => x.id === pinnedId) : null
 
   // physical cleanup of expired messages — either side may delete them
   // (upgrade-32 policy), including bucket files and the local media vault
@@ -1071,10 +1085,32 @@ function FriendsChat() {
     navigator.clipboard?.writeText(text).then(() => flash('Copied'), () => flash('Could not copy'))
     setReactFor(null)
   }
+  /** Translate a message into the reader's language, shown under the bubble. */
+  async function translateMsg(m: DMessage) {
+    setReactFor(null)
+    if (translations[m.id]) { setTranslations((t) => { const n = { ...t }; delete n[m.id]; return n }) ; return }
+    setTranslations((t) => ({ ...t, [m.id]: '…' }))
+    let langName = 'English'
+    try { langName = new Intl.DisplayNames([navigator.language], { type: 'language' }).of(navigator.language.split('-')[0]) || 'English' } catch { /* older browser */ }
+    try {
+      const out = await translateMessage(m.body, langName)
+      setTranslations((t) => ({ ...t, [m.id]: out || 'Could not translate' }))
+    } catch { setTranslations((t) => ({ ...t, [m.id]: 'Could not translate' })) }
+  }
+  /** Pin / unpin a message to the top of the conversation (local, per pair). */
+  function togglePin(id: string) {
+    setReactFor(null)
+    setPinnedId((cur) => {
+      const next = cur === id ? null : id
+      try { if (next) localStorage.setItem(`fl-chat-pin-${pairKey}`, next); else localStorage.removeItem(`fl-chat-pin-${pairKey}`) } catch { /* ignore */ }
+      return next
+    })
+  }
 
   /** Tell the other side (and the DB) how far I've read — throttled. */
   function markRead() {
     if (!user || !activeIdRef.current) return
+    if (!getPref('readReceipts')) return // user turned read receipts off
     const now = Date.now()
     if (now - lastReadSent.current < 2000) return
     lastReadSent.current = now
@@ -1105,7 +1141,7 @@ function FriendsChat() {
     const t = setTimeout(() => {
       setReactMore(false)
       setReactFor(m)
-      navigator.vibrate?.(10)
+      haptic(10)
     }, 430)
     press.current = { t, x: e.clientX, y: e.clientY }
   }
@@ -1194,6 +1230,7 @@ function FriendsChat() {
       : m.kind === 'file' ? 'this file'
       : m.kind === 'post' ? 'this shared post'
       : 'this message'
+    if (!getPref('confirmDelete')) { remove(m.id); return } // user turned off the confirm step
     if (await confirmDialog(`Delete ${what}? It disappears for both of you.`, { yesLabel: 'Delete', noLabel: 'Cancel' })) {
       remove(m.id)
     }
@@ -1521,6 +1558,7 @@ function FriendsChat() {
                 sits under the animated particles so nothing bleeds through. */}
             <div className="absolute inset-0 z-0 bg-[#eef1fb] dark:bg-[#0b0d14] lg:hidden" aria-hidden />
             <ChatBackground bg={chatBg} />
+            {prefs.wallpaperDim > 0 && <div className="pointer-events-none absolute inset-0 z-0 bg-black" style={{ opacity: prefs.wallpaperDim }} aria-hidden />}
             <div className="relative z-10 flex min-h-0 flex-1 flex-col">
             <div className="mb-3 flex items-center gap-2 border-b border-slate-200/50 dark:border-white/10 pb-3 sm:gap-3">
               {/* WhatsApp-style back arrow — returns to the conversation list */}
@@ -1547,6 +1585,8 @@ function FriendsChat() {
                       <div className="truncate font-bold text-slate-900 dark:text-white">{peerName}</div>
                       {typingUsers[active.friend_id] ? (
                         <div className="text-xs font-semibold text-brand-500 animate-pulse">typing…</div>
+                      ) : prefs.hideLastSeen ? (
+                        on ? <div className="text-xs font-semibold text-emerald-500">● Online now</div> : null
                       ) : (
                         <div className={cn('text-xs', on ? 'font-semibold text-emerald-500' : 'text-slate-400')}>
                           {on ? '● Online now' : lastSeenLabel(bestSeen)}
@@ -1752,10 +1792,24 @@ function FriendsChat() {
               </div>
             )}
 
+            {/* pinned message bar */}
+            {pinned && (
+              <button onClick={() => jumpTo(pinned.id)}
+                className="mb-2 flex w-full items-center gap-2 rounded-2xl border-l-4 border-brand-500 bg-brand-500/10 px-3 py-1.5 text-left">
+                <Pin size={13} className="shrink-0 fill-brand-400 text-brand-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-brand-500">Pinned</div>
+                  <div className="truncate text-xs text-slate-600 dark:text-slate-300">{snippetOf(pinned)}</div>
+                </div>
+                <button onPointerDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); togglePin(pinned.id) }} aria-label="Unpin"
+                  className="shrink-0 rounded-full p-1 text-slate-400 hover:bg-slate-500/10"><X size={13} /></button>
+              </button>
+            )}
+
             <div ref={scrollRef} onScroll={(e) => {
               const el = e.currentTarget
               setShowScrollDown(el.scrollHeight - el.scrollTop - el.clientHeight > 320)
-            }} className="relative flex-1 space-y-2 overflow-y-auto pr-1">
+            }} className={cn('relative flex-1 overflow-y-auto pr-1', prefs.density === 'compact' ? 'space-y-0.5' : 'space-y-2')}>
               {ttl > 0 && (
                 <div className="flex justify-center py-1">
                   <span className="flex items-center gap-1.5 rounded-full bg-brand-500/10 px-3 py-1 text-[11px] font-semibold text-brand-500">
@@ -1848,23 +1902,37 @@ function FriendsChat() {
                             </>
                           )}
                         </motion.div>
-                        {/* action row — Star / Copy / Reply, WhatsApp long-press style */}
+                        {/* action row — long-press menu (Star/Copy/Translate/Pin/Reply/Info) */}
                         {!reactMore && (
                           <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-                            className={cn('relative z-30 mb-1 flex w-fit max-w-[calc(100vw-2.5rem)] items-center gap-0.5 rounded-full border border-slate-200 bg-white px-1 py-1 shadow-xl dark:border-white/10 dark:bg-slate-900', mine && 'ml-auto')}>
+                            className={cn('relative z-30 mb-1 flex w-fit max-w-[calc(100vw-2.5rem)] flex-wrap items-center gap-0.5 rounded-2xl border border-slate-200 bg-white px-1 py-1 shadow-xl dark:border-white/10 dark:bg-slate-900', mine && 'ml-auto')}>
                             <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => { toggleStar(m.id); setReactFor(null) }}
                               className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
                               <Star size={14} className={cn(starred.has(m.id) && 'fill-amber-400 text-amber-400')} /> {starred.has(m.id) ? 'Starred' : 'Star'}
                             </button>
                             {(!m.kind || m.kind === 'text') && m.body && (
-                              <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => copyMsg(m.body)}
-                                className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
-                                <Copy size={13} /> Copy
-                              </button>
+                              <>
+                                <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => copyMsg(m.body)}
+                                  className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
+                                  <Copy size={13} /> Copy
+                                </button>
+                                <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => translateMsg(m)}
+                                  className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
+                                  <Languages size={14} /> {translations[m.id] ? 'Hide' : 'Translate'}
+                                </button>
+                              </>
                             )}
+                            <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => togglePin(m.id)}
+                              className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
+                              <Pin size={13} className={cn(pinnedId === m.id && 'fill-brand-400 text-brand-500')} /> {pinnedId === m.id ? 'Unpin' : 'Pin'}
+                            </button>
                             <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => { setReplyTo(m); setReactFor(null) }}
                               className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
                               <Reply size={13} /> Reply
+                            </button>
+                            <button onPointerDown={(ev) => ev.preventDefault()} onClick={() => { setInfoFor(m); setReactFor(null) }}
+                              className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-500/10 dark:text-slate-300">
+                              <Info size={13} /> Info
                             </button>
                           </motion.div>
                         )}
@@ -1872,7 +1940,7 @@ function FriendsChat() {
                     )}
                     <SwipeReply onReply={() => setReplyTo(m)}>
                     <div className={cn('group flex items-end gap-1.5', mine ? 'justify-end' : 'justify-start')}>
-                    {!mine && <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} size={7} />}
+                    {!mine && prefs.showAvatars && <Avatar id={active.friend_id} name={fname(active)} url={avatarFor(active.friend_id) || active.avatar_url} size={7} />}
                     <div className="flex min-w-0 items-center gap-1.5">
                       {/* always visible on touch — hover-reveal only works on
                           desktop, so a hidden control is unreachable on Android */}
@@ -1964,10 +2032,12 @@ function FriendsChat() {
                         onPointerCancel={pressCancel}
                         onPointerLeave={pressCancel}
                         onDoubleClick={() => react(m, '❤️')}
-                        className={cn('relative min-w-0 max-w-[70vw] select-none break-words [overflow-wrap:anywhere] sm:max-w-md rounded-2xl text-sm',
-                        m.kind === 'image' && m.file_url ? 'overflow-hidden p-1' : 'px-3.5 py-2',
-                        mine ? 'rounded-br-md bg-gradient-to-r from-brand-500 to-brand-400 text-white'
-                             : 'rounded-bl-md bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100')}>
+                        className={cn('relative min-w-0 max-w-[70vw] select-none break-words [overflow-wrap:anywhere] sm:max-w-md',
+                        chatTextClass(prefs.chatTextSize),
+                        prefs.bubbleCorners === 'sharp' ? 'rounded-md' : 'rounded-2xl',
+                        m.kind === 'image' && m.file_url ? 'overflow-hidden p-1' : prefs.density === 'compact' ? 'px-3 py-1' : 'px-3.5 py-2',
+                        mine ? cn(prefs.bubbleCorners === 'round' && 'rounded-br-md', 'bg-gradient-to-r from-brand-500 to-brand-400 text-white')
+                             : cn(prefs.bubbleCorners === 'round' && 'rounded-bl-md', 'bg-white/60 dark:bg-white/10 text-slate-800 dark:text-slate-100'))}>
                         {starred.has(m.id) && (
                           <Star size={12} className={cn('absolute -left-1 -top-1 fill-amber-400 text-amber-400 drop-shadow', mine && '-right-1 left-auto')} />
                         )}
@@ -1978,10 +2048,16 @@ function FriendsChat() {
                               <>
                                 {/* in-app viewer — a plain link navigates the whole
                                     WebView to the raw file (zoomed wrong, no way back) */}
-                                <button type="button" onClick={() => setLightbox({ src: url, name: m.file_name ?? undefined })}>
-                                  <img src={url} alt={m.file_name ?? 'photo'} loading="lazy"
-                                    className="max-h-64 rounded-xl object-contain" />
-                                </button>
+                                <div className="relative">
+                                  <button type="button" onClick={() => setLightbox({ src: url, name: m.file_name ?? undefined })}>
+                                    <img src={url} alt={m.file_name ?? 'photo'} loading="lazy"
+                                      className="max-h-64 rounded-xl object-contain" />
+                                  </button>
+                                  <a href={url} download={m.file_name ?? `photo-${m.id}.jpg`} onClick={(e) => e.stopPropagation()} aria-label="Save photo"
+                                    className="absolute right-1.5 top-1.5 rounded-full bg-black/55 p-1.5 text-white backdrop-blur active:scale-90">
+                                    <Download size={14} />
+                                  </a>
+                                </div>
                                 <div className={cn('px-1.5 pb-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}{tick}</div>
                               </>
                             )}
@@ -1990,7 +2066,13 @@ function FriendsChat() {
                           <WithLocalMedia m={m} onCached={() => markDelivered(m)}>
                             {(url, expired) => expired || !url ? <ExpiredMedia kind="audio" /> : (
                               <>
-                                <audio controls preload="metadata" src={url} className="h-10 w-56 max-w-full" />
+                                <div className="flex items-center gap-1.5">
+                                  <audio controls preload="metadata" src={url} ref={(el) => { if (el) el.playbackRate = voiceSpeed }} className="h-10 w-48 max-w-full" />
+                                  <button onClick={() => setVoiceSpeed((s) => (s === 1 ? 1.5 : s === 1.5 ? 2 : 1))} aria-label="Playback speed"
+                                    className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-black', mine ? 'bg-white/25 text-white' : 'bg-slate-500/15 text-slate-500 dark:text-slate-300')}>
+                                    {voiceSpeed}×
+                                  </button>
+                                </div>
                                 <div className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-slate-400')}>{time}{tick}</div>
                               </>
                             )}
@@ -2010,9 +2092,14 @@ function FriendsChat() {
                           </WithLocalMedia>
                         ) : (
                           <>
-                            {isEmojiOnly(m.body) ? <span className="text-4xl leading-tight">{m.body}</span> : m.body}
+                            {isEmojiOnly(m.body) && prefs.bigEmoji ? <span className="text-4xl leading-tight">{m.body}</span> : m.body}
                             {/* WhatsApp-style inline time, bottom-right of the bubble */}
                             <span className={cn('float-right ml-2 mt-1.5 text-[10px] leading-none', mine ? 'text-white/70' : 'text-slate-400')}>{m.edited_at ? 'edited · ' : ''}{time}{tick}</span>
+                            {translations[m.id] && (
+                              <div className={cn('clear-both mt-1.5 border-t pt-1.5 text-[13px] italic', mine ? 'border-white/25 text-white/90' : 'border-slate-400/25 text-slate-600 dark:text-slate-300')}>
+                                <Languages size={11} className="mr-1 inline align-[-1px]" />{translations[m.id]}
+                              </div>
+                            )}
                           </>
                         )}
                       </div>
@@ -2077,6 +2164,29 @@ function FriendsChat() {
             {toast && (
               <div className="pointer-events-none absolute bottom-24 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-900/90 px-4 py-2 text-xs font-bold text-white shadow-xl dark:bg-white/90 dark:text-slate-900">
                 {toast}
+              </div>
+            )}
+            {/* message info popup */}
+            {infoFor && (
+              <div className="absolute inset-0 z-40 flex items-center justify-center p-6" onClick={() => setInfoFor(null)}>
+                <div className="absolute inset-0 bg-black/40" />
+                <div className="relative w-full max-w-xs rounded-3xl bg-white p-4 shadow-2xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-black text-slate-900 dark:text-white">Message info</span>
+                    <button onClick={() => setInfoFor(null)} aria-label="Close" className="rounded-full p-1 text-slate-400 hover:bg-slate-500/10"><X size={16} /></button>
+                  </div>
+                  <div className="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
+                    <div className="flex justify-between gap-3"><span className="text-slate-400">Sent</span><span className="text-right font-semibold">{new Date(infoFor.created_at).toLocaleString([], { hour12: !getPref('clock24') })}</span></div>
+                    {infoFor.edited_at && <div className="flex justify-between gap-3"><span className="text-slate-400">Edited</span><span className="text-right font-semibold">{new Date(infoFor.edited_at).toLocaleString([], { hour12: !getPref('clock24') })}</span></div>}
+                    {infoFor.sender_id === user?.id && (
+                      <div className="flex justify-between gap-3"><span className="text-slate-400">Status</span>
+                        <span className="text-right font-semibold">{peerReadAt && new Date(infoFor.created_at) <= new Date(peerReadAt) ? '✓✓ Read' : '✓ Sent'}</span></div>
+                    )}
+                    {infoFor.reactions && Object.keys(infoFor.reactions).length > 0 && (
+                      <div className="flex justify-between gap-3"><span className="text-slate-400">Reactions</span><span className="text-right">{Object.values(infoFor.reactions).join(' ')}</span></div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -2163,14 +2273,14 @@ function FriendsChat() {
                     onChange={(e) => {
                       setInput(e.target.value)
                       const now = Date.now()
-                      if (!editing && user && active && now - lastTypingSent.current > 1200) {
+                      if (prefs.sendTyping && !editing && user && active && now - lastTypingSent.current > 1200) {
                         lastTypingSent.current = now
                         getSocket()?.emit('typing', { to: active.friend_id })
                         channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { from: user.id } })
                       }
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') { if (editing) saveEdit(); else send() }
+                      if (e.key === 'Enter' && prefs.enterToSend) { if (editing) saveEdit(); else send() }
                       else if (e.key === 'Escape' && editing) cancelEdit()
                     }} />
                   <button onClick={() => fileInputRef.current?.click()} title="Send a document" disabled={uploading || !!editing}

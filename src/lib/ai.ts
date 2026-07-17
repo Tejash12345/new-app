@@ -729,6 +729,16 @@ export async function smartReplies(conversation: string): Promise<string[]> {
     .slice(0, 3)
 }
 
+/** Translate a chat message into the reader's language (falls back to English). */
+export async function translateMessage(text: string, targetLang: string): Promise<string> {
+  const prompt =
+    `Translate this chat message into ${targetLang}. Reply with ONLY the translation — no quotes, ` +
+    `no explanation, keep any emoji. If it is already in ${targetLang}, translate it into English instead.\n\n` +
+    `Message: ${text.slice(0, 800)}`
+  const raw = await askLion({ task: 'chat', messages: [{ role: 'user', content: prompt }], fast: true })
+  return (raw || '').trim().replace(/^["']|["']$/g, '')
+}
+
 /** Generate today's personalized mission. Returns parsed {title, detail, xp}. */
 export async function generateMission(context: string): Promise<{ title: string; detail: string; xp: number }> {
   const raw = await askLion({ task: 'mission', input: context })
