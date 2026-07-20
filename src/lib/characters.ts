@@ -45,6 +45,8 @@ export type CharacterDef = {
   bodyMats?: string[]
   /** attach a procedural mane to the head bone (turns a big-cat rig into a lion). */
   mane?: boolean
+  /** a flying character (e.g. dragon) — hovers above the ground. */
+  fly?: boolean
   /** does the Fire/Ice/Neon/Gold/Shadow skin picker apply to this character? */
   skinnable: boolean
   /** player level required to run as this character (0 = always available). */
@@ -59,6 +61,8 @@ export type CharacterDef = {
 const QUAT: CharClips = { run: 'Gallop', idle: 'Idle', jump: 'Gallop_Jump', death: 'Death', walk: 'Walk' }
 // Bipeds (humans/robot) — CharacterArmature / Human Armature clip names.
 const HUMAN: CharClips = { run: 'Run', idle: 'Idle', jump: 'Jump', death: 'Death', walk: 'Walk' }
+// Flying dragon — only has flying clips, so run/idle/jump all map to flight.
+const DRAGON: CharClips = { run: 'Fast_Flying', idle: 'Flying_Idle', jump: 'Fast_Flying', death: 'Death' }
 const QUAT_CREDIT = 'Quaternius · CC0'
 
 export const CHARACTERS: CharacterDef[] = [
@@ -118,8 +122,13 @@ export const CHARACTERS: CharacterDef[] = [
   // ---- humans + characters (rigged bipeds, real Run/Idle/Jump/Death) ----
   {
     id: 'runner', name: 'Runner', emoji: '🧍', kind: 'gltf', url: '/models/runner.glb',
-    clips: HUMAN, bodyMats: [], targetHeight: 1.85, faceYaw: Math.PI,
-    skinnable: false, unlockLevel: 7, blurb: 'A human sprinter — full biped run cycle.', credit: QUAT_CREDIT,
+    clips: { ...HUMAN, slide: 'Roll' }, bodyMats: [], targetHeight: 1.8, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 7, blurb: 'A rugged human runner — dives into a roll to slide.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'woman', name: 'Runner (F)', emoji: '🏃‍♀️', kind: 'gltf', url: '/models/woman.glb',
+    clips: HUMAN, bodyMats: [], targetHeight: 1.75, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 8, blurb: 'A woman sprinter — full run / idle / jump cycle.', credit: QUAT_CREDIT,
   },
   {
     id: 'robot', name: 'Robot', emoji: '🤖', kind: 'gltf', url: '/models/robot.glb',
@@ -135,6 +144,27 @@ export const CHARACTERS: CharacterDef[] = [
     id: 'adventurer', name: 'Adventurer', emoji: '🗺️', kind: 'gltf', url: '/models/adventurer.glb',
     clips: HUMAN, bodyMats: [], targetHeight: 1.85, faceYaw: Math.PI,
     skinnable: false, unlockLevel: 14, blurb: 'A detailed explorer with a backpack.', credit: QUAT_CREDIT,
+  },
+  // ---- dinosaurs (rigged, Run/Idle/Jump/Death) ----
+  {
+    id: 'raptor', name: 'Raptor', emoji: '🦎', kind: 'gltf', url: '/models/raptor.glb',
+    clips: HUMAN, bodyMats: [], targetHeight: 1.8, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 13, blurb: 'Velociraptor — lightning-fast predator.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'triceratops', name: 'Triceratops', emoji: '🦕', kind: 'gltf', url: '/models/triceratops.glb',
+    clips: HUMAN, bodyMats: [], targetHeight: 2.0, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 15, blurb: 'Three-horned tank on the run.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'trex', name: 'T-Rex', emoji: '🦖', kind: 'gltf', url: '/models/trex.glb',
+    clips: HUMAN, bodyMats: [], targetHeight: 2.4, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 18, blurb: 'The king of the road. Earn your crown.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'dragon', name: 'Dragon', emoji: '🐉', kind: 'gltf', url: '/models/dragon.glb',
+    clips: DRAGON, bodyMats: ['Dragon_Main', 'Dragon_Secondary'], targetHeight: 1.9, faceYaw: Math.PI, fly: true,
+    skinnable: true, unlockLevel: 20, blurb: 'A winged dragon that flies the track — the ultimate unlock.', credit: QUAT_CREDIT,
   },
 ]
 

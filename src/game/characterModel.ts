@@ -205,6 +205,7 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
     const holder = new THREE.Group()
     holder.scale.setScalar(s)
     holder.rotation.y = def.faceYaw ?? Math.PI
+    if (def.fly) holder.position.y = (def.targetHeight || 1.7) * 0.7 // hover above the ground
     holder.add(model)
     group.add(holder)
     inner = model
