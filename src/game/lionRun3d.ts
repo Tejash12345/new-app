@@ -25,7 +25,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
-import { buildCharacter } from './characterModel'
+import { buildCharacter, type CharacterRig } from './characterModel'
 import { characterById } from '../lib/characters'
 import { skinById } from '../lib/lionSkins'
 import { haptic } from '../lib/prefs'
@@ -483,6 +483,21 @@ export function startLionRun3D(
   let ghostSkinId = ''
   let ghostX = 0
   let ghostZ = -8
+
+  // ---------- GTA-style roaming animals (ambient, off the 3 lanes) ----------
+  // A few non-player animals gallop along the shoulders + background and recycle;
+  // gated off on weak phones for FPS. They never enter the gameplay lanes.
+  const ROAMER_SPECIES = ['deer', 'fox', 'wolf', 'husky', 'horse', 'bull']
+  const roamerCount = lowEnd ? 0 : 3
+  const roamers: { rig: CharacterRig; x: number; z: number; side: number }[] = []
+  for (let i = 0; i < roamerCount; i++) {
+    const r = buildCharacter(characterById(ROAMER_SPECIES[i % ROAMER_SPECIES.length]), { phase: i * 1.3 })
+    if (shadows) r.enableShadows()
+    r.group.visible = false
+    scene.add(r.group)
+    const side = i % 2 ? 1 : -1
+    roamers.push({ rig: r, x: side * (6.5 + (i % 3) * 2.4), z: -32 - i * 46, side })
+  }
 
   // ---------- animated attack VFX ----------
   type Fx = { update: (dt: number, tSec: number) => boolean; cleanup: () => void }
@@ -1311,6 +1326,21 @@ export function startLionRun3D(
       if (trailT <= 0) { trailT = 0.05; trailPuff(lionX, lionY + 0.9, myTrail) }
     }
 
+    // ---- roaming animals: stream past with the world, recycle far ahead ----
+    // (Math.random, NOT the seeded track PRNG, so a seeded race stays in sync)
+    for (const r of roamers) {
+      if (state === 'run' || state === 'swoop' || state === 'dying') r.z += speed * rawDt
+      if (r.z > 16) {
+        r.z -= 150 + Math.random() * 70
+        r.side = Math.random() < 0.5 ? -1 : 1
+        r.x = r.side * (6.5 + Math.random() * 7)
+      }
+      r.rig.group.visible = r.rig.ready()
+      r.rig.group.position.set(r.x, 0, r.z)
+      r.rig.pose({ tSec: tSec + r.z * 0.1, running: true, airborne: false, sliding: false, dead: false })
+      r.rig.update(rawDt)
+    }
+
     // ---- animated attack VFX ----
     for (let i = fxList.length - 1; i >= 0; i--) {
       if (!fxList[i].update(rawDt, tSec)) { fxList[i].cleanup(); fxList.splice(i, 1) }
@@ -1373,6 +1403,7 @@ export function startLionRun3D(
       cancelAnimationFrame(raf)
       rig.dispose()
       ghost.dispose()
+      for (const r of roamers) r.rig.dispose()
       ro.disconnect()
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)

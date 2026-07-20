@@ -4,13 +4,20 @@ These GLBs are the playable runners for **Lion Run** (`/city`) and the chat
 **Lion Race**. They load lazily via three.js `GLTFLoader` at play time (never
 precached — see `vite.config.ts` `globPatterns`), so they don't bloat the app.
 
-| file | character | source | licence |
+| file | character(s) | source | licence |
 |------|-----------|--------|---------|
-| `wolf.glb`  | 🐺 Wolf     | Quaternius "Animated Animal Pack" | CC0 (public domain) |
+| `wolf.glb`  | 🐺 Wolf — also the base rig for 🦁 Leo (gold + mane) and 🦁 Lioness | Quaternius "Animated Animal Pack" | CC0 (public domain) |
 | `fox.glb`   | 🦊 Fox      | Quaternius | CC0 |
 | `shiba.glb` | 🐕 Shiba    | Quaternius | CC0 |
+| `husky.glb` | 🐕‍🦺 Husky  | Quaternius | CC0 |
+| `deer.glb`  | 🦌 Deer     | Quaternius | CC0 |
 | `stag.glb`  | 🦌 Stag     | Quaternius | CC0 |
+| `bull.glb`  | 🐂 Bull     | Quaternius | CC0 |
 | `horse.glb` | 🐎 Stallion | Quaternius | CC0 |
+
+The hero 🦁 **Lion** is a real animated 3D model built from the Wolf rig (full
+skeletal gallop/idle/jump/death) tinted lion-gold with a procedural mane on the
+head bone. A few of these animals also roam the roadside as ambient scenery.
 
 The registry lives in `src/lib/characters.ts`; the loader/adapter is
 `src/game/characterModel.ts`.

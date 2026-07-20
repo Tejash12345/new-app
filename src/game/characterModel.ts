@@ -132,6 +132,7 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
   const actions: Partial<Record<keyof CharClips, THREE.AnimationAction | null>> = {}
   let current: THREE.AnimationAction | null = null
   const bodyMats: THREE.MeshStandardMaterial[] = []
+  const maneMats: THREE.MeshStandardMaterial[] = [] // attached lion mane (recoloured by skin maneHex)
   const clonedMats: THREE.Material[] = []
   const clonedGeoms: THREE.BufferGeometry[] = []
   let pendingSkin: [number, number] | null = null
@@ -151,7 +152,7 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
     current = a
   }
 
-  function setupGLTF(res: Loaded) {
+  function setupGLTF(res: Loaded, withMane = false) {
     // swap the procedural placeholder out for the real model
     if (lion) { group.remove(lion.group); disposeLion(lion); lion = null }
 
@@ -213,6 +214,21 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
       const clip = pickClip(res.animations, k, hint[k])
       actions[k] = clip ? mixer!.clipAction(clip) : null
     })
+
+    // attach a mane to the head bone (lion) — sized from the bone's world scale
+    if (withMane) {
+      let headBone: THREE.Object3D | null = null
+      model.traverse((o) => { if (!headBone && (o as unknown as { isBone?: boolean }).isBone && /head/i.test(o.name || '')) headBone = o })
+      if (!headBone) model.traverse((o) => { if (!headBone && (o as unknown as { isBone?: boolean }).isBone && /neck/i.test(o.name || '')) headBone = o })
+      if (headBone) {
+        const hb: THREE.Object3D = headBone
+        group.updateWorldMatrix(true, true)
+        const ws = hb.getWorldScale(new THREE.Vector3())
+        const mane = buildMane()
+        mane.scale.setScalar(((def.targetHeight || 1.7) * 0.4) / (ws.x || 1))
+        hb.add(mane)
+      }
+    }
     loaded = true
 
     // apply any skin/glow requested before the model finished loading
@@ -224,13 +240,22 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
   // ---- decide what to build ----
   if (def.kind === 'gltf' && def.url) {
     buildProc(female0) // brief placeholder (usually preloaded → instant swap)
-    loadGLTF(def.url).then(setupGLTF).catch(() => { /* keep procedural fallback */ })
+    const baseUrl = def.url
+    if (def.gltfUpgrade) {
+      // hero lion: prefer a dropped-in realistic model, else the base rig + mane
+      const up = def.gltfUpgrade
+      modelExists(up).then((ok) => {
+        loadGLTF(ok ? up : baseUrl).then((r) => setupGLTF(r, !ok && !!def.mane)).catch(() => {})
+      })
+    } else {
+      loadGLTF(baseUrl).then((r) => setupGLTF(r, !!def.mane)).catch(() => {})
+    }
   } else {
     buildProc(female0)
-    // optional realistic drop-in upgrade for the hero
+    // optional realistic drop-in upgrade for a procedural hero
     if (def.gltfUpgrade) {
       const url = def.gltfUpgrade
-      modelExists(url).then((ok) => { if (ok) loadGLTF(url).then(setupGLTF).catch(() => {}) })
+      modelExists(url).then((ok) => { if (ok) loadGLTF(url).then((r) => setupGLTF(r, false)).catch(() => {}) })
     }
   }
 
@@ -266,12 +291,35 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
     if (lion) { lion.bodyMat.color.setHex(bodyHex); lion.maneMat.color.setHex(maneHex); return }
     pendingSkin = [bodyHex, maneHex]
     for (const m of bodyMats) m.color.setHex(bodyHex)
+    for (const m of maneMats) m.color.setHex(maneHex)
   }
 
   function setGlow(intensity: number) {
     if (lion) { lion.maneMat.emissiveIntensity = intensity; return }
     pendingGlow = intensity
     for (const m of bodyMats) { m.emissive.copy(m.color); m.emissiveIntensity = intensity }
+    for (const m of maneMats) { m.emissive.copy(m.color); m.emissiveIntensity = intensity }
+  }
+
+  // a procedural lion mane (flattened volume + a ring of fur tufts) attached to
+  // the head bone so it animates with the model — turns a big-cat rig into a lion.
+  function buildMane(): THREE.Group {
+    const g = new THREE.Group()
+    const mat = new THREE.MeshStandardMaterial({ color: 0x6a4a1c, roughness: 0.96, metalness: 0 })
+    maneMats.push(mat); clonedMats.push(mat)
+    const baseGeo = new THREE.DodecahedronGeometry(0.5); clonedGeoms.push(baseGeo)
+    const base = new THREE.Mesh(baseGeo, mat)
+    base.scale.set(1.05, 1.12, 0.82)
+    g.add(base)
+    const tuftGeo = new THREE.ConeGeometry(0.16, 0.36, 5); clonedGeoms.push(tuftGeo)
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2
+      const t = new THREE.Mesh(tuftGeo, mat)
+      t.position.set(Math.cos(a) * 0.5, Math.sin(a) * 0.5, -0.05)
+      t.rotation.z = a - Math.PI / 2
+      g.add(t)
+    }
+    return g
   }
 
   function setFemale(female: boolean) {

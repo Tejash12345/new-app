@@ -43,6 +43,8 @@ export type CharacterDef = {
   clips?: CharClips
   /** gltf material names the 6 cosmetic skins recolour (coat). */
   bodyMats?: string[]
+  /** attach a procedural mane to the head bone (turns a big-cat rig into a lion). */
+  mane?: boolean
   /** does the Fire/Ice/Neon/Gold/Shadow skin picker apply to this character? */
   skinnable: boolean
   /** player level required to run as this character (0 = always available). */
@@ -59,14 +61,16 @@ const QUAT_CREDIT = 'Quaternius · CC0'
 
 export const CHARACTERS: CharacterDef[] = [
   {
-    id: 'lion', name: 'Leo the Lion', emoji: '🦁', kind: 'procedural',
-    gltfUpgrade: '/models/lion.glb', // drop a realistic rigged lion here → auto-upgrade
-    skinnable: true, unlockLevel: 0,
-    blurb: 'The king. Your signature runner — upgrades to a realistic model if one is installed.',
+    id: 'lion', name: 'Leo the Lion', emoji: '🦁', kind: 'gltf', url: '/models/wolf.glb',
+    gltfUpgrade: '/models/lion.glb', // drop a realistic rigged lion here → replaces the base + mane
+    clips: QUAT, bodyMats: ['Main', 'Main_Light'], mane: true, targetHeight: 1.7, faceYaw: Math.PI,
+    skinnable: true, unlockLevel: 0, credit: QUAT_CREDIT,
+    blurb: 'The king — a real animated 3D lion. Auto-upgrades to a photoreal model if one is installed.',
   },
   {
-    id: 'lioness', name: 'Lioness', emoji: '🦁', kind: 'procedural', female: true,
-    skinnable: true, unlockLevel: 0,
+    id: 'lioness', name: 'Lioness', emoji: '🦁', kind: 'gltf', url: '/models/wolf.glb', female: true,
+    clips: QUAT, bodyMats: ['Main', 'Main_Light'], targetHeight: 1.6, faceYaw: Math.PI,
+    skinnable: true, unlockLevel: 0, credit: QUAT_CREDIT,
     blurb: 'Fast, fearless, maneless.',
   },
   {
@@ -77,12 +81,22 @@ export const CHARACTERS: CharacterDef[] = [
   {
     id: 'fox', name: 'Fox', emoji: '🦊', kind: 'gltf', url: '/models/fox.glb',
     clips: QUAT, bodyMats: ['Main', 'Main_Light'], targetHeight: 1.4, faceYaw: Math.PI,
-    skinnable: true, unlockLevel: 4, blurb: 'Small, quick and clever.', credit: QUAT_CREDIT,
+    skinnable: true, unlockLevel: 3, blurb: 'Small, quick and clever.', credit: QUAT_CREDIT,
   },
   {
     id: 'shiba', name: 'Shiba Inu', emoji: '🐕', kind: 'gltf', url: '/models/shiba.glb',
     clips: QUAT, bodyMats: ['Main', 'Main_Light'], targetHeight: 1.45, faceYaw: Math.PI,
-    skinnable: true, unlockLevel: 6, blurb: 'Good boy. Very fast good boy.', credit: QUAT_CREDIT,
+    skinnable: true, unlockLevel: 4, blurb: 'Good boy. Very fast good boy.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'husky', name: 'Husky', emoji: '🐕‍🦺', kind: 'gltf', url: '/models/husky.glb',
+    clips: QUAT, bodyMats: [], targetHeight: 1.5, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 5, blurb: 'Sled-dog stamina.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'deer', name: 'Deer', emoji: '🦌', kind: 'gltf', url: '/models/deer.glb',
+    clips: QUAT, bodyMats: ['Main', 'Main_Light'], targetHeight: 1.8, faceYaw: Math.PI,
+    skinnable: true, unlockLevel: 6, blurb: 'Bounding and graceful.', credit: QUAT_CREDIT,
   },
   {
     id: 'stag', name: 'Stag', emoji: '🦌', kind: 'gltf', url: '/models/stag.glb',
@@ -90,9 +104,14 @@ export const CHARACTERS: CharacterDef[] = [
     skinnable: false, unlockLevel: 8, blurb: 'Antlered and majestic.', credit: QUAT_CREDIT,
   },
   {
+    id: 'bull', name: 'Bull', emoji: '🐂', kind: 'gltf', url: '/models/bull.glb',
+    clips: QUAT, bodyMats: ['Main', 'Main_Light'], targetHeight: 1.9, faceYaw: Math.PI,
+    skinnable: true, unlockLevel: 10, blurb: 'Unstoppable charge.', credit: QUAT_CREDIT,
+  },
+  {
     id: 'horse', name: 'Stallion', emoji: '🐎', kind: 'gltf', url: '/models/horse.glb',
     clips: QUAT, bodyMats: ['Main', 'Main_Light'], targetHeight: 2.0, faceYaw: Math.PI,
-    skinnable: true, unlockLevel: 10, blurb: 'Thunderous full-speed gallop.', credit: QUAT_CREDIT,
+    skinnable: true, unlockLevel: 12, blurb: 'Thunderous full-speed gallop.', credit: QUAT_CREDIT,
   },
 ]
 
