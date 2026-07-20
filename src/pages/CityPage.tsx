@@ -9,6 +9,7 @@ import { GlassCard, Page, SectionTitle } from '../components/ui'
 import { cn, levelForXp, levelProgress, levelTitle, todayKey, xpForLevel } from '../lib/utils'
 import { CITY_TOTAL_BUILDINGS, DISTRICTS, cityUnlocked, districtsUnlocked, nextDistrict, startCityScene } from '../game/cityScene'
 import { startLionRun, type RunResult } from '../game/lionRun'
+import { CHARACTERS, DEFAULT_CHARACTER, characterById, isCharacterUnlocked } from '../lib/characters'
 
 /** Free run every day, +1 per completed focus session, capped. */
 const MAX_RUNS_PER_DAY = 3
@@ -130,6 +131,20 @@ export function CityPage() {
   const gameRef = useRef<HTMLCanvasElement>(null)
   // whether the current run consumes a reward token (XP) or is a free replay
   const eligibleRef = useRef(false)
+  // ---- chosen runner (lion/lioness/wolf/fox/…), unlocked by level ----
+  const [character, setCharacter] = useState<string>(() => localStorage.getItem('fl-character') || DEFAULT_CHARACTER)
+  // three.js lives only in the lazy game chunk — warm the model without a static import
+  function preloadChar(id: string) {
+    const def = characterById(id)
+    if (def.url) import('../game/characterModel').then((m) => m.preloadCharacterModel(def.url)).catch(() => {})
+  }
+  function selectCharacter(id: string) {
+    if (!isCharacterUnlocked(characterById(id), level)) return
+    setCharacter(id)
+    localStorage.setItem('fl-character', id)
+    preloadChar(id)
+    if (gameOpen && !runStarted) setRunKey((k) => k + 1) // rebuild the runner live
+  }
   useEffect(() => {
     if (!stageFlash) return
     const t = setTimeout(() => setStageFlash(null), 1700)
@@ -183,7 +198,8 @@ export function CityPage() {
     import('../game/lionRun3d')
       .then(({ startLionRun3D }) => {
         if (cancelled) return
-        const h = startLionRun3D(el, callbacks)
+        const effChar = isCharacterUnlocked(characterById(character), level) ? character : DEFAULT_CHARACTER
+        const h = startLionRun3D(el, callbacks, { character: effChar })
         destroy = h ? h.destroy : startLionRun(el, callbacks).destroy
       })
       .catch(() => {
@@ -202,6 +218,7 @@ export function CityPage() {
     setRunStarted(false)
     setRunLive(null)
     setStageFlash(null)
+    preloadChar(character)
     setRunKey((k) => k + 1)
     setGameOpen(true)
   }
@@ -303,6 +320,7 @@ export function CityPage() {
                   ))}
                 </span>
                 <span className="flex items-center gap-1 text-emerald-500"><Zap size={13} /> up to +{MAX_XP_PER_RUN} XP a run</span>
+                <span className="flex items-center gap-1 text-slate-500 dark:text-slate-300">{characterById(character).emoji} {characterById(character).name}</span>
               </div>
             </div>
           </div>
@@ -457,6 +475,32 @@ export function CityPage() {
                   <div className="city-display text-3xl text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">TAP TO RUN</div>
                   <div className="mt-2 text-xs font-semibold text-white/70">
                     swipe ← → to change lane · tap to jump · tap again = double jump
+                  </div>
+                </div>
+              )}
+
+              {/* character select — pick your runner before tapping to run */}
+              {!runStarted && !result && (
+                <div className="pointer-events-auto absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-6">
+                  <div className="mb-1.5 text-center text-[10px] font-black uppercase tracking-[0.3em] text-white/60">Choose your runner</div>
+                  <div className="flex justify-start gap-2 overflow-x-auto pb-1 sm:justify-center [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+                    {CHARACTERS.map((c) => {
+                      const unlocked = isCharacterUnlocked(c, level)
+                      const selected = c.id === character
+                      return (
+                        <button key={c.id} type="button" disabled={!unlocked}
+                          onClick={() => selectCharacter(c.id)}
+                          className={cn('relative flex shrink-0 flex-col items-center gap-0.5 rounded-2xl px-3 py-2 ring-1 transition active:scale-95',
+                            selected ? 'bg-amber-400/25 ring-amber-400' : 'bg-white/5 ring-white/10 hover:bg-white/10',
+                            !unlocked && 'opacity-45')}>
+                          <span className="text-2xl leading-none">{c.emoji}</span>
+                          <span className="whitespace-nowrap text-[10px] font-bold text-white/85">{c.name}</span>
+                          {unlocked
+                            ? selected && <span className="text-[8px] font-black uppercase tracking-wider text-amber-300">● running</span>
+                            : <span className="flex items-center gap-0.5 text-[8px] font-black uppercase tracking-wider text-amber-300/90">🔒 Lv {c.unlockLevel}</span>}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               )}

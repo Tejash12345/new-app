@@ -1,0 +1,5 @@
+3D character models in this folder are by Quaternius (https://quaternius.com),
+from the "Animated Animal Pack", released under CC0 (Public Domain) — free for
+commercial use, no attribution required. Mirrored via Poly Pizza (poly.pizza).
+Files: wolf.glb, fox.glb, shiba.glb, stag.glb, horse.glb
+(lion.glb is an OPTIONAL drop-in slot for a realistic lion — not shipped by default.)

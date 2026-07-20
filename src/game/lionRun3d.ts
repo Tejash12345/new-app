@@ -25,7 +25,8 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
-import { buildLion, setLionFemale } from './lionModel'
+import { buildCharacter } from './characterModel'
+import { characterById } from '../lib/characters'
 import { skinById } from '../lib/lionSkins'
 import { haptic } from '../lib/prefs'
 import type { RunResult } from './lionRun'
@@ -38,12 +39,14 @@ export type Run3DHandle = {
   injectAttack: (kind: AttackKind) => void
   // Asphalt-Nitro-style rival: show the opponent's lion racing in this scene,
   // placed from their broadcast distance/lane; and a launch VFX when I attack
-  setGhost: (distanceM: number, lane: number, alive: boolean, female?: boolean, skin?: string) => void
+  setGhost: (distanceM: number, lane: number, alive: boolean, female?: boolean, skin?: string, character?: string) => void
   fireFx: (kind: AttackKind) => void
   // switch MY lion between lion / lioness live (from the race gender toggle)
   setSelfFemale: (female: boolean) => void
   // change MY lion's skin live (recolor + signature trail)
   setSkin: (skinId: string) => void
+  // switch MY character live (lion/lioness/wolf/fox/…) — rebuilds the runner
+  setSelfCharacter: (character: string) => void
 }
 export type Run3DOpts = {
   // a shared seed makes the obstacle/orb track identical on both racers'
@@ -57,6 +60,8 @@ export type Run3DOpts = {
   female?: boolean
   // cosmetic skin id (recolor + trail) — see lib/lionSkins
   skin?: string
+  // playable character id (lion/lioness/wolf/fox/…) — see lib/characters
+  character?: string
 }
 
 type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack' | 'gate'; z: number; alive: boolean; passed?: boolean }
@@ -307,6 +312,60 @@ export function startLionRun3D(
   moon.position.set(-24, 55, -160)
   scene.add(moon)
 
+  // a warm sun that fades IN toward daylight (opposite the moon)
+  const sun = new THREE.Sprite(new THREE.SpriteMaterial({ map: softGlowTex('rgba(255,244,214,1)'), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }))
+  sun.scale.setScalar(30)
+  sun.position.set(34, 62, -170)
+  scene.add(sun)
+
+  // ---------- real sky: a gradient dome that follows the climate palette ----------
+  // A big inverted sphere with a horizon→zenith gradient reads as real depth
+  // instead of a flat colour. Colours are pushed from the live stage bg/fog
+  // each frame (incl. the attack screen-flash), so night/dawn/morning/storm all
+  // grade smoothly. Kept behind everything and re-centred on the camera.
+  const skyTop = new THREE.Color(STAGES[0].bg).multiplyScalar(0.72)
+  const skyBottom = new THREE.Color(STAGES[0].fog)
+  const skyMat = track(new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { top: { value: skyTop }, bottom: { value: skyBottom }, offset: { value: 12 }, expo: { value: 0.7 } },
+    vertexShader: 'varying vec3 vW; void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vW = wp.xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: 'varying vec3 vW; uniform vec3 top; uniform vec3 bottom; uniform float offset; uniform float expo; void main(){ float h = normalize(vW + vec3(0.0, offset, 0.0)).y; float t = pow(max(h,0.0), expo); gl_FragColor = vec4(mix(bottom, top, clamp(t,0.0,1.0)), 1.0); }',
+  }))
+  const sky = new THREE.Mesh(track(new THREE.SphereGeometry(280, 24, 16)), skyMat)
+  sky.renderOrder = -1
+  sky.frustumCulled = false
+  scene.add(sky)
+
+  // ---------- drifting clouds (puffy by day, dark + heavy in a storm) ----------
+  const cloudTex = (() => {
+    const cv = document.createElement('canvas')
+    cv.width = 128; cv.height = 64
+    const c = cv.getContext('2d')!
+    // a few overlapping soft blobs = one fluffy cloud
+    for (const [cx, cy, r] of [[42, 40, 24], [66, 34, 28], [88, 42, 22], [56, 46, 26], [76, 48, 20]] as [number, number, number][]) {
+      const g = c.createRadialGradient(cx, cy, 2, cx, cy, r)
+      g.addColorStop(0, 'rgba(255,255,255,0.95)')
+      g.addColorStop(1, 'rgba(255,255,255,0)')
+      c.fillStyle = g
+      c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.fill()
+    }
+    return track(new THREE.CanvasTexture(cv))
+  })()
+  const clouds: { sp: THREE.Sprite; mat: THREE.SpriteMaterial; drift: number }[] = []
+  for (let i = 0; i < 14; i++) {
+    const mat = new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: 0.2, depthWrite: false, fog: false, color: 0xffffff })
+    const sp = new THREE.Sprite(mat)
+    const w = 34 + (i % 4) * 12
+    sp.scale.set(w, w * 0.5, 1)
+    sp.position.set(-130 + (i * 47) % 260, 34 + (i % 5) * 11, -80 - (i * 37) % 170)
+    sp.renderOrder = 0
+    clouds.push({ sp, mat, drift: 2.2 + (i % 3) * 1.4 })
+    scene.add(sp)
+  }
+  const cloudDay = new THREE.Color(0xffffff)
+  const cloudStorm = new THREE.Color(0x2b3140)
+  const cloudTmp = new THREE.Color()
+
   // stage-3 rain
   const rainGeo = track(new THREE.BufferGeometry())
   {
@@ -333,16 +392,27 @@ export function startLionRun3D(
   }
 
   // ---------- the runner + grounding blob shadow ----------
-  const rig = buildLion({ female: opts.female })
-  rig.group.rotation.y = Math.PI / 2 // face down the road (-z)
-  rig.group.scale.setScalar(0.5)
-  const mySkin = skinById(opts.skin)
-  rig.maneMat.color.setHex(mySkin.mane)
-  rig.maneMat.emissiveIntensity = 0.35
-  rig.bodyMat.color.setHex(mySkin.body)
+  let myCharId = opts.character || 'lion'
+  let mySkinId = opts.skin || 'classic'
+  let myFemaleState = !!opts.female
+  let rig = buildCharacter(characterById(myCharId), { female: myFemaleState })
+  const mySkin = skinById(mySkinId)
+  rig.setSkin(mySkin.body, mySkin.mane)
+  rig.setGlow(0.35)
   let myTrail: string | null = mySkin.trail // skin's signature glow trail
-  if (shadows) rig.group.traverse((o) => { (o as THREE.Mesh).castShadow = true })
+  if (shadows) rig.enableShadows()
   scene.add(rig.group)
+  function rebuildRig() {
+    scene.remove(rig.group)
+    rig.dispose()
+    rig = buildCharacter(characterById(myCharId), { female: myFemaleState })
+    const s = skinById(mySkinId)
+    rig.setSkin(s.body, s.mane)
+    rig.setGlow(0.35)
+    myTrail = s.trail
+    if (shadows) rig.enableShadows()
+    scene.add(rig.group)
+  }
   const shadow = new THREE.Mesh(
     track(new THREE.CircleGeometry(1.1, 16)),
     track(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4, depthWrite: false })),
@@ -352,18 +422,30 @@ export function startLionRun3D(
   scene.add(shadow)
 
   // ---------- opponent "ghost" lion (race) — placed from their live state ----------
-  // the rival renders as a REAL lion (not a tinted ghost) — a normal lion by
-  // default, then recoloured to their actual skin when their state arrives.
+  // the rival renders as a REAL character (their chosen one) — a lion by
+  // default, rebuilt to their actual character + skin when their state arrives.
   // The floating name tag + position are what distinguish it from you.
-  const ghost = buildLion()
-  ghost.group.rotation.y = Math.PI / 2
-  ghost.group.scale.setScalar(0.5)
+  let ghostCharId = 'lion'
+  let ghost = buildCharacter(characterById(ghostCharId), { phase: 1.7 })
   const gSkin = skinById('classic')
-  ghost.maneMat.color.setHex(gSkin.mane)
-  ghost.maneMat.emissiveIntensity = 0.35
-  ghost.bodyMat.color.setHex(gSkin.body)
+  ghost.setSkin(gSkin.body, gSkin.mane)
+  ghost.setGlow(0.35)
+  if (shadows) ghost.enableShadows()
   ghost.group.visible = false
   scene.add(ghost.group)
+  function rebuildGhost() {
+    const wasVisible = ghost.group.visible
+    scene.remove(ghost.group)
+    ghost.dispose()
+    ghost = buildCharacter(characterById(ghostCharId), { phase: 1.7 })
+    const s = skinById(ghostSkinId || 'classic')
+    ghost.setSkin(s.body, s.mane)
+    ghost.setGlow(0.35)
+    ghost.setFemale(ghostFemale)
+    if (shadows) ghost.enableShadows()
+    ghost.group.visible = wasVisible
+    scene.add(ghost.group)
+  }
   const ghostShadow = new THREE.Mesh(
     track(new THREE.CircleGeometry(1.1, 16)),
     track(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false })),
@@ -781,28 +863,36 @@ export function startLionRun3D(
     })
     haptic(15)
   }
-  function setGhost(distanceM: number, lane2: number, alive: boolean, female?: boolean, skin?: string) {
+  function setGhost(distanceM: number, lane2: number, alive: boolean, female?: boolean, skin?: string, character?: string) {
     ghostSeen = true
     ghostDistM = distanceM
     ghostLane = Math.max(0, Math.min(2, lane2))
     ghostAlive = alive
+    if (character !== undefined && character !== ghostCharId) {
+      ghostCharId = character
+      rebuildGhost() // reapplies current skin + female to the new character
+    }
     if (female !== undefined && female !== ghostFemale) {
       ghostFemale = female
-      setLionFemale(ghost, female)
+      ghost.setFemale(female)
     }
     if (skin !== undefined && skin !== ghostSkinId) {
       ghostSkinId = skin
       const s = skinById(skin)
-      ghost.bodyMat.color.setHex(s.body)
-      ghost.maneMat.color.setHex(s.mane)
+      ghost.setSkin(s.body, s.mane)
     }
   }
-  function setSelfFemale(female: boolean) { setLionFemale(rig, female) }
+  function setSelfFemale(female: boolean) { myFemaleState = female; rig.setFemale(female) }
   function setSkin(skinId: string) {
+    mySkinId = skinId
     const s = skinById(skinId)
-    rig.bodyMat.color.setHex(s.body)
-    rig.maneMat.color.setHex(s.mane)
+    rig.setSkin(s.body, s.mane)
     myTrail = s.trail
+  }
+  function setSelfCharacter(character: string) {
+    if (character === myCharId) return
+    myCharId = character
+    rebuildRig() // reapplies current skin + gender to the new runner
   }
 
   // ---------- mobile-first input ----------
@@ -1108,6 +1198,24 @@ export function startLionRun3D(
     moonMat.opacity += ((1 - day) - moonMat.opacity) * k
     towerMat.emissiveIntensity += (0.9 * (1 - day * 0.7) - towerMat.emissiveIntensity) * k
     rainMat.opacity += ((theme.rain ? 0.6 : 0) - rainMat.opacity) * Math.min(1, rawDt * 2)
+    // sun fades in with daylight; dome stays centred on the camera
+    const sunMat = sun.material as THREE.SpriteMaterial
+    sunMat.opacity += (day - sunMat.opacity) * k
+    sky.position.copy(camera.position)
+    // sky gradient follows the live climate palette (+ any attack screen-flash)
+    const skyFlash = flashT > 0 ? Math.min(0.85, flashT * 2.2) : 0
+    skyTop.copy(bgColor).multiplyScalar(0.72)
+    skyBottom.copy(bgColor).lerp(fogColor, 0.5)
+    if (skyFlash > 0) { skyTop.lerp(flashColor, skyFlash); skyBottom.lerp(flashColor, skyFlash) }
+    // clouds: white + puffy by day, dark + heavy in a storm, sparse at night
+    const cloudOpacity = theme.rain ? 0.92 : 0.2 + day * 0.62
+    cloudTmp.copy(cloudStorm).lerp(cloudDay, theme.rain ? Math.min(day, 0.4) : day)
+    for (const cl of clouds) {
+      cl.sp.position.x += cl.drift * rawDt
+      if (cl.sp.position.x > 140) cl.sp.position.x -= 280
+      cl.mat.opacity += (cloudOpacity - cl.mat.opacity) * k
+      cl.mat.color.lerp(cloudTmp, k)
+    }
     // attack screen-flash (thunder white / fire orange / freeze blue) fades out
     if (flashT > 0) {
       flashT = Math.max(0, flashT - rawDt)
@@ -1141,17 +1249,14 @@ export function startLionRun3D(
       }
     }
 
-    // lion pose — gallop, lean into lane changes, tuck in the air, flatten to slide
+    // character pose — gallop, lean into lane changes, tuck in the air, slide.
+    // (procedural rig = code-driven; gltf rig = AnimationMixer clip crossfade)
     const sliding = slideT > 0
     rig.group.position.set(lionX, lionY, 0)
     rig.group.rotation.z = (LANE_X[lane] - lionX) * -0.06
     const airborne = lionY > 0.05
-    rig.legs.forEach((leg, i) => {
-      leg.rotation.x = airborne ? 0.5 : Math.sin(tSec * 14 + (i % 2) * Math.PI) * 0.7
-    })
-    rig.body.scale.y = sliding ? 0.5 : 1 + (airborne ? 0.04 : Math.sin(tSec * 14) * 0.04)
-    rig.tail.rotation.x = Math.sin(tSec * 8) * 0.3
-    rig.headGroup.rotation.y = Math.PI / 2
+    rig.pose({ tSec, running: state === 'run' || state === 'swoop', airborne, sliding, dead: state === 'dying' || state === 'dead' })
+    rig.update(rawDt)
     // power-up auras + x2 mane glow
     shieldBubble.visible = shield
     if (shield) {
@@ -1169,7 +1274,7 @@ export function startLionRun3D(
       jetFlame.position.set(lionX, lionY - 0.6, 0.2)
       jetFlame.scale.setScalar(1.8 + Math.sin(tSec * 30) * 0.5)
     }
-    rig.maneMat.emissiveIntensity = x2T > 0 ? 0.9 : 0.35
+    rig.setGlow(x2T > 0 ? 0.9 : 0.35)
     // grounding shadow shrinks while airborne
     shadow.position.x = lionX
     const sh = Math.max(0.35, 1 - lionY * 0.28)
@@ -1189,9 +1294,8 @@ export function startLionRun3D(
       ghostX += (LANE_X[ghostLane] - ghostX) * Math.min(1, rawDt * 8)
       ghost.group.position.set(ghostX, 0, ghostZ)
       ghost.group.rotation.z = (LANE_X[ghostLane] - ghostX) * -0.06
-      ghost.legs.forEach((leg, i) => { leg.rotation.x = Math.sin(tSec * 13 + (i % 2) * Math.PI) * 0.7 })
-      ghost.body.scale.y = 1 + Math.sin(tSec * 13) * 0.04
-      ghost.headGroup.rotation.y = Math.PI / 2
+      ghost.pose({ tSec, running: true, airborne: false, sliding: false, dead: !ghostAlive })
+      ghost.update(rawDt)
       ghostShadow.position.set(ghostX, 0.02, ghostZ)
       if (ghostLabel) ghostLabel.position.set(ghostX, 3.5, ghostZ)
     }
@@ -1267,6 +1371,8 @@ export function startLionRun3D(
   return {
     destroy: () => {
       cancelAnimationFrame(raf)
+      rig.dispose()
+      ghost.dispose()
       ro.disconnect()
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
@@ -1294,5 +1400,6 @@ export function startLionRun3D(
     fireFx,
     setSelfFemale,
     setSkin,
+    setSelfCharacter,
   }
 }

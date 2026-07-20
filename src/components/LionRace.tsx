@@ -19,6 +19,7 @@ import { X } from 'lucide-react'
 // imported when a race actually starts, mirroring CityPage.
 import type { Run3DHandle, AttackKind, HudState } from '../game/lionRun3d'
 import { LION_SKINS } from '../lib/lionSkins'
+import { CHARACTERS, DEFAULT_CHARACTER, characterById } from '../lib/characters'
 
 const EMOTES = ['😜', '😂', '🔥', '💪', '😎', '👋', '😱', '🦁']
 
@@ -32,7 +33,7 @@ const CONFETTI = Array.from({ length: 24 }, (_, i) => ({
 }))
 
 export type RacePayload =
-  | { a: 'state'; from: string; dist: number; lane: number; alive: boolean; female?: boolean; skin?: string }
+  | { a: 'state'; from: string; dist: number; lane: number; alive: boolean; female?: boolean; skin?: string; character?: string }
   | { a: 'attack'; from: string; kind: AttackKind }
   | { a: 'dead'; from: string; dist: number }
   | { a: 'rematch'; from: string; seed: number }
@@ -102,14 +103,14 @@ export function LionRace({
   const [freeWeapon, setFreeWeapon] = useState<AttackKind | null>(null) // from an item box
   const [emotePop, setEmotePop] = useState<{ e: string; mine: boolean } | null>(null)
   const [emoteOpen, setEmoteOpen] = useState(false)
-  // lion vs lioness — persisted, seeded from the Diet gender choice if set
-  const [myFemale, setMyFemale] = useState(() => {
-    try {
-      const v = localStorage.getItem('fl-lioness')
-      if (v != null) return v === '1'
-      return JSON.parse(localStorage.getItem('diet-plan') ?? '{}')?.gender === 'Female'
-    } catch { return false }
+  // chosen runner (lion/lioness/wolf/fox/…) — persisted, shared with /city
+  const [myChar, setMyChar] = useState(() => {
+    try { return localStorage.getItem('fl-character') || DEFAULT_CHARACTER } catch { return DEFAULT_CHARACTER }
   })
+  const charRef = useRef(myChar)
+  charRef.current = myChar
+  // gender is now implied by the chosen runner (lion vs lioness)
+  const [myFemale, setMyFemale] = useState(() => characterById(myChar).female === true)
   const femaleRef = useRef(myFemale)
   femaleRef.current = myFemale
   // cosmetic lion skin (persisted) — recolor + signature glow trail
@@ -183,7 +184,7 @@ export function LionRace({
           const now = performance.now()
           if (now - lastSent.current > 90) {
             lastSent.current = now
-            sendRef.current({ a: 'state', dist: Math.round(dist), lane, alive, female: femaleRef.current, skin: skinRef.current })
+            sendRef.current({ a: 'state', dist: Math.round(dist), lane, alive, female: femaleRef.current, skin: skinRef.current, character: charRef.current })
           }
         },
         onOver: (r) => {
@@ -193,7 +194,7 @@ export function LionRace({
           sendRef.current({ a: 'dead', dist: myFinal.current })
           resolve() // my crash ends the race for both
         },
-      }, { seed: curSeed, race: true, oppName: opp.name, female: femaleRef.current, skin: skinRef.current })
+      }, { seed: curSeed, race: true, oppName: opp.name, female: femaleRef.current, skin: skinRef.current, character: charRef.current })
       if (!h) { setFailed(true); return }
       handle = h
       handleRef.current = h
@@ -224,7 +225,7 @@ export function LionRace({
         oppDistRef.current = p.dist
         setOppDist(p.dist)
         setOppAlive(p.alive)
-        handleRef.current?.setGhost(p.dist, p.lane, p.alive, p.female, p.skin) // show their lion (skin/lioness) racing in my scene
+        handleRef.current?.setGhost(p.dist, p.lane, p.alive, p.female, p.skin, p.character) // show their chosen runner (character/skin) racing in my scene
       } else if (p.a === 'attack') {
         handleRef.current?.injectAttack(p.kind)
         setFlash(p.kind)
@@ -269,12 +270,17 @@ export function LionRace({
     setTimeout(() => setEmotePop(null), 1800)
     sendRef.current({ a: 'emote', e })
   }
-  function toggleGender() {
-    const nx = !myFemale
-    setMyFemale(nx)
-    femaleRef.current = nx
-    try { localStorage.setItem('fl-lioness', nx ? '1' : '0') } catch { /* private mode */ }
-    handleRef.current?.setSelfFemale(nx)
+  function chooseCharacter(id: string) {
+    setMyChar(id)
+    charRef.current = id
+    try { localStorage.setItem('fl-character', id) } catch { /* private mode */ }
+    const fem = characterById(id).female === true
+    setMyFemale(fem)
+    femaleRef.current = fem
+    const def = characterById(id)
+    if (def.url) import('../game/characterModel').then((m) => m.preloadCharacterModel(def.url)).catch(() => {})
+    handleRef.current?.setSelfFemale(fem)
+    handleRef.current?.setSelfCharacter(id)
   }
   function chooseSkin(id: string) {
     setMySkin(id)
@@ -383,10 +389,20 @@ export function LionRace({
           <div className="animate-pulse text-7xl font-black text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)]">
             {count > 0 ? count : 'GO!'}
           </div>
-          <button onClick={toggleGender}
-            className="rounded-full bg-white/12 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/20 active:scale-95">
-            {myFemale ? '🌸 Racing as Lioness — tap for Lion' : '🦁 Racing as Lion — tap for Lioness'}
-          </button>
+          {/* character picker — pick your runner (lion, lioness, wolf, fox…) */}
+          <div className="flex flex-col items-center gap-1.5">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-white/50">Runner</div>
+            <div className="flex max-w-[92vw] flex-wrap items-center justify-center gap-1.5 px-4">
+              {CHARACTERS.map((c) => (
+                <button key={c.id} onClick={() => chooseCharacter(c.id)}
+                  title={c.name}
+                  className={`flex h-12 min-w-12 flex-col items-center justify-center rounded-2xl px-2 transition active:scale-90 ${myChar === c.id ? 'bg-white/25 ring-2 ring-white' : 'bg-white/8'}`}>
+                  <span className="text-xl leading-none">{c.emoji}</span>
+                  <span className="mt-0.5 text-[8px] font-bold text-white/70">{c.name.split(' ')[0]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           {/* skin picker */}
           <div className="flex flex-col items-center gap-1.5">
             <div className="text-[10px] font-bold uppercase tracking-widest text-white/50">Skin</div>
