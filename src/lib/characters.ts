@@ -22,7 +22,7 @@ export type CharacterKind = 'procedural' | 'gltf'
 
 /** Clip-name hints. The builder matches case-insensitively and falls back to
  *  keyword matching (run→gallop/run, idle, jump, death…) so almost any rig works. */
-export type CharClips = { run: string; idle: string; jump: string; death: string; walk?: string }
+export type CharClips = { run: string; idle: string; jump: string; death: string; walk?: string; slide?: string }
 
 export type CharacterDef = {
   id: string
@@ -57,6 +57,8 @@ export type CharacterDef = {
 // Every Quaternius "Animated Animal Pack" model shares one AnimalArmature with
 // identical clip names, so one map covers the whole pack.
 const QUAT: CharClips = { run: 'Gallop', idle: 'Idle', jump: 'Gallop_Jump', death: 'Death', walk: 'Walk' }
+// Bipeds (humans/robot) — CharacterArmature / Human Armature clip names.
+const HUMAN: CharClips = { run: 'Run', idle: 'Idle', jump: 'Jump', death: 'Death', walk: 'Walk' }
 const QUAT_CREDIT = 'Quaternius · CC0'
 
 export const CHARACTERS: CharacterDef[] = [
@@ -112,6 +114,27 @@ export const CHARACTERS: CharacterDef[] = [
     id: 'horse', name: 'Stallion', emoji: '🐎', kind: 'gltf', url: '/models/horse.glb',
     clips: QUAT, bodyMats: ['Main', 'Main_Light'], targetHeight: 2.0, faceYaw: Math.PI,
     skinnable: true, unlockLevel: 12, blurb: 'Thunderous full-speed gallop.', credit: QUAT_CREDIT,
+  },
+  // ---- humans + characters (rigged bipeds, real Run/Idle/Jump/Death) ----
+  {
+    id: 'runner', name: 'Runner', emoji: '🧍', kind: 'gltf', url: '/models/runner.glb',
+    clips: HUMAN, bodyMats: [], targetHeight: 1.85, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 7, blurb: 'A human sprinter — full biped run cycle.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'robot', name: 'Robot', emoji: '🤖', kind: 'gltf', url: '/models/robot.glb',
+    clips: HUMAN, bodyMats: ['Main'], targetHeight: 1.8, faceYaw: Math.PI,
+    skinnable: true, unlockLevel: 9, blurb: 'Mechanical marathoner. Recolours with skins.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'hero', name: 'Hero', emoji: '🦸', kind: 'gltf', url: '/models/hero.glb',
+    clips: { ...HUMAN, slide: 'Duck' }, bodyMats: ['Main', 'Main_Light'], targetHeight: 1.75, faceYaw: Math.PI,
+    skinnable: true, unlockLevel: 11, blurb: 'Agile hero — real jump + a ducking slide.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'adventurer', name: 'Adventurer', emoji: '🗺️', kind: 'gltf', url: '/models/adventurer.glb',
+    clips: HUMAN, bodyMats: [], targetHeight: 1.85, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 14, blurb: 'A detailed explorer with a backpack.', credit: QUAT_CREDIT,
   },
 ]
 

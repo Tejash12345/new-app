@@ -484,19 +484,24 @@ export function startLionRun3D(
   let ghostX = 0
   let ghostZ = -8
 
-  // ---------- GTA-style roaming animals (ambient, off the 3 lanes) ----------
-  // A few non-player animals gallop along the shoulders + background and recycle;
-  // gated off on weak phones for FPS. They never enter the gameplay lanes.
-  const ROAMER_SPECIES = ['deer', 'fox', 'wolf', 'husky', 'horse', 'bull']
-  const roamerCount = lowEnd ? 0 : 3
-  const roamers: { rig: CharacterRig; x: number; z: number; side: number }[] = []
+  // ---------- GTA-style road traffic: a pack running ON the road ahead ----------
+  // Humans + animals run/walk down the road ahead of you and drift within a band
+  // so you never catch them (no fake collisions). Gated off on weak phones.
+  const ROAMER_SPECIES = ['runner', 'robot', 'deer', 'wolf', 'fox', 'hero', 'husky', 'adventurer', 'shiba', 'horse']
+  const ROAMER_X = [-3.4, -1.6, 0, 1.6, 3.4]
+  const roamerCount = lowEnd ? 0 : 5
+  type Roamer = { rig: CharacterRig; x: number; z: number; vz: number; y: number; vy: number; jumpT: number; gait: 'walk' | 'run'; animSpeed: number }
+  const roamers: Roamer[] = []
   for (let i = 0; i < roamerCount; i++) {
-    const r = buildCharacter(characterById(ROAMER_SPECIES[i % ROAMER_SPECIES.length]), { phase: i * 1.3 })
+    const r = buildCharacter(characterById(ROAMER_SPECIES[i % ROAMER_SPECIES.length]), { phase: i * 1.1 })
     if (shadows) r.enableShadows()
     r.group.visible = false
     scene.add(r.group)
-    const side = i % 2 ? 1 : -1
-    roamers.push({ rig: r, x: side * (6.5 + (i % 3) * 2.4), z: -32 - i * 46, side })
+    roamers.push({
+      rig: r, x: ROAMER_X[i % ROAMER_X.length], z: -24 - i * 17,
+      vz: (i % 2 ? 1 : -1) * (2 + (i % 3) * 1.5), y: 0, vy: 0,
+      jumpT: 1 + i * 0.7, gait: i % 3 === 0 ? 'walk' : 'run', animSpeed: 0.85 + (i % 4) * 0.16,
+    })
   }
 
   // ---------- animated attack VFX ----------
@@ -1326,19 +1331,26 @@ export function startLionRun3D(
       if (trailT <= 0) { trailT = 0.05; trailPuff(lionX, lionY + 0.9, myTrail) }
     }
 
-    // ---- roaming animals: stream past with the world, recycle far ahead ----
-    // (Math.random, NOT the seeded track PRNG, so a seeded race stays in sync)
-    for (const r of roamers) {
-      if (state === 'run' || state === 'swoop' || state === 'dying') r.z += speed * rawDt
-      if (r.z > 16) {
-        r.z -= 150 + Math.random() * 70
-        r.side = Math.random() < 0.5 ? -1 : 1
-        r.x = r.side * (6.5 + Math.random() * 7)
+    // ---- road traffic: humans + animals running the road ahead of you ----
+    // They drift within a band [-120,-7] so they stay AHEAD (no collisions) and
+    // occasionally hop. Math.random (NOT the seeded PRNG) → seeded races stay synced.
+    if (roamers.length && (state === 'run' || state === 'swoop' || state === 'dying')) {
+      for (const r of roamers) {
+        r.z += r.vz * rawDt
+        if (r.z > -7) r.vz = -Math.abs(r.vz)
+        else if (r.z < -120) r.vz = Math.abs(r.vz)
+        r.jumpT -= rawDt
+        if (r.jumpT <= 0) { r.jumpT = 2 + Math.random() * 4; if (r.gait === 'run' && Math.random() < 0.5) r.vy = 6.5 }
+        r.vy -= 22 * rawDt
+        r.y = Math.max(0, r.y + r.vy * rawDt)
+        if (r.y === 0 && r.vy < 0) r.vy = 0
       }
+    }
+    for (const r of roamers) {
       r.rig.group.visible = r.rig.ready()
-      r.rig.group.position.set(r.x, 0, r.z)
-      r.rig.pose({ tSec: tSec + r.z * 0.1, running: true, airborne: false, sliding: false, dead: false })
-      r.rig.update(rawDt)
+      r.rig.group.position.set(r.x, r.y, r.z)
+      r.rig.pose({ tSec: tSec * r.animSpeed + r.z * 0.11, running: true, walk: r.gait === 'walk', airborne: r.y > 0.1, sliding: false, dead: false })
+      r.rig.update(rawDt * r.animSpeed)
     }
 
     // ---- animated attack VFX ----

@@ -29,6 +29,7 @@ export type PoseInput = {
   airborne: boolean
   sliding: boolean
   dead: boolean
+  walk?: boolean
 }
 
 export type CharacterRig = {
@@ -98,6 +99,7 @@ function pickClip(clips: THREE.AnimationClip[], want: keyof CharClips, hint?: st
     jump: ['gallop_jump', 'jump', 'leap', 'hop'],
     death: ['death', 'die', 'dead', 'hit'],
     walk: ['walk'],
+    slide: ['duck', 'slide', 'roll', 'crouch'],
   }
   for (const k of kw[want] || [want]) {
     const c = clips.find((cl) => norm(cl.name).includes(k))
@@ -210,7 +212,7 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
     // mixer + clip actions
     mixer = new THREE.AnimationMixer(model)
     const hint: CharClips = def.clips || { run: 'Gallop', idle: 'Idle', jump: 'Gallop_Jump', death: 'Death' }
-    ;(['run', 'idle', 'jump', 'death', 'walk'] as (keyof CharClips)[]).forEach((k) => {
+    ;(['run', 'idle', 'jump', 'death', 'walk', 'slide'] as (keyof CharClips)[]).forEach((k) => {
       const clip = pickClip(res.animations, k, hint[k])
       actions[k] = clip ? mixer!.clipAction(clip) : null
     })
@@ -273,15 +275,16 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
     }
     if (!mixer) return
     if (o.dead) play('death', { once: true, fade: 0.12 })
+    else if (o.sliding && actions.slide) play('slide')
     else if (o.airborne && actions.jump) play('jump')
     else if (!o.running && actions.idle) play('idle')
+    else if (o.walk && actions.walk) play('walk')
     else play('run')
-    // slide has no dedicated clip → crouch/pitch the model forward while it runs
+    // if there's no dedicated slide/duck clip, crouch/pitch the model instead
     if (inner) {
-      const pitch = o.sliding ? -0.85 : 0
-      inner.rotation.x += (pitch - inner.rotation.x) * 0.3
-      const sy = o.sliding ? 0.55 : 1
-      inner.scale.y += (sy - inner.scale.y) * 0.3
+      const proc = o.sliding && !actions.slide
+      inner.rotation.x += ((proc ? -0.85 : 0) - inner.rotation.x) * 0.3
+      inner.scale.y += ((proc ? 0.55 : 1) - inner.scale.y) * 0.3
     }
   }
 
