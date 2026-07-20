@@ -19,7 +19,7 @@ import { X } from 'lucide-react'
 // imported when a race actually starts, mirroring CityPage.
 import type { Run3DHandle, AttackKind, HudState } from '../game/lionRun3d'
 import { LION_SKINS } from '../lib/lionSkins'
-import { CHARACTERS, DEFAULT_CHARACTER, characterById } from '../lib/characters'
+import { PLAYABLE_CHARACTERS, DEFAULT_CHARACTER, characterById } from '../lib/characters'
 
 const EMOTES = ['😜', '😂', '🔥', '💪', '😎', '👋', '😱', '🦁']
 
@@ -393,7 +393,7 @@ export function LionRace({
           <div className="flex flex-col items-center gap-1.5">
             <div className="text-[10px] font-bold uppercase tracking-widest text-white/50">Runner</div>
             <div className="flex max-w-[92vw] flex-wrap items-center justify-center gap-1.5 px-4">
-              {CHARACTERS.map((c) => (
+              {PLAYABLE_CHARACTERS.map((c) => (
                 <button key={c.id} onClick={() => chooseCharacter(c.id)}
                   title={c.name}
                   className={`flex h-12 min-w-12 flex-col items-center justify-center rounded-2xl px-2 transition active:scale-90 ${myChar === c.id ? 'bg-white/25 ring-2 ring-white' : 'bg-white/8'}`}>

@@ -9,7 +9,7 @@ import { GlassCard, Page, SectionTitle } from '../components/ui'
 import { cn, levelForXp, levelProgress, levelTitle, todayKey, xpForLevel } from '../lib/utils'
 import { CITY_TOTAL_BUILDINGS, DISTRICTS, cityUnlocked, districtsUnlocked, nextDistrict, startCityScene } from '../game/cityScene'
 import { startLionRun, type RunResult } from '../game/lionRun'
-import { CHARACTERS, DEFAULT_CHARACTER, characterById, isCharacterUnlocked } from '../lib/characters'
+import { PLAYABLE_CHARACTERS, DEFAULT_CHARACTER, characterById, isCharacterUnlocked } from '../lib/characters'
 
 /** Free run every day, +1 per completed focus session, capped. */
 const MAX_RUNS_PER_DAY = 3
@@ -484,7 +484,7 @@ export function CityPage() {
                 <div className="pointer-events-auto absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-6">
                   <div className="mb-1.5 text-center text-[10px] font-black uppercase tracking-[0.3em] text-white/60">Choose your runner</div>
                   <div className="flex justify-start gap-2 overflow-x-auto pb-1 sm:justify-center [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-                    {CHARACTERS.map((c) => {
+                    {PLAYABLE_CHARACTERS.map((c) => {
                       const unlocked = isCharacterUnlocked(c, level)
                       const selected = c.id === character
                       return (

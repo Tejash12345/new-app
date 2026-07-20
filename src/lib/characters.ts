@@ -47,6 +47,8 @@ export type CharacterDef = {
   mane?: boolean
   /** a flying character (e.g. dragon) — hovers above the ground. */
   fly?: boolean
+  /** ambient-only (roams the world but hidden from the playable picker). */
+  ambient?: boolean
   /** does the Fire/Ice/Neon/Gold/Shadow skin picker apply to this character? */
   skinnable: boolean
   /** player level required to run as this character (0 = always available). */
@@ -63,6 +65,8 @@ const QUAT: CharClips = { run: 'Gallop', idle: 'Idle', jump: 'Gallop_Jump', deat
 const HUMAN: CharClips = { run: 'Run', idle: 'Idle', jump: 'Jump', death: 'Death', walk: 'Walk' }
 // Flying dragon — only has flying clips, so run/idle/jump all map to flight.
 const DRAGON: CharClips = { run: 'Fast_Flying', idle: 'Flying_Idle', jump: 'Fast_Flying', death: 'Death' }
+// Generic flyer (bat/bird) — a single Flying clip drives everything.
+const FLYER: CharClips = { run: 'Flying', idle: 'Flying', jump: 'Flying', death: 'Death' }
 const QUAT_CREDIT = 'Quaternius · CC0'
 
 export const CHARACTERS: CharacterDef[] = [
@@ -164,9 +168,28 @@ export const CHARACTERS: CharacterDef[] = [
   {
     id: 'dragon', name: 'Dragon', emoji: '🐉', kind: 'gltf', url: '/models/dragon.glb',
     clips: DRAGON, bodyMats: ['Dragon_Main', 'Dragon_Secondary'], targetHeight: 1.9, faceYaw: Math.PI, fly: true,
-    skinnable: true, unlockLevel: 20, blurb: 'A winged dragon that flies the track — the ultimate unlock.', credit: QUAT_CREDIT,
+    skinnable: true, unlockLevel: 20, blurb: 'A winged dragon that flies the track.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'bat', name: 'Bat', emoji: '🦇', kind: 'gltf', url: '/models/bat.glb',
+    clips: FLYER, bodyMats: ['Main'], targetHeight: 1.4, faceYaw: Math.PI, fly: true,
+    skinnable: true, unlockLevel: 16, blurb: 'A night flyer that swoops the track.', credit: QUAT_CREDIT,
+  },
+  {
+    id: 'wyvern', name: 'Wyvern', emoji: '🐲', kind: 'gltf', url: '/models/wyvern.glb',
+    clips: DRAGON, bodyMats: ['Dragon_Main', 'Dragon_Secondary'], targetHeight: 2.0, faceYaw: Math.PI, fly: true,
+    skinnable: true, unlockLevel: 22, blurb: 'An evolved dragon — apex of the skies.', credit: QUAT_CREDIT,
+  },
+  // ambient-only sky birds (roam the world, not in the picker)
+  {
+    id: 'bird', name: 'Bird', emoji: '🐦', kind: 'gltf', url: '/models/bird.glb',
+    clips: FLYER, bodyMats: [], targetHeight: 0.7, faceYaw: Math.PI, fly: true, ambient: true,
+    skinnable: false, unlockLevel: 99, blurb: 'Ambient sky bird.', credit: QUAT_CREDIT,
   },
 ]
+
+/** Characters shown in the playable picker (excludes ambient sky-dressing). */
+export const PLAYABLE_CHARACTERS = CHARACTERS.filter((c) => !c.ambient)
 
 export const DEFAULT_CHARACTER = 'lion'
 

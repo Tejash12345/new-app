@@ -487,10 +487,11 @@ export function startLionRun3D(
   // ---------- GTA-style road traffic: a pack running ON the road ahead ----------
   // Humans + animals run/walk down the road ahead of you and drift within a band
   // so you never catch them (no fake collisions). Gated off on weak phones.
-  const ROAMER_SPECIES = ['runner', 'robot', 'raptor', 'deer', 'dragon', 'wolf', 'trex', 'fox', 'hero', 'woman']
-  const ROAMER_X = [-3.4, -1.6, 0, 1.6, 3.4]
-  const roamerCount = lowEnd ? 0 : 6
-  type Roamer = { rig: CharacterRig; x: number; z: number; vz: number; y: number; vy: number; jumpT: number; gait: 'walk' | 'run'; animSpeed: number; fly: boolean; flyBase: number }
+  // ground runners are snapped to the 3 lanes so they can jump/duck the REAL
+  // obstacles in their lane; flyers (dragon/bat/bird) weave through the sky.
+  const ROAMER_SPECIES = ['runner', 'raptor', 'dragon', 'deer', 'bat', 'wolf', 'trex', 'bird', 'hero', 'woman', 'robot', 'wyvern']
+  const roamerCount = lowEnd ? 0 : 7
+  type Roamer = { rig: CharacterRig; lane: number; x: number; z: number; vz: number; y: number; vy: number; slideT: number; gait: 'walk' | 'run'; animSpeed: number; fly: boolean; flyBase: number; flyX: number }
   const roamers: Roamer[] = []
   for (let i = 0; i < roamerCount; i++) {
     const def = characterById(ROAMER_SPECIES[i % ROAMER_SPECIES.length])
@@ -499,11 +500,12 @@ export function startLionRun3D(
     r.group.visible = false
     scene.add(r.group)
     const fly = !!def.fly
+    const lane = i % 3
     roamers.push({
-      rig: r, x: ROAMER_X[i % ROAMER_X.length], z: -24 - i * 15,
-      vz: (i % 2 ? 1 : -1) * (2 + (i % 3) * 1.5), y: fly ? 6 : 0, vy: 0,
-      jumpT: 1 + i * 0.7, gait: i % 3 === 0 ? 'walk' : 'run', animSpeed: 0.85 + (i % 4) * 0.16,
-      fly, flyBase: 4.5 + (i % 3) * 2,
+      rig: r, lane, x: fly ? (lane - 1) * 3 : LANE_X[lane], z: -26 - i * 13,
+      vz: (i % 2 ? 1 : -1) * (2 + (i % 3) * 1.4), y: fly ? 6 : 0, vy: 0,
+      slideT: 0, gait: i % 4 === 0 ? 'walk' : 'run', animSpeed: 0.85 + (i % 4) * 0.16,
+      fly, flyBase: 4.5 + (i % 3) * 2.2, flyX: (lane - 1) * 3,
     })
   }
 
@@ -1343,11 +1345,22 @@ export function startLionRun3D(
         if (r.z > -7) r.vz = -Math.abs(r.vz)
         else if (r.z < -120) r.vz = Math.abs(r.vz)
         if (r.fly) {
-          // flyers weave up and down over the road, no gravity
+          // flyers weave through the sky over the road, no gravity
           r.y = r.flyBase + Math.sin(tSec * 1.6 + r.z * 0.05) * 1.4
+          r.x = r.flyX + Math.sin(tSec * 0.7 + r.z * 0.03) * 1.7
         } else {
-          r.jumpT -= rawDt
-          if (r.jumpT <= 0) { r.jumpT = 2 + Math.random() * 4; if (r.gait === 'run' && Math.random() < 0.5) r.vy = 6.5 }
+          // react to REAL obstacles in this lane: jump bars/walls, duck gates
+          if (r.slideT > 0) r.slideT -= rawDt
+          if (r.y === 0 && r.slideT <= 0) {
+            for (const o of obstacles) {
+              if (!o.alive || o.lane !== r.lane) continue
+              if (o.z > r.z - 6 && o.z < r.z + 1.5) {
+                if (o.kind === 'gate') r.slideT = 0.55
+                else r.vy = 7
+                break
+              }
+            }
+          }
           r.vy -= 22 * rawDt
           r.y = Math.max(0, r.y + r.vy * rawDt)
           if (r.y === 0 && r.vy < 0) r.vy = 0
@@ -1357,7 +1370,7 @@ export function startLionRun3D(
     for (const r of roamers) {
       r.rig.group.visible = r.rig.ready()
       r.rig.group.position.set(r.x, r.y, r.z)
-      r.rig.pose({ tSec: tSec * r.animSpeed + r.z * 0.11, running: true, walk: r.gait === 'walk', airborne: !r.fly && r.y > 0.1, sliding: false, dead: false })
+      r.rig.pose({ tSec: tSec * r.animSpeed + r.z * 0.11, running: true, walk: r.gait === 'walk', airborne: !r.fly && r.y > 0.1, sliding: r.slideT > 0, dead: false })
       r.rig.update(rawDt * r.animSpeed)
     }
 
