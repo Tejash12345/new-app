@@ -18,7 +18,11 @@
  * hero auto-upgrades to it — no code change (see public/models/README.md).
  */
 
-export type CharacterKind = 'procedural' | 'gltf'
+export type CharacterKind = 'procedural' | 'gltf' | 'vehicle'
+
+/** Procedural vehicle body type (kind: 'vehicle') — built from primitives.
+ *  car/bike/truck drive on the road; plane/heli (also `fly: true`) cruise the sky. */
+export type VehicleType = 'car' | 'bike' | 'truck' | 'plane' | 'heli'
 
 /** Clip-name hints. The builder matches case-insensitively and falls back to
  *  keyword matching (run→gallop/run, idle, jump, death…) so almost any rig works. */
@@ -47,6 +51,8 @@ export type CharacterDef = {
   mane?: boolean
   /** a flying character (e.g. dragon) — hovers above the ground. */
   fly?: boolean
+  /** procedural vehicle body (kind: 'vehicle') — you DRIVE it: +speed, high jump. */
+  vehicle?: VehicleType
   /** ambient-only (roams the world but hidden from the playable picker). */
   ambient?: boolean
   /** does the Fire/Ice/Neon/Gold/Shadow skin picker apply to this character? */
@@ -149,6 +155,34 @@ export const CHARACTERS: CharacterDef[] = [
     clips: HUMAN, bodyMats: [], targetHeight: 1.85, faceYaw: Math.PI,
     skinnable: false, unlockLevel: 14, blurb: 'A detailed explorer with a backpack.', credit: QUAT_CREDIT,
   },
+  // ---- vehicles (procedural, no download) — you DRIVE these ----
+  // Driving = a faster base speed + a HIGH JUMP that clears the big wall.
+  {
+    id: 'car', name: 'Speedster', emoji: '🚗', kind: 'vehicle', vehicle: 'car',
+    skinnable: true, unlockLevel: 0,
+    blurb: 'Drive a car — faster, and it high-jumps clean over the big walls.',
+  },
+  {
+    id: 'bike', name: 'Street Bike', emoji: '🏍️', kind: 'vehicle', vehicle: 'bike',
+    skinnable: true, unlockLevel: 4,
+    blurb: 'A nimble motorbike — quick, and it launches high off a jump.',
+  },
+  {
+    id: 'truck', name: 'Big Rig', emoji: '🚚', kind: 'vehicle', vehicle: 'truck',
+    skinnable: true, unlockLevel: 9,
+    blurb: 'Heavy hauler — barrels down the road and leaps the biggest walls.',
+  },
+  // ---- aircraft (procedural, FLYING vehicles) — cruise the sky, fastest of all ----
+  {
+    id: 'plane', name: 'Aeroplane', emoji: '✈️', kind: 'vehicle', vehicle: 'plane', fly: true,
+    skinnable: true, unlockLevel: 13,
+    blurb: 'Fly above the traffic — very fast. Tap to climb over the big walls.',
+  },
+  {
+    id: 'heli', name: 'Helicopter', emoji: '🚁', kind: 'vehicle', vehicle: 'heli', fly: true,
+    skinnable: true, unlockLevel: 18,
+    blurb: 'Chopper the whole track — fastest ride. Climb to clear the big walls.',
+  },
   // ---- dinosaurs (rigged, Run/Idle/Jump/Death) ----
   {
     id: 'raptor', name: 'Raptor', emoji: '🦎', kind: 'gltf', url: '/models/raptor.glb',
@@ -199,4 +233,9 @@ export function characterById(id?: string): CharacterDef {
 
 export function isCharacterUnlocked(def: CharacterDef, level: number): boolean {
   return level >= def.unlockLevel
+}
+
+/** A driven vehicle (car/bike/truck) — faster + high-jumps the big wall. */
+export function isVehicle(def: CharacterDef): boolean {
+  return def.kind === 'vehicle'
 }

@@ -20,6 +20,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { buildLion, setLionFemale, disposeLion, type LionRig } from './lionModel'
+import { buildVehicle, type VehicleRig } from './vehicleModel'
 import type { CharacterDef, CharClips } from '../lib/characters'
 
 /** Per-frame pose request from the engine. */
@@ -116,6 +117,17 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
   const phase = opts?.phase || 0
   const female0 = !!(opts?.female || def.female) // lioness def OR explicit override
   let shadowsWanted = false
+
+  // ---- procedural vehicle (car/bike/truck) — you DRIVE it ----
+  let veh: VehicleRig | null = null
+  let prevPoseT = 0
+  let wheelSpin = 0
+  function buildVeh() {
+    const v = buildVehicle(def.vehicle || 'car')
+    if (shadowsWanted) v.group.traverse((o) => { (o as THREE.Mesh).castShadow = true })
+    group.add(v.group)
+    veh = v
+  }
 
   // ---- procedural core (the lion/lioness AND the placeholder/fallback) ----
   let lion: LionRig | null = null
@@ -241,7 +253,9 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
   }
 
   // ---- decide what to build ----
-  if (def.kind === 'gltf' && def.url) {
+  if (def.kind === 'vehicle') {
+    buildVeh()
+  } else if (def.kind === 'gltf' && def.url) {
     buildProc(female0) // brief placeholder (usually preloaded → instant swap)
     const baseUrl = def.url
     if (def.gltfUpgrade) {
@@ -264,6 +278,19 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
 
   // ---- interface impl ----
   function pose(o: PoseInput) {
+    if (veh) {
+      // roll the wheels only while moving; nose-up on a jump, squash on a slide
+      const dtp = prevPoseT ? Math.min(0.05, o.tSec - prevPoseT) : 0
+      prevPoseT = o.tSec
+      if (o.running && !o.dead) wheelSpin -= dtp * 20
+      for (const w of veh.wheels) w.rotation.x = wheelSpin
+      // rotors/propellers keep turning (fast while flying, idle otherwise)
+      const rotorK = o.running && !o.dead ? 1 : 0.35
+      for (const rt of veh.rotors) rt.obj.rotation[rt.axis] -= dtp * rt.rate * rotorK
+      veh.group.rotation.x += ((o.airborne ? 0.16 : o.dead ? -0.12 : 0) - veh.group.rotation.x) * 0.2
+      veh.group.scale.y += ((o.sliding ? 0.62 : 1) - veh.group.scale.y) * 0.3
+      return
+    }
     if (lion) {
       // exact original procedural gallop (phase offset de-syncs player vs ghost)
       lion.legs.forEach((leg, i) => {
@@ -292,6 +319,7 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
   function update(dt: number) { if (mixer) mixer.update(dt) }
 
   function setSkin(bodyHex: number, maneHex: number) {
+    if (veh) { for (const m of veh.bodyMats) m.color.setHex(bodyHex); return }
     if (lion) { lion.bodyMat.color.setHex(bodyHex); lion.maneMat.color.setHex(maneHex); return }
     pendingSkin = [bodyHex, maneHex]
     for (const m of bodyMats) m.color.setHex(bodyHex)
@@ -299,6 +327,7 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
   }
 
   function setGlow(intensity: number) {
+    if (veh) { for (const m of veh.glowMats) m.emissiveIntensity = 0.5 + intensity; return }
     if (lion) { lion.maneMat.emissiveIntensity = intensity; return }
     pendingGlow = intensity
     for (const m of bodyMats) { m.emissive.copy(m.color); m.emissiveIntensity = intensity }
@@ -340,6 +369,7 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
 
   function dispose() {
     if (mixer) mixer.stopAllAction()
+    if (veh) veh.dispose()
     if (lion) disposeLion(lion)
     // dispose only the per-instance clones; the cached source model is untouched
     for (const g of clonedGeoms) g.dispose()

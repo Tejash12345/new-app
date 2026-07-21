@@ -26,7 +26,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { buildCharacter, type CharacterRig } from './characterModel'
-import { characterById } from '../lib/characters'
+import { characterById, isVehicle } from '../lib/characters'
 import { skinById } from '../lib/lionSkins'
 import { haptic } from '../lib/prefs'
 import type { RunResult } from './lionRun'
@@ -64,7 +64,7 @@ export type Run3DOpts = {
   character?: string
 }
 
-type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack' | 'gate'; z: number; alive: boolean; passed?: boolean }
+type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack' | 'gate' | 'megawall'; z: number; alive: boolean; passed?: boolean }
 type Orb = { holder: THREE.Group; lane: number; z: number; alive: boolean }
 type Burst = { sprite: THREE.Sprite; t: number }
 // floating pickups: 4 power-ups + a Mario-Kart item box + a ground boost pad
@@ -393,6 +393,11 @@ export function startLionRun3D(
 
   // ---------- the runner + grounding blob shadow ----------
   let myCharId = opts.character || 'lion'
+  // driving a car/bike/truck = a faster base speed + a HIGH JUMP over the big wall.
+  // a plane/heli (a flying vehicle) cruises above the road, faster still, and
+  // climbs (tap) to clear the BIG WALL that reaches up into its lane.
+  let driving = isVehicle(characterById(myCharId))
+  let flying = driving && !!characterById(myCharId).fly
   let mySkinId = opts.skin || 'classic'
   let myFemaleState = !!opts.female
   let rig = buildCharacter(characterById(myCharId), { female: myFemaleState })
@@ -489,9 +494,10 @@ export function startLionRun3D(
   // so you never catch them (no fake collisions). Gated off on weak phones.
   // ground runners are snapped to the 3 lanes so they can jump/duck the REAL
   // obstacles in their lane; flyers (dragon/bat/bird) weave through the sky.
-  const ROAMER_SPECIES = ['runner', 'raptor', 'dragon', 'deer', 'bat', 'wolf', 'trex', 'bird', 'hero', 'woman', 'robot', 'wyvern']
-  const roamerCount = lowEnd ? 0 : 7
-  type Roamer = { rig: CharacterRig; lane: number; x: number; z: number; vz: number; y: number; vy: number; slideT: number; gait: 'walk' | 'run'; animSpeed: number; fly: boolean; flyBase: number; flyX: number }
+  // mix cars/bikes/trucks + a plane/heli into the traffic alongside animals & people
+  const ROAMER_SPECIES = ['car', 'runner', 'bike', 'deer', 'truck', 'wolf', 'plane', 'heli', 'raptor', 'dragon', 'bat', 'bird', 'hero', 'woman', 'robot', 'wyvern']
+  const roamerCount = lowEnd ? 0 : 8
+  type Roamer = { rig: CharacterRig; lane: number; x: number; z: number; vz: number; y: number; vy: number; slideT: number; gait: 'walk' | 'run'; animSpeed: number; fly: boolean; isVeh: boolean; flyBase: number; flyX: number }
   const roamers: Roamer[] = []
   for (let i = 0; i < roamerCount; i++) {
     const def = characterById(ROAMER_SPECIES[i % ROAMER_SPECIES.length])
@@ -505,7 +511,7 @@ export function startLionRun3D(
       rig: r, lane, x: fly ? (lane - 1) * 3 : LANE_X[lane], z: -26 - i * 13,
       vz: (i % 2 ? 1 : -1) * (2 + (i % 3) * 1.4), y: fly ? 6 : 0, vy: 0,
       slideT: 0, gait: i % 4 === 0 ? 'walk' : 'run', animSpeed: 0.85 + (i % 4) * 0.16,
-      fly, flyBase: 4.5 + (i % 3) * 2.2, flyX: (lane - 1) * 3,
+      fly, isVeh: !!def.vehicle, flyBase: 4.5 + (i % 3) * 2.2, flyX: (lane - 1) * 3,
     })
   }
 
@@ -623,6 +629,10 @@ export function startLionRun3D(
   // an overhead gate you SLIDE under (swipe down) — jumping into it = crash
   const gateGeo = track(new THREE.BoxGeometry(2.7, 0.7, 0.6))
   const gateMat = track(new THREE.MeshStandardMaterial({ color: 0x2f6f8a, emissive: 0x33d6ff, emissiveIntensity: 0.35, roughness: 0.5, metalness: 0.4 }))
+  // the BIG WALL — too tall to jump on foot (dodge it), but a driven vehicle's
+  // high jump clears it clean (top ≈ 4.4; the car's jump apex ≈ 5.3 clears it)
+  const megawallGeo = track(new THREE.BoxGeometry(2.7, 4.4, 0.9))
+  const megawallMat = track(new THREE.MeshStandardMaterial({ color: 0x5a2a6a, emissive: 0x9b3fb5, emissiveIntensity: 0.28, roughness: 0.6, metalness: 0.15 }))
   const obstacles: Obstacle[] = []
 
   const orbGeo = track(new THREE.SphereGeometry(0.32, 10, 8))
@@ -641,12 +651,12 @@ export function startLionRun3D(
     orbs.push({ holder, lane, z, alive: true })
   }
   function spawnObstacle(lane: number, kind: Obstacle['kind'], z: number) {
-    const geo = kind === 'bar' ? barGeo : kind === 'wall' ? wallGeo : kind === 'gate' ? gateGeo : stackGeo
-    const mat = kind === 'bar' ? barMat : kind === 'wall' ? wallMat : kind === 'gate' ? gateMat : crateMat
+    const geo = kind === 'bar' ? barGeo : kind === 'wall' ? wallGeo : kind === 'gate' ? gateGeo : kind === 'megawall' ? megawallGeo : stackGeo
+    const mat = kind === 'bar' ? barMat : kind === 'wall' ? wallMat : kind === 'gate' ? gateMat : kind === 'megawall' ? megawallMat : crateMat
     const mesh = new THREE.Mesh(geo, mat)
-    const y = kind === 'bar' ? 0.5 : kind === 'wall' ? 1.8 : kind === 'gate' ? 2.7 : 1.2
+    const y = kind === 'bar' ? 0.5 : kind === 'wall' ? 1.8 : kind === 'gate' ? 2.7 : kind === 'megawall' ? 2.2 : 1.2
     mesh.position.set(LANE_X[lane], y, z)
-    if (shadows && (kind === 'wall' || kind === 'stack')) { mesh.castShadow = true; mesh.receiveShadow = true }
+    if (shadows && (kind === 'wall' || kind === 'stack' || kind === 'megawall')) { mesh.castShadow = true; mesh.receiveShadow = true }
     scene.add(mesh)
     obstacles.push({ mesh, lane, kind, z, alive: true })
   }
@@ -731,6 +741,7 @@ export function startLionRun3D(
   let stage = 1
   let stunT = 0 // seconds of "bolt" stun left (race attack): no steering + slowed
   // power-up timers (seconds) + one-shot shield + slide + combo streak
+  let flyAlt = 4 // flying vehicles cruise here; a tap climbs, decays back down
   let magnetT = 0
   let jetT = 0
   let x2T = 0
@@ -768,10 +779,19 @@ export function startLionRun3D(
       return
     }
     if (state !== 'run' || stunT > 0) return
+    if (flying) {
+      // a plane/heli climbs on a tap (to clear the big wall); it decays back to cruise
+      flyAlt = Math.min(8.2, flyAlt + 2.6)
+      haptic(14)
+      return
+    }
     if (jumps < 2) {
-      vy = jumps === 0 ? 9.4 : 8.2
+      // vehicles get a HIGH JUMP so they clear the big wall; on foot = normal
+      vy = driving
+        ? (jumps === 0 ? 16 : 11)
+        : (jumps === 0 ? 9.4 : 8.2)
       jumps++
-      haptic(12)
+      haptic(driving ? 18 : 12)
     }
   }
   function move(dir: -1 | 1) {
@@ -781,7 +801,9 @@ export function startLionRun3D(
   }
   // swipe DOWN → slide under overhead gates for ~0.6s
   function slide() {
-    if (state !== 'run' || stunT > 0 || jetT > 0 || slideT > 0) return
+    if (state !== 'run' || stunT > 0) return
+    if (flying) { flyAlt = Math.max(1.6, flyAlt - 2.2); haptic(8); return } // dive
+    if (jetT > 0 || slideT > 0) return
     slideT = 0.6
     haptic(8)
   }
@@ -917,6 +939,9 @@ export function startLionRun3D(
   function setSelfCharacter(character: string) {
     if (character === myCharId) return
     myCharId = character
+    driving = isVehicle(characterById(myCharId))
+    flying = driving && !!characterById(myCharId).fly
+    flyAlt = 4
     rebuildRig() // reapplies current skin + gender to the new runner
   }
 
@@ -992,10 +1017,13 @@ export function startLionRun3D(
         }
       } else if (roll < 0.58) {
         const l2 = Math.floor(rand() * 3)
-        spawnObstacle(l2, 'wall', z)
+        // stage 3+: some walls become the BIG WALL — dodge it on foot, or clear
+        // it with a driven vehicle's high jump
+        const big = sStage >= 3 && rand() < 0.32
+        spawnObstacle(l2, big ? 'megawall' : 'wall', z)
         freeLanes.splice(freeLanes.indexOf(l2), 1)
-        // stage 2+: a crate stack narrows the escape to one lane
-        if (sStage >= 2 && rand() < 0.35 + sStage * 0.08) {
+        // stage 2+: a crate stack narrows the escape to one lane (not behind a big wall)
+        if (!big && sStage >= 2 && rand() < 0.35 + sStage * 0.08) {
           const l3 = freeLanes[Math.floor(rand() * freeLanes.length)]
           spawnObstacle(l3, 'stack', z)
           freeLanes.splice(freeLanes.indexOf(l3), 1)
@@ -1108,8 +1136,10 @@ export function startLionRun3D(
           haptic([30, 30, 30])
         }
         // keeps accelerating the further/longer you run — noticeably faster
-        // deep into a run (per-stage jump + a steady time ramp), capped high
-        speed = Math.min(54, 16 + (stage - 1) * 4.8 + elapsed * 0.55)
+        // deep into a run (per-stage jump + a steady time ramp), capped high.
+        // driving is +30% (flying +55%) faster, with a higher ceiling
+        const base = 16 + (stage - 1) * 4.8 + elapsed * 0.55
+        speed = flying ? Math.min(80, base * 1.55) : driving ? Math.min(70, base * 1.3) : Math.min(54, base)
         if (stunT > 0) stunT = Math.max(0, stunT - dt)
       }
       // boost pad speeds you up; a bolt/freeze stun drags you down
@@ -1124,8 +1154,14 @@ export function startLionRun3D(
         if (comboT > 0) { comboT = Math.max(0, comboT - dt); if (comboT === 0) combo = 0 }
       }
 
-      // vertical: the jetpack flies you up (no gravity), else normal jump/gravity
-      if (jetT > 0 && state === 'run') {
+      // vertical: flying vehicle cruises at flyAlt (taps climb, decays back);
+      // the jetpack flies you up (no gravity); else normal jump/gravity
+      if (flying && state === 'run') {
+        flyAlt += (4 - flyAlt) * Math.min(1, dt * 0.9) // decay back to cruise
+        lionY += (flyAlt - lionY) * Math.min(1, dt * 6)
+        vy = 0
+        jumps = 0
+      } else if (jetT > 0 && state === 'run') {
         jetT = Math.max(0, jetT - dt)
         lionY += (5 - lionY) * Math.min(1, dt * 6)
         vy = 0
@@ -1166,10 +1202,23 @@ export function startLionRun3D(
         if (jetT === 0) {
           for (const o of obstacles) {
             if (!o.alive || Math.abs(o.z) > 0.8 || o.lane !== lane) continue
-            const clears = o.kind === 'bar' ? lionY > 1.05
-              : o.kind === 'stack' ? lionY > 2.5
-              : o.kind === 'gate' ? slideT > 0
-              : false
+            const clears = flying
+              // a plane/heli skims over ground hazards; only the BIG WALL
+              // reaches its lane — climb (tap) above it to clear
+              ? (o.kind === 'megawall' ? lionY > 4.3 : true)
+              : driving
+              // a car/bike/truck high-jumps bars, walls and the big wall; slides gates
+              ? (o.kind === 'bar' ? lionY > 1.05
+                : o.kind === 'stack' ? lionY > 2.5
+                : o.kind === 'gate' ? slideT > 0
+                : o.kind === 'wall' ? lionY > 3.5
+                : o.kind === 'megawall' ? lionY > 4.3
+                : false)
+              // on foot: jump bars/stacks, slide gates, DODGE walls + the big wall
+              : (o.kind === 'bar' ? lionY > 1.05
+                : o.kind === 'stack' ? lionY > 2.5
+                : o.kind === 'gate' ? slideT > 0
+                : false)
             if (!clears) {
               if (shield) {
                 shield = false
@@ -1350,13 +1399,15 @@ export function startLionRun3D(
           r.x = r.flyX + Math.sin(tSec * 0.7 + r.z * 0.03) * 1.7
         } else {
           // react to REAL obstacles in this lane: jump bars/walls, duck gates
+          // (ground vehicles just drive — no hopping)
           if (r.slideT > 0) r.slideT -= rawDt
-          if (r.y === 0 && r.slideT <= 0) {
+          if (!r.isVeh && r.y === 0 && r.slideT <= 0) {
             for (const o of obstacles) {
               if (!o.alive || o.lane !== r.lane) continue
               if (o.z > r.z - 6 && o.z < r.z + 1.5) {
                 if (o.kind === 'gate') r.slideT = 0.55
-                else r.vy = 7
+                else if (o.kind === 'bar' || o.kind === 'stack') r.vy = 7 // hop the jumpable ones
+                // walls/big-walls: can't clear on foot — just keep running
                 break
               }
             }
