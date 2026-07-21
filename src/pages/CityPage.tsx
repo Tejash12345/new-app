@@ -39,11 +39,15 @@ export function CityPage() {
   // if the chunk or WebGL fails, the 2D skyline takes over seamlessly
   const cityRef = useRef<HTMLCanvasElement>(null)
   const captureRef = useRef<(() => string | null) | null>(null)
+  const citySetAvatar = useRef<((id: string) => void) | null>(null)
+  const [cityPickerOpen, setCityPickerOpen] = useState(false)
   useEffect(() => {
     const el = cityRef.current
     if (!el) return
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const sceneOpts = { level, streak, reducedMotion }
+    // the city avatar (monument) starts as the persisted runner; live changes go
+    // through setAvatar (below) so we never rebuild the whole city
+    const sceneOpts = { level, streak, reducedMotion, character: localStorage.getItem('fl-character') || DEFAULT_CHARACTER }
     let stop: (() => void) | undefined
     let cancelled = false
     const fallback2d = () => {
@@ -57,6 +61,7 @@ export function CityPage() {
         if (h) {
           stop = h.stop
           captureRef.current = h.capture
+          citySetAvatar.current = h.setAvatar
         } else fallback2d()
       })
       .catch(() => {
@@ -65,6 +70,7 @@ export function CityPage() {
     return () => {
       cancelled = true
       captureRef.current = null
+      citySetAvatar.current = null
       stop?.()
     }
   }, [level, streak])
@@ -157,6 +163,10 @@ export function CityPage() {
     preloadChar(id)
     if (gameOpen && !runStarted) setRunKey((k) => k + 1) // rebuild the runner live
   }
+  // change the city monument live when the chosen character changes (no rebuild)
+  useEffect(() => {
+    citySetAvatar.current?.(character)
+  }, [character])
   useEffect(() => {
     if (!stageFlash) return
     const t = setTimeout(() => setStageFlash(null), 1700)
@@ -297,6 +307,36 @@ export function CityPage() {
         >
           <Camera size={17} />
         </button>
+
+        {/* city avatar picker — choose who stands as the monument */}
+        <button
+          onClick={() => setCityPickerOpen((o) => !o)}
+          aria-label="Choose your city avatar"
+          className="absolute bottom-[104px] left-3 flex items-center gap-1.5 rounded-full bg-black/45 px-3 py-2 text-sm text-white/90 backdrop-blur-md transition hover:bg-black/65 active:scale-90"
+        >
+          <span className="text-lg leading-none">{characterById(character).emoji}</span>
+          <span className="text-[11px] font-bold">Avatar</span>
+        </button>
+        {cityPickerOpen && (
+          <div className="absolute inset-x-3 bottom-[152px] rounded-2xl bg-black/70 p-2 backdrop-blur-md">
+            <div className="mb-1 px-1 text-[9px] font-bold uppercase tracking-[0.2em] text-white/50">Your citizen — stands as the monument</div>
+            <div className="flex gap-1.5 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+              {PLAYABLE_CHARACTERS.map((c) => {
+                const unlocked = isCharacterUnlocked(c, level)
+                const selected = c.id === character
+                return (
+                  <button key={c.id} type="button" disabled={!unlocked}
+                    onClick={() => { selectCharacter(c.id); setCityPickerOpen(false) }}
+                    className={cn('flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-2.5 py-1.5 ring-1 transition active:scale-95',
+                      selected ? 'bg-amber-400/25 ring-amber-400' : 'bg-white/5 ring-white/10', !unlocked && 'opacity-40')}>
+                    <span className="text-xl leading-none">{c.emoji}</span>
+                    <span className="whitespace-nowrap text-[9px] font-bold text-white/85">{unlocked ? c.name.split(' ')[0] : `Lv ${c.unlockLevel}`}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* respect bar + skyline / district progress */}
         <div className="absolute inset-x-3 bottom-3 rounded-2xl bg-black/45 px-3.5 py-2.5 backdrop-blur-md">

@@ -24,10 +24,12 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { CITY_TOTAL_BUILDINGS, cityUnlocked, nextDistrict, type CityOpts } from './cityScene'
-import { buildLion } from './lionModel'
+import { buildCharacter, type CharacterRig } from './characterModel'
+import { PLAYABLE_CHARACTERS, characterById, isCharacterUnlocked } from '../lib/characters'
 
-export type City3DHandle = { stop: () => void; capture: () => string | null }
+export type City3DHandle = { stop: () => void; capture: () => string | null; setAvatar: (id: string) => void }
 
 // ---------- tiny seeded RNG (mulberry32) ----------
 function rng(seed: number) {
@@ -145,6 +147,9 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     return null
   }
   renderer.setPixelRatio(Math.min(1.75, window.devicePixelRatio || 1))
+  // cinematic grade — filmic tone-map + sRGB, so the PBR character models read realistically
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.toneMappingExposure = 1.1
 
   const level = opts.level
   const scene = new THREE.Scene()
@@ -155,6 +160,17 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   const r = rng(20260713)
   const disposables: { dispose: () => void }[] = []
   const track = <T extends { dispose: () => void }>(x: T): T => { disposables.push(x); return x }
+
+  // image-based lighting: a built-in room environment (no asset) so the PBR
+  // character models (monument + roaming citizens) catch soft realistic light
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04)
+    scene.environment = envRT.texture
+    scene.environmentIntensity = 0.3
+    disposables.push({ dispose: () => { envRT.dispose(); pmrem.dispose() } })
+  } catch { /* PMREM unsupported → lights still light the scene */ }
+  const lowEnd = (navigator.hardwareConcurrency || 4) <= 4
 
   // ---------- post-processing: bloom, with an automatic kill switch ----------
   const composer = new EffectComposer(renderer)
@@ -388,10 +404,29 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   crown.position.set(-4.9, 6, 1.6)
   plaza.add(crown)
 
-  const monument = buildLion()
-  monument.group.position.y = 2.6
-  monument.group.scale.setScalar(2.1)
-  plaza.add(monument.group)
+  // ---- the monument is YOUR chosen character (any unlocked runner) ----
+  let avatarId = opts.character || 'lion'
+  let monument = buildCharacter(characterById(avatarId), {})
+  function placeMonument(m: CharacterRig) {
+    m.group.position.set(0, 2.6, 0)
+    m.group.scale.setScalar(2.4)
+    plaza.add(m.group)
+  }
+  placeMonument(monument)
+  // a soft spotlight glow ring under the monument — marks the centrepiece
+  const ringMat = track(new THREE.MeshBasicMaterial({ color: 0xffd678, transparent: true, opacity: 0.5, side: THREE.DoubleSide }))
+  const monRing = new THREE.Mesh(track(new THREE.RingGeometry(3.4, 4.2, 40)), ringMat)
+  monRing.rotation.x = -Math.PI / 2
+  monRing.position.y = 2.62
+  plaza.add(monRing)
+  function setAvatar(id: string) {
+    if (id === avatarId || !id) return
+    avatarId = id
+    plaza.remove(monument.group)
+    monument.dispose()
+    monument = buildCharacter(characterById(id), {})
+    placeMonument(monument)
+  }
 
   const lampGlows: THREE.Sprite[] = []
   for (const [lx, lz] of [[9, 9], [-9, 9], [9, -9], [-9, -9]]) {
@@ -729,6 +764,82 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   scene.add(walkers)
   const walkerPhase = Array.from({ length: 14 }, () => r())
 
+  // ---------- living citizens: autonomous character-model agents ----------
+  // Each is a real animated 3D character with a tiny "mind": a state machine
+  // (wander → visit a point of interest → rest → watch/gather), a MEMORY of
+  // where it's been + a home spot, and a PERSONALITY (speed/curiosity/social) —
+  // so they roam and do what they want, like living beings. Drawn from the
+  // roster you've UNLOCKED, so the city fills with life as you level up.
+  const POIS: [number, number][] = [[0, 0], [-4.4, 1.6], [9, 9], [-9, 9], [9, -9], [-9, -9], [15, 0], [-15, 0], [0, 15], [0, -15]]
+  const roster = PLAYABLE_CHARACTERS.filter((c) => isCharacterUnlocked(c, level) && !c.fly)
+  const citizenCount = (opts.reducedMotion || lowEnd) ? 0 : Math.min(6, 3 + Math.floor(level / 6))
+  type Citizen = {
+    rig: CharacterRig; pos: THREE.Vector2; heading: number
+    state: 'wander' | 'goto' | 'rest' | 'watch'; target: THREE.Vector2; timer: number; poi: number | null
+    speed: number; curiosity: number; social: number; home: THREE.Vector2; visited: Set<number>
+  }
+  const citizens: Citizen[] = []
+  for (let i = 0; i < citizenCount; i++) {
+    const def = roster.length ? roster[i % roster.length] : characterById('lion')
+    const rig = buildCharacter(def, { phase: i * 1.3 })
+    rig.group.scale.setScalar(0.95)
+    scene.add(rig.group)
+    const a = (i / Math.max(1, citizenCount)) * Math.PI * 2
+    const home = new THREE.Vector2(Math.cos(a) * 12, Math.sin(a) * 12)
+    citizens.push({
+      rig, pos: home.clone(), heading: a, state: 'wander', target: home.clone(), timer: 0.5 + r() * 2, poi: null,
+      speed: 1.4 + r() * 1.7, curiosity: r(), social: r(), home, visited: new Set<number>(),
+    })
+  }
+  const tmpV2 = new THREE.Vector2()
+  const shortestAngle = (from: number, to: number) => {
+    let d = (to - from) % (Math.PI * 2)
+    if (d > Math.PI) d -= Math.PI * 2
+    if (d < -Math.PI) d += Math.PI * 2
+    return d
+  }
+  // pick the citizen's next intent from its personality + memory
+  function citizenDecide(c: Citizen) {
+    const roll = Math.random()
+    c.poi = null
+    if (roll < 0.16) { c.state = 'rest'; c.timer = 2 + Math.random() * 4; return } // stop + look around
+    if (roll < 0.18 + c.social * 0.34) {
+      // sociable → go watch the monument, or drift toward another citizen
+      const other = citizens[Math.floor(Math.random() * citizens.length)]
+      c.target.copy(Math.random() < 0.55 || !other ? new THREE.Vector2(0, 0) : other.pos)
+      c.state = 'watch'; c.timer = 4 + Math.random() * 4; return
+    }
+    // curious → head to a point of interest, preferring somewhere new (memory)
+    let idx = Math.floor(Math.random() * POIS.length)
+    if (c.curiosity > 0.5) {
+      for (let k = 0; k < POIS.length; k++) { const j = (idx + k) % POIS.length; if (!c.visited.has(j)) { idx = j; break } }
+    }
+    if (Math.random() < 0.22) { c.target.copy(c.home); c.state = 'goto' } // memory: sometimes head home
+    else { c.target.set(POIS[idx][0], POIS[idx][1]); c.poi = idx; c.state = 'goto' }
+    c.timer = 6 + Math.random() * 6
+  }
+  function updateCitizens(tSec: number, dt: number) {
+    for (const c of citizens) {
+      c.timer -= dt
+      tmpV2.copy(c.target).sub(c.pos)
+      const dist = tmpV2.length()
+      const moving = (c.state === 'goto' || c.state === 'wander') && dist > 0.7
+      const desired = Math.atan2(-tmpV2.x, -tmpV2.y) // face travel/target (model forward = -z)
+      if (dist > 0.05) c.heading += shortestAngle(c.heading, desired) * Math.min(1, dt * (moving ? 4 : 2.5))
+      if (moving) { tmpV2.normalize(); const s = c.speed * dt; c.pos.x += tmpV2.x * s; c.pos.y += tmpV2.y * s }
+      else if (c.timer <= 0 || (c.state === 'goto' || c.state === 'wander')) {
+        if (c.poi != null) c.visited.add(c.poi) // remember where it went
+        citizenDecide(c)
+      }
+      const rad = Math.hypot(c.pos.x, c.pos.y) // stay inside the plaza
+      if (rad > 22) c.pos.multiplyScalar(22 / rad)
+      c.rig.group.position.set(c.pos.x, 0.15, c.pos.y)
+      c.rig.group.rotation.y = c.heading
+      c.rig.pose({ tSec, running: false, walk: moving, airborne: false, sliding: false, dead: false })
+      c.rig.update(dt)
+    }
+  }
+
   // ---------- sky traffic: balloon, helicopter, birds, airliner ----------
   let balloon: THREE.Group | null = null
   if (level >= 6) {
@@ -902,12 +1013,15 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     if (craneGroup) craneGroup.rotation.y = Math.sin(tSec * 0.3) * 0.15
     if (goldMat) goldMat.emissiveIntensity = dark * 0.8
 
-    // monument lion
-    monument.body.scale.y = 1 + Math.sin(tSec * 1.7) * 0.03
-    monument.headGroup.rotation.y = Math.PI / 2 + Math.sin(tSec * 0.4) * 0.5
-    monument.tail.rotation.x = Math.sin(tSec * 2.2) * 0.25
-    monument.bodyMat.emissiveIntensity = dark * 0.35
-    monument.maneMat.emissiveIntensity = dark * 0.3
+    // monument — YOUR chosen character, idling on its plinth + a glowing ring
+    monument.group.rotation.y = Math.sin(tSec * 0.18) * 0.5
+    monument.pose({ tSec, running: false, airborne: false, sliding: false, dead: false })
+    monument.update(dt)
+    monument.setGlow(0.35 + dark * 0.45)
+    ringMat.opacity = 0.28 + dark * 0.4 + Math.sin(tSec * 2) * 0.08
+
+    // living citizens roam the plaza on their own
+    updateCitizens(tSec, dt)
 
     // traffic
     for (const car of cars) {
@@ -1106,6 +1220,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
         return null
       }
     },
+    setAvatar,
     stop: () => {
       running = false
       cancelAnimationFrame(raf)
@@ -1115,6 +1230,8 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('pointercancel', onUp)
+      monument.dispose()
+      for (const c of citizens) c.rig.dispose()
       scene.traverse((o) => {
         const m = o as THREE.Mesh
         if (m.material) {

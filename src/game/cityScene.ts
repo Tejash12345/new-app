@@ -52,7 +52,7 @@ export function nextDistrict(level: number) {
   return DISTRICTS.find((d) => d.level > level) ?? null
 }
 
-export type CityOpts = { level: number; streak: number; reducedMotion?: boolean }
+export type CityOpts = { level: number; streak: number; reducedMotion?: boolean; character?: string }
 
 // ---------- tiny seeded RNG (mulberry32) ----------
 function rng(seed: number) {
