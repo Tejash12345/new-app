@@ -534,6 +534,12 @@ export function startLionRun3D(
     return t
   }
   function screenFlash(hex: number, dur: number) { flashColor.set(hex); flashT = Math.max(flashT, dur) }
+  // a realistic lightning strike: a bright sky flicker + a delayed thunder rumble
+  function lightning() {
+    screenFlash(0xdce7ff, 0.34)
+    setTimeout(() => screenFlash(0xeaf1ff, 0.2), 120) // flicker
+    setTimeout(() => sfx.thunder(), 260 + Math.random() * 260) // thunder trails the flash
+  }
   function burst(x: number, y: number, z: number, color: string, size: number, dur: number) {
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(color), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
     sp.position.set(x, y, z)
@@ -756,6 +762,7 @@ export function startLionRun3D(
   let comboT = 0
   let dustT = 0 // throttle for the running dust trail
   let trailT = 0 // throttle for the skin's signature glow trail
+  let lightningT = 3 + Math.random() * 5 // seconds until the next storm lightning strike
   let fov = 55
   // adaptive: drop pixel ratio if the phone can't hold frame rate
   let slowFrames = 0
@@ -1334,6 +1341,12 @@ export function startLionRun3D(
     moonMat.opacity += ((1 - day) - moonMat.opacity) * k
     towerMat.emissiveIntensity += (0.9 * (1 - day * 0.7) - towerMat.emissiveIntensity) * k
     rainMat.opacity += ((theme.rain ? 0.6 : 0) - rainMat.opacity) * Math.min(1, rawDt * 2)
+    // ---- realistic storms: rain hiss + periodic lightning & thunder ----
+    sfx.rain(theme.rain ? 0.4 + rainMat.opacity * 0.4 : 0)
+    if (theme.rain && (state === 'run' || state === 'swoop')) {
+      lightningT -= rawDt
+      if (lightningT <= 0) { lightningT = 3 + Math.random() * 6; lightning() }
+    }
     // sun fades in with daylight; dome stays centred on the camera
     const sunMat = sun.material as THREE.SpriteMaterial
     sunMat.opacity += (day - sunMat.opacity) * k

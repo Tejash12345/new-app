@@ -38,6 +38,7 @@ export type RacePayload =
   | { a: 'dead'; from: string; dist: number }
   | { a: 'rematch'; from: string; seed: number }
   | { a: 'emote'; from: string; e: string }
+  | { a: 'ready'; from: string; character: string }
 
 // Omit distributes over each union member (plain Omit<Union,K> would collapse
 // to just the shared keys), so the outbound (no `from`) payload keeps its shape
@@ -98,6 +99,12 @@ export function LionRace({
   const [flash, setFlash] = useState<AttackKind | null>(null)
   const [failed, setFailed] = useState(false)
   const [ready, setReady] = useState(false) // engine (lazy chunk) has booted
+  // both players must LOCK IN their character before the countdown starts
+  const [myReady, setMyReady] = useState(false)
+  const [oppReady, setOppReady] = useState(false)
+  const [oppChar, setOppChar] = useState<string | null>(null)
+  const myReadyRef = useRef(false)
+  myReadyRef.current = myReady
   const [stageName, setStageName] = useState('MIDNIGHT')
   const [hud, setHud] = useState<HudState | null>(null) // power-ups / combo / shield
   const [freeWeapon, setFreeWeapon] = useState<AttackKind | null>(null) // from an item box
@@ -163,6 +170,7 @@ export function LionRace({
     oppDistRef.current = 0
     setMyDist(0); setOppDist(0); setMyAlive(true); setOppAlive(true)
     setMyCoins(0); setSpent(0); setWinner(null); setCount(3); setPhase('countdown'); setReady(false)
+    setMyReady(false); setOppReady(false); setOppChar(null) // both must re-lock-in each race
 
     let cancelled = false
     let handle: Run3DHandle | null = null
@@ -204,9 +212,10 @@ export function LionRace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [curSeed])
 
-  // countdown → begin the run together (only once the engine has booted)
+  // countdown → begin the run together, but ONLY once the engine has booted AND
+  // both players have locked in their character
   useEffect(() => {
-    if (phase !== 'countdown' || !ready) return
+    if (phase !== 'countdown' || !ready || !myReady || !oppReady) return
     if (count === 0) {
       handleRef.current?.begin()
       const t = setTimeout(() => setPhase('racing'), 350)
@@ -214,7 +223,7 @@ export function LionRace({
     }
     const t = setTimeout(() => setCount((c) => c - 1), 750)
     return () => clearTimeout(t)
-  }, [phase, count, ready])
+  }, [phase, count, ready, myReady, oppReady])
 
   // receive the opponent's events
   useEffect(() => {
@@ -242,6 +251,11 @@ export function LionRace({
       } else if (p.a === 'emote') {
         setEmotePop({ e: p.e, mine: false })
         setTimeout(() => setEmotePop(null), 1800)
+      } else if (p.a === 'ready') {
+        setOppReady(true)
+        if (p.character) setOppChar(p.character)
+        // echo, so a peer who locked in before we registered still learns we're ready
+        if (myReadyRef.current) sendRef.current({ a: 'ready', character: charRef.current })
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -272,6 +286,12 @@ export function LionRace({
     setEmotePop({ e, mine: true })
     setTimeout(() => setEmotePop(null), 1800)
     sendRef.current({ a: 'emote', e })
+  }
+  // lock in the chosen runner — the countdown starts only after BOTH players do
+  function lockIn() {
+    setMyReady(true)
+    myReadyRef.current = true
+    sendRef.current({ a: 'ready', character: charRef.current })
   }
   function chooseCharacter(id: string) {
     setMyChar(id)
@@ -386,38 +406,58 @@ export function LionRace({
         </div>
       )}
 
-      {/* ---- countdown + lion/lioness picker ---- */}
+      {/* ---- countdown / lock-in / waiting ---- */}
       {phase === 'countdown' && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6">
-          <div className="animate-pulse text-7xl font-black text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)]">
-            {count > 0 ? count : 'GO!'}
-          </div>
-          {/* character picker — pick your runner (lion, lioness, wolf, fox…) */}
-          <div className="flex flex-col items-center gap-1.5">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-white/50">Runner</div>
-            <div className="flex max-w-[92vw] flex-wrap items-center justify-center gap-1.5 px-4">
-              {PLAYABLE_CHARACTERS.map((c) => (
-                <button key={c.id} onClick={() => chooseCharacter(c.id)}
-                  title={c.name}
-                  className={`flex h-12 min-w-12 flex-col items-center justify-center rounded-2xl px-2 transition active:scale-90 ${myChar === c.id ? 'bg-white/25 ring-2 ring-white' : 'bg-white/8'}`}>
-                  <span className="text-xl leading-none">{c.emoji}</span>
-                  <span className="mt-0.5 text-[8px] font-bold text-white/70">{c.name.split(' ')[0]}</span>
-                </button>
-              ))}
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-5 px-4">
+          {myReady && oppReady ? (
+            // both locked in → the synced 3-2-1
+            <div className="animate-pulse text-7xl font-black text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)]">
+              {count > 0 ? count : 'GO!'}
             </div>
-          </div>
-          {/* skin picker */}
-          <div className="flex flex-col items-center gap-1.5">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-white/50">Skin</div>
-            <div className="flex flex-wrap items-center justify-center gap-1.5 px-4">
-              {LION_SKINS.map((s) => (
-                <button key={s.id} onClick={() => chooseSkin(s.id)}
-                  className={`flex h-11 w-11 flex-col items-center justify-center rounded-2xl text-lg transition active:scale-90 ${mySkin === s.id ? 'bg-white/25 ring-2 ring-white' : 'bg-white/8'}`}>
-                  {s.emoji}
-                </button>
-              ))}
+          ) : myReady ? (
+            // I'm ready — wait for the opponent to choose
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-white" />
+              <div className="text-base font-black text-white">{opp.name.split(' ')[0]} is choosing…</div>
+              <div className="text-xs font-semibold text-emerald-300">✅ You're ready as {characterById(myChar).emoji} {characterById(myChar).name}</div>
+              {oppChar && <div className="text-[11px] text-white/60">They picked {characterById(oppChar).emoji} {characterById(oppChar).name}</div>}
+              <button onClick={() => setOppReady(true)} className="mt-1 text-[11px] font-semibold text-white/45 underline underline-offset-2">Start anyway</button>
             </div>
-          </div>
+          ) : (
+            // choose a runner + skin, then lock in
+            <>
+              <div className="text-lg font-black text-white drop-shadow">Choose your runner</div>
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-white/50">Runner</div>
+                <div className="flex max-h-[32vh] max-w-[92vw] flex-wrap items-center justify-center gap-1.5 overflow-y-auto px-4">
+                  {PLAYABLE_CHARACTERS.map((c) => (
+                    <button key={c.id} onClick={() => chooseCharacter(c.id)}
+                      title={c.name}
+                      className={`flex h-12 min-w-12 flex-col items-center justify-center rounded-2xl px-2 transition active:scale-90 ${myChar === c.id ? 'bg-white/25 ring-2 ring-white' : 'bg-white/8'}`}>
+                      <span className="text-xl leading-none">{c.emoji}</span>
+                      <span className="mt-0.5 text-[8px] font-bold text-white/70">{c.name.split(' ')[0]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-white/50">Skin</div>
+                <div className="flex flex-wrap items-center justify-center gap-1.5 px-4">
+                  {LION_SKINS.map((s) => (
+                    <button key={s.id} onClick={() => chooseSkin(s.id)}
+                      className={`flex h-11 w-11 flex-col items-center justify-center rounded-2xl text-lg transition active:scale-90 ${mySkin === s.id ? 'bg-white/25 ring-2 ring-white' : 'bg-white/8'}`}>
+                      {s.emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button onClick={lockIn} disabled={!ready}
+                className="mt-1 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 px-8 py-3 text-base font-black uppercase tracking-wide text-white shadow-lg active:scale-95 disabled:opacity-50">
+                🔒 Lock in {characterById(myChar).name.split(' ')[0]}
+              </button>
+              {oppReady && <div className="text-[11px] font-semibold text-emerald-300">{opp.name.split(' ')[0]} is ready ✅ — lock in to start</div>}
+            </>
+          )}
         </div>
       )}
 

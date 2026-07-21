@@ -27,6 +27,7 @@ class GameAudio {
   private noiseBuf: AudioBuffer | null = null
   private eng: Ambience | null = null
   private wind: Wind | null = null
+  private rainBed: Wind | null = null
 
   private ensure(): AudioContext | null {
     if (!getPref('sounds')) return null
@@ -115,6 +116,7 @@ class GameAudio {
   stageUp() {[659, 988].forEach((f, i) => this.tone(f, 0.4, 'triangle', 0.17, undefined, i * 0.09)); this.tone(1318, 0.5, 'sine', 0.11, undefined, 0.18) }
   crash() { this.noise(0.5, 0.38, 'lowpass', 900, 1, 120); this.tone(120, 0.5, 'sine', 0.28, 38) }
   slide() { this.noise(0.4, 0.16, 'bandpass', 700, 0.6) }
+  thunder() { this.noise(0.25, 0.16, 'highpass', 3000, 1); this.noise(0.9, 0.3, 'lowpass', 420, 0.7, 80); this.tone(70, 0.9, 'sine', 0.2, 40) }
   // race combat
   launch() { this.tone(500, 0.25, 'sawtooth', 0.15, 1400) }
   hit(kind: 'rocket' | 'bolt' | 'fire' | 'freeze' | 'tornado') {
@@ -177,10 +179,34 @@ class GameAudio {
     w.filt.frequency.setTargetAtTime(400 + intensity * 900, c.currentTime, 0.15)
   }
 
+  private ensureRain(): Wind | null {
+    const c = this.ensure()
+    if (!c || !this.master || !this.noiseBuf) return null
+    if (this.rainBed) return this.rainBed
+    const src = c.createBufferSource(); src.buffer = this.noiseBuf; src.loop = true
+    const filt = c.createBiquadFilter(); filt.type = 'highpass'; filt.frequency.value = 1800; filt.Q.value = 0.5
+    const gain = c.createGain(); gain.gain.value = 0
+    src.connect(filt).connect(gain).connect(this.master)
+    src.start()
+    this.rainBed = { src, filt, gain }
+    return this.rainBed
+  }
+
+  /** Rain hiss for stormy stages. intensity 0 (off) → ~1 (downpour). */
+  rain(intensity: number) {
+    const c = this.ctx
+    if (!getPref('sounds') || !c) { if (this.rainBed) this.rainBed.gain.gain.value = 0; return }
+    const r = this.ensureRain()
+    if (!r) return
+    const on = intensity > 0.001
+    r.gain.gain.setTargetAtTime(on ? 0.03 + intensity * 0.07 : 0, c.currentTime, 0.3)
+  }
+
   /** Silence the ambience beds (run over / component unmount). */
   stopAmbience() {
     if (this.eng) this.eng.gain.gain.value = 0
     if (this.wind) this.wind.gain.gain.value = 0
+    if (this.rainBed) this.rainBed.gain.gain.value = 0
   }
 }
 
