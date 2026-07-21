@@ -756,13 +756,8 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     cars.push({ g, axis, dir, v: 8 + (i % 3) * 3, off: i * 41, head })
   }
 
-  const walkers = new THREE.InstancedMesh(
-    track(new THREE.CapsuleGeometry(0.32, 0.9, 3, 8)),
-    track(new THREE.MeshLambertMaterial({ color: 0xd8d4e8 })),
-    14,
-  )
-  scene.add(walkers)
-  const walkerPhase = Array.from({ length: 14 }, () => r())
+  // (the old abstract white capsule pedestrians are gone — the plaza is peopled
+  // entirely by the autonomous character-model citizens below)
 
   // ---------- living citizens: autonomous character-model agents ----------
   // Each is a real animated 3D character with a tiny "mind": a state machine
@@ -771,8 +766,9 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   // so they roam and do what they want, like living beings. Drawn from the
   // roster you've UNLOCKED, so the city fills with life as you level up.
   const POIS: [number, number][] = [[0, 0], [-4.4, 1.6], [9, 9], [-9, 9], [9, -9], [-9, -9], [15, 0], [-15, 0], [0, 15], [0, -15]]
-  const roster = PLAYABLE_CHARACTERS.filter((c) => isCharacterUnlocked(c, level) && !c.fly)
-  const citizenCount = (opts.reducedMotion || lowEnd) ? 0 : Math.min(6, 3 + Math.floor(level / 6))
+  // walking characters/animals only (road cars live in `cars`; no flyers on foot)
+  const roster = PLAYABLE_CHARACTERS.filter((c) => isCharacterUnlocked(c, level) && !c.fly && !c.vehicle)
+  const citizenCount = opts.reducedMotion ? 0 : lowEnd ? 3 : Math.min(8, 4 + Math.floor(level / 4))
   type Citizen = {
     rig: CharacterRig; pos: THREE.Vector2; heading: number
     state: 'wander' | 'goto' | 'rest' | 'watch'; target: THREE.Vector2; timer: number; poi: number | null
@@ -989,7 +985,6 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   let lastTint = -1
   let prevT = 0
   const startT = performance.now()
-  const mtx = new THREE.Matrix4()
 
   function animateWorld(tSec: number, dt: number, dark: number, weather: Weather) {
     // downtown build-up in reveal order
@@ -1033,20 +1028,6 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       else car.g.position.set(along, 0, -lane)
       car.head.material.opacity = dark
     }
-
-    // pedestrians walk the plaza block; thinner crowds at night
-    walkers.count = dark > 0.7 ? 6 : 14
-    for (let i = 0; i < walkers.count; i++) {
-      const per = 4 * 27 // perimeter of the 13.5-radius sidewalk square
-      const p = ((tSec * 1.6 + walkerPhase[i] * per) % per + per) % per
-      const seg = Math.floor(p / 27)
-      const q = p % 27 - 13.5
-      const [wx, wz] = [[q, 13.5], [13.5, -q], [-q, -13.5], [-13.5, q]][seg]
-      const bob = 1 + Math.abs(Math.sin(tSec * 6 + i)) * 0.06
-      mtx.makeScale(1, bob, 1).setPosition(wx, 0.85, wz)
-      walkers.setMatrixAt(i, mtx)
-    }
-    walkers.instanceMatrix.needsUpdate = true
 
     // metro
     if (trainCars.length) {
