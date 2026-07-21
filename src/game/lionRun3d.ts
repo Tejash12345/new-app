@@ -27,6 +27,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { buildCharacter, type CharacterRig } from './characterModel'
 import { buildWeapon } from './weaponModel'
+import { sfx } from './sfx'
 import { characterById, isVehicle } from '../lib/characters'
 import { skinById } from '../lib/lionSkins'
 import { haptic } from '../lib/prefs'
@@ -774,6 +775,7 @@ export function startLionRun3D(
     cb.onStage?.(1, STAGES[0].name)
   }
   function startOrJump() {
+    sfx.resume() // unlock Web Audio on the user's first tap
     if (state === 'ready') {
       // in a race the countdown starts everyone together — ignore taps
       if (!opts.race) begin()
@@ -784,6 +786,7 @@ export function startLionRun3D(
       // a plane/heli climbs on a tap (to clear the big wall); it decays back to cruise
       flyAlt = Math.min(8.2, flyAlt + 2.6)
       haptic(14)
+      sfx.climb()
       return
     }
     if (jumps < 2) {
@@ -791,8 +794,10 @@ export function startLionRun3D(
       vy = driving
         ? (jumps === 0 ? 16 : 11)
         : (jumps === 0 ? 9.4 : 8.2)
+      const wasDouble = jumps > 0
       jumps++
       haptic(driving ? 18 : 12)
+      sfx.jump(wasDouble)
     }
   }
   function move(dir: -1 | 1) {
@@ -807,6 +812,7 @@ export function startLionRun3D(
     if (jetT > 0 || slideT > 0) return
     slideT = 0.6
     haptic(8)
+    sfx.slide()
   }
   // combo streak multiplies coin value (x2 at 10, x3 at 20); the ✨ power-up
   // stacks on top
@@ -815,6 +821,7 @@ export function startLionRun3D(
     coins += n * (x2T > 0 ? 2 : 1) * comboMult()
     combo++
     comboT = 2.5
+    sfx.coin(combo)
   }
   function activatePickup(kind: PickKind, lane2: number) {
     haptic(16)
@@ -825,12 +832,14 @@ export function startLionRun3D(
     else if (kind === 'x2') x2T = 10
     else if (kind === 'boost') { boostT = 1.8; screenFlash(0x5af0c8, 0.15) }
     else if (kind === 'box') { addCoin(3); cb.onItemBox?.() } // race: grants a random weapon
+    if (kind === 'boost') sfx.boost(); else sfx.powerup()
   }
   // weaving past an obstacle one lane over = a near-miss whoosh + bonus
   function nearMiss(oLane: number) {
     burst(LANE_X[oLane], 1.5, 0.5, 'rgba(255,255,255,0.9)', 1.4, 0.28)
     addCoin(1)
     haptic(5)
+    sfx.nearMiss()
   }
   function reportHud() {
     const pu: HudState['powerups'] = []
@@ -848,6 +857,7 @@ export function startLionRun3D(
   function injectAttack(kind: AttackKind, power = false) {
     if (state !== 'run') return
     haptic(30)
+    sfx.hit(kind)
     const k = power ? 1.6 : 1 // flying attacker hits harder
     if (kind === 'bolt') {
       // thunder: a 3D lightning bolt strikes down + white flash + shake + stun
@@ -948,6 +958,7 @@ export function startLionRun3D(
       cleanup: () => { scene.remove(w.group); trail.material.dispose(); w.dispose() },
     })
     haptic(15)
+    sfx.launch()
   }
   function setGhost(distanceM: number, lane2: number, alive: boolean, female?: boolean, skin?: string, character?: string) {
     ghostSeen = true
@@ -1098,6 +1109,8 @@ export function startLionRun3D(
     dyingT = 0
     shakeT = 0.55
     haptic([60, 40, 120])
+    sfx.crash()
+    sfx.stopAmbience()
   }
 
   function scrollWorld(dz: number, tSec: number) {
@@ -1173,6 +1186,7 @@ export function startLionRun3D(
           stage = ns
           cb.onStage?.(stage, STAGES[stage - 1].name)
           haptic([30, 30, 30])
+          sfx.stageUp()
         }
         // keeps accelerating the further/longer you run — noticeably faster
         // deep into a run (per-stage jump + a steady time ramp), capped high.
@@ -1180,6 +1194,10 @@ export function startLionRun3D(
         const base = 16 + (stage - 1) * 4.8 + elapsed * 0.55
         speed = flying ? Math.min(80, base * 1.55) : driving ? Math.min(70, base * 1.3) : Math.min(54, base)
         if (stunT > 0) stunT = Math.max(0, stunT - dt)
+        // adaptive ambience: engine hum while driving, wind/rotor while flying
+        if (flying) { sfx.fly(Math.min(1, speed / 70)); sfx.drive(0) }
+        else if (driving) { sfx.drive(Math.min(1, speed / 54)); sfx.fly(0) }
+        else { sfx.drive(0); sfx.fly(0) }
       }
       // boost pad speeds you up; a bolt/freeze stun drags you down
       const dz = speed * (state === 'run' && stunT > 0 ? 0.32 : 1) * (boostT > 0 ? 1.6 : 1) * dt
@@ -1208,7 +1226,7 @@ export function startLionRun3D(
       } else {
         vy -= 24 * dt
         lionY = Math.max(0, lionY + vy * dt)
-        if (lionY === 0 && vy < 0) { vy = 0; jumps = 0 }
+        if (lionY === 0 && vy < 0) { vy = 0; jumps = 0; sfx.land() }
       }
       lionX += (LANE_X[lane] - lionX) * Math.min(1, dt * 11)
 
@@ -1267,6 +1285,7 @@ export function startLionRun3D(
                 screenFlash(0x5adcff, 0.22)
                 shakeT = Math.max(shakeT, 0.3)
                 haptic(30)
+                sfx.shieldBreak()
               } else {
                 crash()
               }
@@ -1524,6 +1543,7 @@ export function startLionRun3D(
   return {
     destroy: () => {
       cancelAnimationFrame(raf)
+      sfx.stopAmbience()
       rig.dispose()
       ghost.dispose()
       for (const r of roamers) r.rig.dispose()

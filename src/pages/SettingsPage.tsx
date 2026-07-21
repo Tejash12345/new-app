@@ -144,6 +144,9 @@ function ChatPrefsCard() {
         <PrefRow icon="📳" title="Haptic feedback" desc="Little vibrations on taps & reactions">
           <Toggle on={p.haptics} onChange={(v) => set('haptics', v)} />
         </PrefRow>
+        <PrefRow icon="🔊" title="Sound effects" desc="Game sounds in Lion Run (jumps, coins, engines)">
+          <Toggle on={p.sounds} onChange={(v) => set('sounds', v)} />
+        </PrefRow>
         <PrefRow icon="🎞️" title="Reduce motion" desc="Calmer animations across the app">
           <Toggle on={p.reduceMotion} onChange={(v) => set('reduceMotion', v)} />
         </PrefRow>
