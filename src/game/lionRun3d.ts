@@ -65,6 +65,8 @@ export type Run3DOpts = {
   skin?: string
   // playable character id (lion/lioness/wolf/fox/…) — see lib/characters
   character?: string
+  // permanent shop upgrades (levels) — longer power-ups + a head start / shield
+  upgrades?: { magnet?: number; shield?: number; boost?: number; head?: number }
 }
 
 type Obstacle = { mesh: THREE.Mesh; lane: number; kind: 'bar' | 'wall' | 'stack' | 'gate' | 'megawall'; z: number; alive: boolean; passed?: boolean }
@@ -748,7 +750,7 @@ export function startLionRun3D(
   let jetT = 0
   let x2T = 0
   let boostT = 0
-  let shield = false
+  let shield = (opts.upgrades?.shield || 0) >= 1 // "starting shield" upgrade
   let slideT = 0
   let combo = 0
   let comboT = 0
@@ -771,6 +773,8 @@ export function startLionRun3D(
     if (state !== 'ready') return
     state = 'swoop'
     swoopT = 0
+    // "head start" upgrade → launch with a speed boost
+    if (opts.upgrades?.head) boostT = Math.max(boostT, opts.upgrades.head * 1.1)
     cb.onStart()
     cb.onStage?.(1, STAGES[0].name)
   }
@@ -826,11 +830,11 @@ export function startLionRun3D(
   function activatePickup(kind: PickKind, lane2: number) {
     haptic(16)
     burst(LANE_X[lane2], 1.6, 0, PICK_GLOW[kind], 2.2, 0.45)
-    if (kind === 'magnet') magnetT = 8
+    if (kind === 'magnet') magnetT = 8 + (opts.upgrades?.magnet || 0) * 2
     else if (kind === 'shield') shield = true
     else if (kind === 'jet') { jetT = 5; jumps = 0 }
     else if (kind === 'x2') x2T = 10
-    else if (kind === 'boost') { boostT = 1.8; screenFlash(0x5af0c8, 0.15) }
+    else if (kind === 'boost') { boostT = 1.8 + (opts.upgrades?.boost || 0) * 0.6; screenFlash(0x5af0c8, 0.15) }
     else if (kind === 'box') { addCoin(3); cb.onItemBox?.() } // race: grants a random weapon
     if (kind === 'boost') sfx.boost(); else sfx.powerup()
   }

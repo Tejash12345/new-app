@@ -10,6 +10,7 @@ import { cn, levelForXp, levelProgress, levelTitle, todayKey, xpForLevel } from 
 import { CITY_TOTAL_BUILDINGS, DISTRICTS, cityUnlocked, districtsUnlocked, nextDistrict, startCityScene } from '../game/cityScene'
 import { startLionRun, type RunResult } from '../game/lionRun'
 import { PLAYABLE_CHARACTERS, DEFAULT_CHARACTER, characterById, isCharacterUnlocked } from '../lib/characters'
+import { UPGRADES, getCoins, addCoins, getUpgrades, getDailyMissions, tallyMissions, buyUpgrade, nextCost, type Mission } from '../lib/lionShop'
 
 /** Free run every day, +1 per completed focus session, capped. */
 const MAX_RUNS_PER_DAY = 3
@@ -124,9 +125,20 @@ export function CityPage() {
 
   const [gameOpen, setGameOpen] = useState(false)
   const [runKey, setRunKey] = useState(0)
-  const [result, setResult] = useState<(RunResult & { xpEarned: number; newBest: boolean; freeRun: boolean; stage?: number }) | null>(null)
+  const [result, setResult] = useState<(RunResult & { xpEarned: number; newBest: boolean; freeRun: boolean; stage?: number; missionsDone?: Mission[]; missionCoins?: number }) | null>(null)
   const [runStarted, setRunStarted] = useState(false)
   const [runLive, setRunLive] = useState<{ score: number; coins: number } | null>(null)
+  // ---- coin bank + upgrade shop + daily missions (meta-progression) ----
+  const [coins, setCoins] = useState(() => getCoins())
+  const [upgrades, setUpgrades] = useState(() => getUpgrades())
+  const [dailyMissions, setDailyMissions] = useState(() => getDailyMissions())
+  const [shopOpen, setShopOpen] = useState(false)
+  const runStats = useRef({ combo: 0 }) // max combo this run (for mission tally)
+  function buy(key: (typeof UPGRADES)[number]['key']) {
+    if (!buyUpgrade(key)) return
+    setUpgrades(getUpgrades())
+    setCoins(getCoins())
+  }
   const [stageFlash, setStageFlash] = useState<{ n: number; name: string } | null>(null)
   const gameRef = useRef<HTMLCanvasElement>(null)
   // whether the current run consumes a reward token (XP) or is a free replay
@@ -162,6 +174,7 @@ export function CityPage() {
     const callbacks = {
       onStart: () => {
         setRunStarted(true)
+        runStats.current.combo = 0
         // reward runs consume a token and can earn XP; once tokens are gone
         // every further run is a free replay (score and glory only)
         const eligible = live.current.runsUsed < runsAllowed
@@ -187,10 +200,18 @@ export function CityPage() {
           setBest(r.score)
           localStorage.setItem('fl-city-best', String(r.score))
         }
-        setResult({ ...r, xpEarned, newBest, freeRun })
+        // bank the run's orbs, then tally any daily missions the run completed
+        addCoins(r.coins)
+        const { completed, coins: missionCoins } = tallyMissions({
+          coins: r.coins, dist: Math.round(r.distanceM), stage: r.stage || 1, combo: runStats.current.combo,
+        })
+        setCoins(getCoins())
+        setDailyMissions(getDailyMissions())
+        setResult({ ...r, xpEarned, newBest, freeRun, missionsDone: completed, missionCoins })
       },
       onScore: (score: number, coins: number) => setRunLive({ score, coins }),
       onStage: (n: number, name: string) => setStageFlash({ n, name }),
+      onHud: (h: { combo: number }) => { if (h.combo > runStats.current.combo) runStats.current.combo = h.combo },
     }
     // the runner is 3D (three.js, lazy chunk); the 2D engine covers no-WebGL devices
     let destroy: (() => void) | undefined
@@ -199,7 +220,7 @@ export function CityPage() {
       .then(({ startLionRun3D }) => {
         if (cancelled) return
         const effChar = isCharacterUnlocked(characterById(character), level) ? character : DEFAULT_CHARACTER
-        const h = startLionRun3D(el, callbacks, { character: effChar })
+        const h = startLionRun3D(el, callbacks, { character: effChar, upgrades: getUpgrades() })
         destroy = h ? h.destroy : startLionRun(el, callbacks).destroy
       })
       .catch(() => {
@@ -469,6 +490,27 @@ export function CityPage() {
                 )}
               </AnimatePresence>
 
+              {/* coins + daily missions + upgrades (pre-run) */}
+              {!runStarted && !result && (
+                <div className="pointer-events-none absolute inset-x-0 top-0 px-3 pt-[calc(0.4rem+env(safe-area-inset-top))]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="pointer-events-auto rounded-full bg-black/55 px-3 py-1 text-xs font-black text-amber-300 ring-1 ring-white/10">🪙 {coins.toLocaleString()}</span>
+                    <button onClick={() => setShopOpen(true)}
+                      className="pointer-events-auto rounded-full bg-black/55 px-3 py-1 text-xs font-bold text-white ring-1 ring-white/10 active:scale-95">⚙️ Upgrades</button>
+                  </div>
+                  <div className="mt-1.5 flex flex-col items-start gap-1">
+                    {dailyMissions.map((m) => (
+                      <div key={m.id} className={cn('flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ring-1',
+                        m.done ? 'bg-emerald-500/25 text-emerald-200 ring-emerald-400/40' : 'bg-black/45 text-white/85 ring-white/10')}>
+                        <span>{m.done ? '✅' : m.emoji}</span>
+                        <span className={m.done ? 'line-through opacity-70' : ''}>{m.label}</span>
+                        <span className="text-amber-300">🪙{m.reward}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* start hint */}
               {!runStarted && !result && (
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-black/25 px-6 text-center">
@@ -478,6 +520,49 @@ export function CityPage() {
                   </div>
                 </div>
               )}
+
+              {/* upgrade shop */}
+              <AnimatePresence>
+                {shopOpen && (
+                  <motion.div className="absolute inset-0 z-10 flex flex-col bg-black/85 p-4 backdrop-blur-sm"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    <div className="flex items-center justify-between">
+                      <div className="city-display text-xl tracking-widest text-white">UPGRADES</div>
+                      <button onClick={() => setShopOpen(false)} className="rounded-full bg-white/10 p-2 text-white active:scale-95"><X className="h-5 w-5" /></button>
+                    </div>
+                    <div className="mt-1 text-sm font-black text-amber-300">🪙 {coins.toLocaleString()} coins</div>
+                    <div className="mt-3 flex-1 space-y-2 overflow-y-auto">
+                      {UPGRADES.map((u) => {
+                        const lvl = upgrades[u.key]
+                        const cost = nextCost(u.key)
+                        const maxed = cost == null
+                        const afford = cost != null && coins >= cost
+                        return (
+                          <div key={u.key} className="flex items-center gap-3 rounded-2xl bg-white/5 p-3 ring-1 ring-white/10">
+                            <span className="text-2xl leading-none">{u.emoji}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-bold text-white">{u.name} <span className="text-white/45">Lv {lvl}/{u.max}</span></div>
+                              <div className="truncate text-[11px] text-white/60">{u.desc}</div>
+                              <div className="mt-1 flex gap-1">
+                                {Array.from({ length: u.max }).map((_, i) => (
+                                  <span key={i} className={cn('h-1.5 w-6 rounded-full', i < lvl ? 'bg-amber-400' : 'bg-white/15')} />
+                                ))}
+                              </div>
+                            </div>
+                            <button disabled={maxed || !afford} onClick={() => buy(u.key)}
+                              className={cn('shrink-0 rounded-xl px-3 py-2 text-xs font-black active:scale-95',
+                                maxed ? 'bg-emerald-500/20 text-emerald-300' : afford ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white' : 'bg-white/10 text-white/40')}>
+                              {maxed ? 'MAX' : `🪙 ${cost}`}
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div className="mt-3 text-center text-[10px] text-white/45">Coins are earned from orbs + missions — never from XP.</div>
+                    <button onClick={() => setShopOpen(false)} className="mt-2 rounded-2xl bg-white/10 py-2.5 text-sm font-bold text-white active:scale-95">Done</button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* character select — pick your runner before tapping to run */}
               {!runStarted && !result && (
@@ -541,7 +626,18 @@ export function CityPage() {
                     ) : result.xpEarned === 0 && result.coins > 0 ? (
                       <div className="mt-2 px-6 text-center text-xs text-white/50">Daily run-XP cap reached — orbs are just for glory now.</div>
                     ) : null}
-                    <div className="mt-6 flex gap-3">
+                    {/* mission completions + coin bank */}
+                    {result.missionsDone && result.missionsDone.length > 0 && (
+                      <div className="mt-3 flex flex-col items-center gap-1">
+                        {result.missionsDone.map((m) => (
+                          <div key={m.id} className="rounded-full bg-emerald-500/20 px-3 py-1 text-[11px] font-bold text-emerald-200 ring-1 ring-emerald-400/40">
+                            ✅ {m.label} · +🪙{m.reward}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-2 text-xs font-black text-amber-300">🪙 {coins.toLocaleString()} coins{result.missionCoins ? ` (+${result.missionCoins + result.coins})` : result.coins ? ` (+${result.coins})` : ''}</div>
+                    <div className="mt-4 flex gap-3">
                       <button onClick={runAgain}
                         className="rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 px-5 py-2.5 text-sm font-black uppercase tracking-wide text-white shadow-lg active:scale-95">
                         Run again
