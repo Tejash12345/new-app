@@ -4,7 +4,7 @@ required. Mirrored via Poly Pizza (https://poly.pizza).
 
 Animals (Animated Animal Pack): wolf, fox, shiba, husky, deer, stag, bull, horse
 Humans/characters: runner (Animated Human), robot (Animated Robot),
-  hero (Animated Platformer Character), adventurer (Adventurer)
+  hero (Animated Platformer Character), adventurer (Adventurer), astronaut (Astronaut)
 Vehicles (Cars Bundle, via poly.pizza): car, pickup, truck (armored), police,
   taxi, suv, sportscar
   — motorbike, aeroplane and helicopter are procedural (built in code).

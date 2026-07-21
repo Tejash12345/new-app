@@ -90,6 +90,13 @@ export const CHARACTERS: CharacterDef[] = [
     blurb: 'Fast, fearless, maneless.',
   },
   {
+    // clean, fully-animated white astronaut (dressed, futuristic, lightweight)
+    id: 'astronaut', name: 'Astronaut', emoji: '👩‍🚀', kind: 'gltf', url: '/models/astronaut.glb',
+    clips: { ...HUMAN, slide: 'Duck' }, bodyMats: [], targetHeight: 1.8, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 0, credit: QUAT_CREDIT,
+    blurb: 'A futuristic astronaut in white — clean, fully animated (run/jump/slide).',
+  },
+  {
     id: 'wolf', name: 'Wolf', emoji: '🐺', kind: 'gltf', url: '/models/wolf.glb',
     clips: QUAT, bodyMats: ['Main', 'Main_Light'], targetHeight: 1.7, faceYaw: Math.PI,
     skinnable: true, unlockLevel: 2, blurb: 'Apex predator with a real skeletal gallop.', credit: QUAT_CREDIT,
