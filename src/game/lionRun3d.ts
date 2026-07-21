@@ -37,7 +37,8 @@ export type Run3DHandle = {
   destroy: () => void
   // race extras (no-ops in solo): start on a synced countdown + take hits
   begin: () => void
-  injectAttack: (kind: AttackKind) => void
+  // `power` = the attacker was flying a plane/heli → a stronger hit
+  injectAttack: (kind: AttackKind, power?: boolean) => void
   // Asphalt-Nitro-style rival: show the opponent's lion racing in this scene,
   // placed from their broadcast distance/lane; and a launch VFX when I attack
   setGhost: (distanceM: number, lane: number, alive: boolean, female?: boolean, skin?: string, character?: string) => void
@@ -841,49 +842,60 @@ export function startLionRun3D(
   }
   // an attack from the opponent lands on THIS runner (race only), each with a
   // distinct animation
-  function injectAttack(kind: AttackKind) {
+  // `power` (attacker was flying a plane/heli) = a stronger hit: longer stun,
+  // bigger VFX, an extra hazard wave. NB: attack randomness uses Math.random
+  // (NOT the seeded `rand`) so a network-timed attack can't desync the track.
+  function injectAttack(kind: AttackKind, power = false) {
     if (state !== 'run') return
     haptic(30)
+    const k = power ? 1.6 : 1 // flying attacker hits harder
     if (kind === 'bolt') {
       // thunder: a 3D lightning bolt strikes down + white flash + shake + stun
-      stunT = Math.max(stunT, 1.2)
-      screenFlash(0xffffff, 0.42)
-      shakeT = Math.max(shakeT, 0.5)
+      stunT = Math.max(stunT, 1.2 * k)
+      screenFlash(0xffffff, power ? 0.6 : 0.42)
+      shakeT = Math.max(shakeT, power ? 0.75 : 0.5)
       weaponBurstAt('bolt', lionX, 3.4, -1.5, 0.45)
-      burst(lionX, 3.4, -2, 'rgba(200,225,255,0.95)', 2.6, 0.4)
+      if (power) weaponBurstAt('bolt', lionX + 1.1, 3.2, -1.5, 0.45)
+      burst(lionX, 3.4, -2, 'rgba(200,225,255,0.95)', power ? 3.4 : 2.6, 0.4)
       haptic([40, 30, 40])
       return
     }
     if (kind === 'freeze') {
       // ice: a 3D ice crystal + longer, heavier slow + blue frost flash
-      stunT = Math.max(stunT, 1.8)
-      screenFlash(0x8fdcff, 0.55)
+      stunT = Math.max(stunT, 1.8 * k)
+      screenFlash(0x8fdcff, power ? 0.75 : 0.55)
       weaponBurstAt('freeze', lionX, 1.8, -2.5, 0.6)
-      burst(lionX, 1.6, -3, 'rgba(150,220,255,0.9)', 3, 0.6)
+      burst(lionX, 1.6, -3, 'rgba(150,220,255,0.9)', power ? 3.8 : 3, 0.6)
       return
     }
     if (kind === 'tornado') {
-      // twister: blocks two lanes + spins the camera
-      rollT = 0.9
-      rollDir = rand() < 0.5 ? -1 : 1
-      const open = Math.floor(rand() * 3)
+      // twister: blocks two lanes + spins the camera (power = longer + 2nd wave)
+      rollT = power ? 1.4 : 0.9
+      rollDir = Math.random() < 0.5 ? -1 : 1
+      const open = Math.floor(Math.random() * 3)
       for (let l = 0; l < 3; l++) if (l !== open) spawnObstacle(l, 'wall', -52)
-      tornadoIn(Math.floor(rand() * 3))
-      screenFlash(0x9db8e8, 0.25)
+      if (power) {
+        const open2 = Math.floor(Math.random() * 3)
+        for (let l = 0; l < 3; l++) if (l !== open2) spawnObstacle(l, 'wall', -66)
+      }
+      tornadoIn(Math.floor(Math.random() * 3))
+      screenFlash(0x9db8e8, power ? 0.4 : 0.25)
       return
     }
     if (kind === 'fire') {
       // fireball: a 3D fireball hurls in + a low flame wall to JUMP + orange burst
       spawnObstacle(lane, 'bar', -44)
+      if (power) spawnObstacle(lane, 'bar', -60) // a second flame to clear
       weaponBurstAt('fire', LANE_X[lane], 1.0, -44, 0.6)
-      burst(LANE_X[lane], 0.9, -44, 'rgba(255,95,30,0.95)', 2.8, 0.6)
-      screenFlash(0xff5a1e, 0.3)
+      burst(LANE_X[lane], 0.9, -44, 'rgba(255,95,30,0.95)', power ? 3.6 : 2.8, 0.6)
+      screenFlash(0xff5a1e, power ? 0.45 : 0.3)
       return
     }
     // rocket: streaks in and explodes on a wall dropped in your lane — dodge it
     spawnObstacle(lane, 'wall', -42)
+    if (power) spawnObstacle(lane, 'bar', -60) // an extra hazard behind the wall
     rocketIn(lane, -42, () => {})
-    screenFlash(0xff8a3a, 0.18)
+    screenFlash(0xff8a3a, power ? 0.3 : 0.18)
   }
   // spawn a 3D weapon model at a point that pops in, spins and fades out
   // (used when an attack LANDS on this runner)

@@ -34,7 +34,7 @@ const CONFETTI = Array.from({ length: 24 }, (_, i) => ({
 
 export type RacePayload =
   | { a: 'state'; from: string; dist: number; lane: number; alive: boolean; female?: boolean; skin?: string; character?: string }
-  | { a: 'attack'; from: string; kind: AttackKind }
+  | { a: 'attack'; from: string; kind: AttackKind; power?: boolean }
   | { a: 'dead'; from: string; dist: number }
   | { a: 'rematch'; from: string; seed: number }
   | { a: 'emote'; from: string; e: string }
@@ -227,7 +227,7 @@ export function LionRace({
         setOppAlive(p.alive)
         handleRef.current?.setGhost(p.dist, p.lane, p.alive, p.female, p.skin, p.character) // show their chosen runner (character/skin) racing in my scene
       } else if (p.a === 'attack') {
-        handleRef.current?.injectAttack(p.kind)
+        handleRef.current?.injectAttack(p.kind, p.power)
         setFlash(p.kind)
         setTimeout(() => setFlash(null), 900)
       } else if (p.a === 'dead') {
@@ -249,17 +249,20 @@ export function LionRace({
 
   const ammo = myCoins - spent
   const gap = Math.abs(Math.round(myDist) - Math.round(oppDist)) // metres between the lions
+  // flying a plane/heli makes your attacks hit HARDER (longer stun / bigger hazard)
+  const myDefNow = characterById(myChar)
+  const amFlying = !!myDefNow.vehicle && !!myDefNow.fly
   function fire(atk: (typeof ATTACKS)[number]) {
     if (ammo < atk.cost || !myAlive || !oppAlive || phase !== 'racing' || gap > atk.range) return
     setSpent((s) => s + atk.cost)
-    sendRef.current({ a: 'attack', kind: atk.kind })
+    sendRef.current({ a: 'attack', kind: atk.kind, power: amFlying })
     handleRef.current?.fireFx(atk.kind) // launch a projectile at the rival's ghost
     navigator.vibrate?.(20)
   }
   function fireFree() {
     // an item-box weapon fires for free, ignoring range/coins
     if (!freeWeapon || !myAlive || !oppAlive || phase !== 'racing') return
-    sendRef.current({ a: 'attack', kind: freeWeapon })
+    sendRef.current({ a: 'attack', kind: freeWeapon, power: amFlying })
     handleRef.current?.fireFx(freeWeapon)
     setFreeWeapon(null)
     navigator.vibrate?.(20)
