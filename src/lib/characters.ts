@@ -187,6 +187,24 @@ export const CHARACTERS: CharacterDef[] = [
     skinnable: false, unlockLevel: 11, credit: QUAT_CREDIT,
     blurb: 'Hit the siren — a fast 3D cruiser that clears the big walls.',
   },
+  {
+    id: 'taxi', name: 'Taxi', emoji: '🚕', kind: 'gltf', url: '/models/taxi.glb', vehicle: 'car',
+    bodyMats: [], targetHeight: 1.3, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 3, credit: QUAT_CREDIT,
+    blurb: 'Hail a cab — a speedy 3D taxi that leaps the big walls.',
+  },
+  {
+    id: 'suv', name: 'SUV', emoji: '🚙', kind: 'gltf', url: '/models/suv.glb', vehicle: 'car',
+    bodyMats: ['White'], targetHeight: 1.45, faceYaw: Math.PI,
+    skinnable: true, unlockLevel: 5, credit: QUAT_CREDIT,
+    blurb: 'A chunky 3D SUV — drives fast and jumps the big walls.',
+  },
+  {
+    id: 'sportscar', name: 'Sports Car', emoji: '🏎️', kind: 'gltf', url: '/models/sportscar.glb', vehicle: 'car',
+    bodyMats: ['Orange'], targetHeight: 1.25, faceYaw: Math.PI,
+    skinnable: true, unlockLevel: 7, credit: QUAT_CREDIT,
+    blurb: 'A low-slung 3D sports car — blistering speed, clears the big walls.',
+  },
   // ---- aircraft (procedural, FLYING vehicles) — cruise the sky, fastest of all ----
   {
     id: 'plane', name: 'Aeroplane', emoji: '✈️', kind: 'vehicle', vehicle: 'plane', fly: true,
