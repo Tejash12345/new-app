@@ -26,6 +26,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { buildCharacter, type CharacterRig } from './characterModel'
+import { buildWeapon } from './weaponModel'
 import { characterById, isVehicle } from '../lib/characters'
 import { skinById } from '../lib/lionSkins'
 import { haptic } from '../lib/prefs'
@@ -528,9 +529,6 @@ export function startLionRun3D(
     if (!t) { t = softGlowTex(color); glowCache.set(color, t) }
     return t
   }
-  const rocketGeo = track(new THREE.CapsuleGeometry(0.26, 0.9, 4, 8))
-  const rocketMat = track(new THREE.MeshBasicMaterial({ color: 0xffe1b0 }))
-  const tornadoGeo = track(new THREE.ConeGeometry(1.7, 5, 14, 1, true))
   function screenFlash(hex: number, dur: number) { flashColor.set(hex); flashT = Math.max(flashT, dur) }
   function burst(x: number, y: number, z: number, color: string, size: number, dur: number) {
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(color), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
@@ -579,19 +577,21 @@ export function startLionRun3D(
     })
   }
   function rocketIn(lane: number, zStop: number, onArrive: () => void) {
-    const m = new THREE.Mesh(rocketGeo, rocketMat)
-    m.rotation.x = Math.PI / 2
+    const w = buildWeapon('rocket')
+    w.group.rotation.y = Math.PI // nose faces +z — it flies in toward the player
+    w.group.scale.setScalar(1.5)
     const trail = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex('rgba(255,150,60,0.9)'), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
     trail.scale.setScalar(2.4)
-    m.add(trail)
-    m.position.set(LANE_X[lane], 1.5, -95)
-    scene.add(m)
+    trail.position.z = 0.7 // trails behind the nose
+    w.group.add(trail)
+    w.group.position.set(LANE_X[lane], 1.5, -95)
+    scene.add(w.group)
     let done = false
     fxList.push({
       update: (dt) => {
-        m.position.z += 150 * dt
-        m.rotation.z += dt * 18
-        if (m.position.z >= zStop && !done) {
+        w.group.position.z += 150 * dt
+        w.group.rotation.z += dt * 18
+        if (w.group.position.z >= zStop && !done) {
           done = true
           burst(LANE_X[lane], 1.3, zStop, 'rgba(255,140,50,0.95)', 2.6, 0.5)
           shakeT = Math.max(shakeT, 0.4)
@@ -600,22 +600,22 @@ export function startLionRun3D(
         }
         return true
       },
-      cleanup: () => { scene.remove(m) },
+      cleanup: () => { scene.remove(w.group); trail.material.dispose(); w.dispose() },
     })
   }
   function tornadoIn(lane: number) {
-    const mat = new THREE.MeshBasicMaterial({ color: 0xbecfe4, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
-    const m = new THREE.Mesh(tornadoGeo, mat)
-    m.position.set(LANE_X[lane], 2.6, -60)
-    scene.add(m)
+    const w = buildWeapon('tornado')
+    w.group.position.set(LANE_X[lane], 0.4, -60)
+    scene.add(w.group)
     fxList.push({
       update: (dt, tSec) => {
-        m.position.z += 24 * dt
-        m.rotation.y = tSec * 13
-        m.scale.x = m.scale.z = 1 + Math.sin(tSec * 11) * 0.18
-        return m.position.z < 9
+        w.group.position.z += 24 * dt
+        w.group.rotation.y = tSec * 13
+        const s = 1 + Math.sin(tSec * 11) * 0.14
+        w.group.scale.set(s, 1, s)
+        return w.group.position.z < 9
       },
-      cleanup: () => { scene.remove(m); mat.dispose() },
+      cleanup: () => { scene.remove(w.group); w.dispose() },
     })
   }
 
@@ -845,18 +845,20 @@ export function startLionRun3D(
     if (state !== 'run') return
     haptic(30)
     if (kind === 'bolt') {
-      // thunder: white flash + shake + a stun
+      // thunder: a 3D lightning bolt strikes down + white flash + shake + stun
       stunT = Math.max(stunT, 1.2)
       screenFlash(0xffffff, 0.42)
       shakeT = Math.max(shakeT, 0.5)
+      weaponBurstAt('bolt', lionX, 3.4, -1.5, 0.45)
       burst(lionX, 3.4, -2, 'rgba(200,225,255,0.95)', 2.6, 0.4)
       haptic([40, 30, 40])
       return
     }
     if (kind === 'freeze') {
-      // ice: a longer, heavier slow + blue frost flash
+      // ice: a 3D ice crystal + longer, heavier slow + blue frost flash
       stunT = Math.max(stunT, 1.8)
       screenFlash(0x8fdcff, 0.55)
+      weaponBurstAt('freeze', lionX, 1.8, -2.5, 0.6)
       burst(lionX, 1.6, -3, 'rgba(150,220,255,0.9)', 3, 0.6)
       return
     }
@@ -871,8 +873,9 @@ export function startLionRun3D(
       return
     }
     if (kind === 'fire') {
-      // fireball: a low flame wall to JUMP + orange burst
+      // fireball: a 3D fireball hurls in + a low flame wall to JUMP + orange burst
       spawnObstacle(lane, 'bar', -44)
+      weaponBurstAt('fire', LANE_X[lane], 1.0, -44, 0.6)
       burst(LANE_X[lane], 0.9, -44, 'rgba(255,95,30,0.95)', 2.8, 0.6)
       screenFlash(0xff5a1e, 0.3)
       return
@@ -882,31 +885,55 @@ export function startLionRun3D(
     rocketIn(lane, -42, () => {})
     screenFlash(0xff8a3a, 0.18)
   }
-  // I fired at the opponent — a projectile streaks from my lion to their ghost
+  // spawn a 3D weapon model at a point that pops in, spins and fades out
+  // (used when an attack LANDS on this runner)
+  function weaponBurstAt(kind: AttackKind, x: number, y: number, z: number, dur: number) {
+    const w = buildWeapon(kind)
+    w.group.position.set(x, y, z)
+    scene.add(w.group)
+    let t = 0
+    fxList.push({
+      update: (dt) => {
+        t += dt
+        const pop = Math.min(1, t / 0.1)
+        const fade = t > dur - 0.15 ? Math.max(0, (dur - t) / 0.15) : 1
+        w.group.scale.setScalar((0.5 + pop * 0.9) * (0.7 + fade * 0.3))
+        if (w.spin) w.group.rotation[w.spin.axis] += dt * w.spin.rate
+        else w.group.rotation.y += dt * 8
+        return t < dur
+      },
+      cleanup: () => { scene.remove(w.group); w.dispose() },
+    })
+  }
+  // I fired at the opponent — a real 3D projectile streaks from my lion to their ghost
   function fireFx(kind: AttackKind) {
     const color = kind === 'bolt' ? 'rgba(190,225,255,0.95)'
       : kind === 'freeze' ? 'rgba(150,220,255,0.95)'
       : kind === 'fire' ? 'rgba(255,120,40,0.95)'
       : kind === 'tornado' ? 'rgba(200,215,235,0.95)'
       : 'rgba(255,170,80,0.95)'
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(color), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
-    const fromV = new THREE.Vector3(lionX, 1.5, 0.5)
+    const w = buildWeapon(kind)
+    const trail = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(color), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }))
+    trail.scale.setScalar(1.7)
+    trail.position.z = 0.5
+    w.group.add(trail)
+    const fromV = new THREE.Vector3(lionX, 1.5, 0.4)
     const toV = new THREE.Vector3(ghostX, 1.5, ghostZ)
-    sp.position.copy(fromV)
-    sp.scale.setScalar(1.5)
-    scene.add(sp)
+    w.group.position.copy(fromV)
+    scene.add(w.group)
     let t = 0
     const dur = 0.5
     fxList.push({
       update: (dt) => {
         t += dt
         const k = Math.min(1, t / dur)
-        sp.position.lerpVectors(fromV, toV, k)
-        sp.scale.setScalar(1.5 - k * 0.7)
+        w.group.position.lerpVectors(fromV, toV, k)
+        if (w.spin) w.group.rotation[w.spin.axis] += dt * w.spin.rate
+        else w.group.rotation.z += dt * 10
         if (k >= 1) { burst(toV.x, 1.4, toV.z, color, 1.8, 0.4); return false }
         return true
       },
-      cleanup: () => { scene.remove(sp); sp.material.dispose() },
+      cleanup: () => { scene.remove(w.group); trail.material.dispose(); w.dispose() },
     })
     haptic(15)
   }
