@@ -169,6 +169,7 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
   function setupGLTF(res: Loaded, withMane = false) {
     // swap the procedural placeholder out for the real model
     if (lion) { group.remove(lion.group); disposeLion(lion); lion = null }
+    if (veh) { group.remove(veh.group); veh.dispose(); veh = null }
 
     const model = skeletonClone(res.scene)
     const wantMats = new Set((def.bodyMats || []).map((s) => s.toLowerCase()))
@@ -256,7 +257,9 @@ export function buildCharacter(def: CharacterDef, opts?: { female?: boolean; pha
   if (def.kind === 'vehicle') {
     buildVeh()
   } else if (def.kind === 'gltf' && def.url) {
-    buildProc(female0) // brief placeholder (usually preloaded → instant swap)
+    // placeholder while the GLB loads: the procedural vehicle for a ride (so a
+    // car doesn't flash a lion), else the procedural lion
+    if (def.vehicle) buildVeh(); else buildProc(female0)
     const baseUrl = def.url
     if (def.gltfUpgrade) {
       // hero lion: prefer a dropped-in realistic model, else the base rig + mane

@@ -155,12 +155,14 @@ export const CHARACTERS: CharacterDef[] = [
     clips: HUMAN, bodyMats: [], targetHeight: 1.85, faceYaw: Math.PI,
     skinnable: false, unlockLevel: 14, blurb: 'A detailed explorer with a backpack.', credit: QUAT_CREDIT,
   },
-  // ---- vehicles (procedural, no download) — you DRIVE these ----
-  // Driving = a faster base speed + a HIGH JUMP that clears the big wall.
+  // ---- vehicles — you DRIVE these (faster + a HIGH JUMP over the big wall) ----
+  // Real CC0 3D models (Quaternius) with the procedural vehicle as the instant
+  // loading placeholder / offline fallback. Motorbike is procedural.
   {
-    id: 'car', name: 'Speedster', emoji: '🚗', kind: 'vehicle', vehicle: 'car',
-    skinnable: true, unlockLevel: 0,
-    blurb: 'Drive a car — faster, and it high-jumps clean over the big walls.',
+    id: 'car', name: 'Speedster', emoji: '🚗', kind: 'gltf', url: '/models/car.glb', vehicle: 'car',
+    bodyMats: ['Main'], targetHeight: 1.3, faceYaw: Math.PI,
+    skinnable: true, unlockLevel: 0, credit: QUAT_CREDIT,
+    blurb: 'Drive a real 3D car — faster, and it high-jumps clean over the big walls.',
   },
   {
     id: 'bike', name: 'Street Bike', emoji: '🏍️', kind: 'vehicle', vehicle: 'bike',
@@ -168,9 +170,22 @@ export const CHARACTERS: CharacterDef[] = [
     blurb: 'A nimble motorbike — quick, and it launches high off a jump.',
   },
   {
-    id: 'truck', name: 'Big Rig', emoji: '🚚', kind: 'vehicle', vehicle: 'truck',
-    skinnable: true, unlockLevel: 9,
-    blurb: 'Heavy hauler — barrels down the road and leaps the biggest walls.',
+    id: 'pickup', name: 'Pickup', emoji: '🛻', kind: 'gltf', url: '/models/pickup.glb', vehicle: 'truck',
+    bodyMats: [], targetHeight: 1.7, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 6, credit: QUAT_CREDIT,
+    blurb: 'A rugged 3D pickup — quick and clears the big walls.',
+  },
+  {
+    id: 'truck', name: 'Big Rig', emoji: '🚚', kind: 'gltf', url: '/models/truck.glb', vehicle: 'truck',
+    bodyMats: [], targetHeight: 2.4, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 9, credit: QUAT_CREDIT,
+    blurb: 'A hefty armoured rig — barrels down the road and leaps the biggest walls.',
+  },
+  {
+    id: 'police', name: 'Police Car', emoji: '🚓', kind: 'gltf', url: '/models/police.glb', vehicle: 'car',
+    bodyMats: [], targetHeight: 1.3, faceYaw: Math.PI,
+    skinnable: false, unlockLevel: 11, credit: QUAT_CREDIT,
+    blurb: 'Hit the siren — a fast 3D cruiser that clears the big walls.',
   },
   // ---- aircraft (procedural, FLYING vehicles) — cruise the sky, fastest of all ----
   {
@@ -235,7 +250,9 @@ export function isCharacterUnlocked(def: CharacterDef, level: number): boolean {
   return level >= def.unlockLevel
 }
 
-/** A driven vehicle (car/bike/truck) — faster + high-jumps the big wall. */
+/** A driven vehicle (car/bike/truck/plane/heli) — faster + high-jumps the big
+ *  wall. True for both procedural (kind:'vehicle') and GLB-backed (kind:'gltf'
+ *  with a `vehicle` field) rides. */
 export function isVehicle(def: CharacterDef): boolean {
-  return def.kind === 'vehicle'
+  return !!def.vehicle
 }
