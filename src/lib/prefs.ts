@@ -27,6 +27,7 @@ export type Prefs = {
   // feedback / accessibility
   haptics: boolean
   sounds: boolean
+  music: boolean
   reduceMotion: boolean
   // media
   autoDownloadMedia: boolean
@@ -48,6 +49,7 @@ export const DEFAULT_PREFS: Prefs = {
   hideLastSeen: false,
   haptics: true,
   sounds: true,
+  music: true,
   reduceMotion: false,
   autoDownloadMedia: true,
 }

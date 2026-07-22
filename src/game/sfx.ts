@@ -28,9 +28,14 @@ class GameAudio {
   private eng: Ambience | null = null
   private wind: Wind | null = null
   private rainBed: Wind | null = null
+  private musicGain: GainNode | null = null
 
-  private ensure(): AudioContext | null {
-    if (!getPref('sounds')) return null
+  /**
+   * Create/resume the shared AudioContext + master bus. NOT gated by any pref —
+   * the SFX gate lives in `ensure()`, and the music engine (which has its own
+   * `music` pref) shares this core so it can play even with SFX muted.
+   */
+  private ensureCore(): AudioContext | null {
     if (this.ctx) {
       if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {})
       return this.ctx
@@ -57,9 +62,33 @@ class GameAudio {
     }
   }
 
+  /** The SFX-gated context: one-shots bail here when `sounds` is off. */
+  private ensure(): AudioContext | null {
+    if (!getPref('sounds')) return null
+    return this.ensureCore()
+  }
+
+  /**
+   * A dedicated sub-bus for the adaptive music engine — the same context, on a
+   * gain node under the master so effects sit on top of the score. Not gated by
+   * the `sounds` pref (music has its own toggle).
+   */
+  musicBus(): { ctx: AudioContext; out: GainNode } | null {
+    const c = this.ensureCore()
+    if (!c || !this.master) return null
+    if (!this.musicGain) {
+      const g = c.createGain()
+      g.gain.value = 0.7
+      g.connect(this.master)
+      this.musicGain = g
+    }
+    return { ctx: c, out: this.musicGain }
+  }
+
   /** Unlock/resume the context on a user gesture (called from the first tap). */
   resume() {
-    const c = this.ensure()
+    if (!getPref('sounds') && !getPref('music')) return
+    const c = this.ensureCore()
     if (c && c.state === 'suspended') c.resume().catch(() => {})
   }
 
@@ -126,6 +155,36 @@ class GameAudio {
     else if (kind === 'tornado') { this.noise(0.6, 0.24, 'bandpass', 400, 0.5, 180) }
     else { this.crash() }
   }
+
+  // ---- premium UI + reward SFX ----
+  /** Crisp glass-UI click for buttons. */
+  uiClick() { this.tone(880, 0.05, 'square', 0.08, 1320); this.tone(1760, 0.04, 'sine', 0.05, undefined, 0.012) }
+  /** Softer "back / dismiss" blip. */
+  uiBack() { this.tone(560, 0.07, 'triangle', 0.08, 340) }
+  /** Airy hologram / glass panel activating. */
+  hologram() { this.tone(320, 0.5, 'sawtooth', 0.06, 1600); this.noise(0.5, 0.04, 'bandpass', 2200, 3, 800) }
+  /** Bright XP tick (distinct from the coin chime). */
+  xp() { this.tone(1046, 0.09, 'triangle', 0.14); this.tone(1568, 0.12, 'sine', 0.08, undefined, 0.04) }
+  /** Treasure chest creaking open then a sparkle. */
+  chest() { this.noise(0.12, 0.14, 'bandpass', 500, 2); [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone(f, 0.16, 'triangle', 0.12, undefined, 0.06 + i * 0.05)) }
+  /** Portal winding up. */
+  portal() { this.tone(120, 0.9, 'sine', 0.14, 900); this.noise(0.9, 0.1, 'bandpass', 700, 4, 2600) }
+  /** Teleport zap. */
+  teleport() { this.tone(1400, 0.25, 'sine', 0.12, 120); this.noise(0.25, 0.12, 'highpass', 1800, 1, 400) }
+  /** Energy charging up over `secs`. */
+  charge(secs = 1) { this.tone(80, secs, 'sawtooth', 0.12, 1200); this.noise(secs, 0.05, 'bandpass', 400, 2, 3000) }
+  /** Laser / pew. */
+  laser() { this.tone(1800, 0.16, 'sawtooth', 0.14, 200); this.noise(0.1, 0.06, 'highpass', 3000, 1) }
+  /** Achievement-unlock fanfare. */
+  achievement() { [659, 988, 1318, 1568].forEach((f, i) => this.tone(f, 0.5, 'triangle', 0.13, undefined, i * 0.08)); this.tone(2093, 0.7, 'sine', 0.07, undefined, 0.34) }
+  /** Level-up celebration run. */
+  levelUp() { [523, 659, 784, 1046, 1318, 1568].forEach((f, i) => this.tone(f, 0.3, 'triangle', 0.13, undefined, i * 0.06)); this.tone(2093, 0.6, 'sine', 0.08, undefined, 0.4) }
+  /** Heroic victory sting. */
+  victory() { [523, 659, 784].forEach((f, i) => this.tone(f, 0.18, 'square', 0.12, undefined, i * 0.06));[1046, 1318, 1568, 2093].forEach((f, i) => this.tone(f, 0.5, 'triangle', 0.14, undefined, 0.22 + i * 0.07)) }
+  /** Descending game-over sting. */
+  gameOver() { [440, 349, 262].forEach((f, i) => this.tone(f, 0.5, 'sawtooth', 0.16, undefined, i * 0.16)); this.tone(131, 0.9, 'sine', 0.2, 90, 0.48) }
+  /** Gentle two-note notification. */
+  notify() { this.tone(880, 0.09, 'sine', 0.12); this.tone(1174, 0.12, 'sine', 0.1, undefined, 0.09) }
 
   // ---- adaptive ambience ----
   private ensureEng(): Ambience | null {

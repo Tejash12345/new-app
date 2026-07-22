@@ -28,6 +28,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { buildCharacter, type CharacterRig } from './characterModel'
 import { buildWeapon } from './weaponModel'
 import { sfx } from './sfx'
+import { music } from './music'
 import { characterById, isVehicle } from '../lib/characters'
 import { skinById } from '../lib/lionSkins'
 import { haptic } from '../lib/prefs'
@@ -764,6 +765,7 @@ export function startLionRun3D(
   let trailT = 0 // throttle for the skin's signature glow trail
   let lightningT = 3 + Math.random() * 5 // seconds until the next storm lightning strike
   let fov = 55
+  let lastMusInt = -1 // throttle music-intensity updates to meaningful changes
   // adaptive: drop pixel ratio if the phone can't hold frame rate
   let slowFrames = 0
   let loweredDpr = false
@@ -784,9 +786,13 @@ export function startLionRun3D(
     if (opts.upgrades?.head) boostT = Math.max(boostT, opts.upgrades.head * 1.1)
     cb.onStart()
     cb.onStage?.(1, STAGES[0].name)
+    // races get the dark, relentless "boss" score; a solo run gets the driving track
+    lastMusInt = -1
+    music.play(opts.race ? 'boss' : 'run', 0.3)
   }
   function startOrJump() {
     sfx.resume() // unlock Web Audio on the user's first tap
+    music.resume()
     if (state === 'ready') {
       // in a race the countdown starts everyone together — ignore taps
       if (!opts.race) begin()
@@ -1121,7 +1127,9 @@ export function startLionRun3D(
     shakeT = 0.55
     haptic([60, 40, 120])
     sfx.crash()
+    sfx.gameOver()
     sfx.stopAmbience()
+    music.play('menu', 0) // ease down to the calm bed under the WASTED screen
   }
 
   function scrollWorld(dz: number, tSec: number) {
@@ -1209,6 +1217,11 @@ export function startLionRun3D(
         if (flying) { sfx.fly(Math.min(1, speed / 70)); sfx.drive(0) }
         else if (driving) { sfx.drive(Math.min(1, speed / 54)); sfx.fly(0) }
         else { sfx.drive(0); sfx.fly(0) }
+        // adaptive music: drums + lead swell with speed, stage climb and boosts,
+        // then relax — only pushed on a meaningful change to spare the audio graph
+        const cap = flying ? 80 : driving ? 70 : 54
+        const mi = Math.min(1, 0.22 + (stage - 1) * 0.1 + (speed / cap) * 0.5 + (boostT > 0 ? 0.25 : 0))
+        if (Math.abs(mi - lastMusInt) > 0.03) { music.setIntensity(mi); lastMusInt = mi }
       }
       // boost pad speeds you up; a bolt/freeze stun drags you down
       const dz = speed * (state === 'run' && stunT > 0 ? 0.32 : 1) * (boostT > 0 ? 1.6 : 1) * dt
@@ -1555,12 +1568,14 @@ export function startLionRun3D(
   if (canvas.parentElement) ro.observe(canvas.parentElement)
   resize()
   spawnWave()
+  music.play('menu', 0) // calm bed on the pre-run screen (silent until the first tap unlocks audio)
   raf = requestAnimationFrame(frame)
 
   return {
     destroy: () => {
       cancelAnimationFrame(raf)
       sfx.stopAmbience()
+      music.stop()
       rig.dispose()
       ghost.dispose()
       for (const r of roamers) r.rig.dispose()

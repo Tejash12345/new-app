@@ -11,6 +11,8 @@ import { CITY_TOTAL_BUILDINGS, DISTRICTS, cityUnlocked, districtsUnlocked, nextD
 import { startLionRun, type RunResult } from '../game/lionRun'
 import { PLAYABLE_CHARACTERS, DEFAULT_CHARACTER, characterById, isCharacterUnlocked } from '../lib/characters'
 import { UPGRADES, getCoins, addCoins, getUpgrades, getDailyMissions, tallyMissions, buyUpgrade, nextCost, type Mission } from '../lib/lionShop'
+import { sfx } from '../game/sfx'
+import { hap } from '../lib/haptics'
 
 /** Free run every day, +1 per completed focus session, capped. */
 const MAX_RUNS_PER_DAY = 3
@@ -117,6 +119,7 @@ export function CityPage() {
   async function toggleMission() {
     if (!mission) return
     const nowDone = !mission.done
+    if (nowDone) { sfx.resume(); sfx.achievement(); hap.reward() }
     await updateMission({ id: mission.id, done: nowDone } as Partial<AiMission> & { id: string })
     // symmetric with the Dashboard mission card — un-checking takes the XP back
     await addXp(nowDone ? mission.xp : -mission.xp, `Daily mission: ${mission.title}`)
@@ -142,6 +145,8 @@ export function CityPage() {
   const runStats = useRef({ combo: 0 }) // max combo this run (for mission tally)
   function buy(key: (typeof UPGRADES)[number]['key']) {
     if (!buyUpgrade(key)) return
+    sfx.powerup()
+    hap.reward()
     setUpgrades(getUpgrades())
     setCoins(getCoins())
   }
@@ -158,6 +163,9 @@ export function CityPage() {
   }
   function selectCharacter(id: string) {
     if (!isCharacterUnlocked(characterById(id), level)) return
+    sfx.resume()
+    sfx.uiClick()
+    hap.tap()
     setCharacter(id)
     localStorage.setItem('fl-character', id)
     preloadChar(id)
@@ -217,6 +225,10 @@ export function CityPage() {
         })
         setCoins(getCoins())
         setDailyMissions(getDailyMissions())
+        // celebration cue, loudest event first: record → mission clears → XP banked
+        if (newBest) { sfx.achievement(); hap.levelUp() }
+        else if (completed.length) { sfx.chest(); hap.treasure() }
+        else if (xpEarned > 0) { sfx.xp(); hap.reward() }
         setResult({ ...r, xpEarned, newBest, freeRun, missionsDone: completed, missionCoins })
       },
       onScore: (score: number, coins: number) => setRunLive({ score, coins }),
@@ -245,6 +257,9 @@ export function CityPage() {
 
   // replays are unlimited — tokens only decide whether a run can earn XP
   function openGame() {
+    sfx.resume() // unlock Web Audio inside the tap gesture that opens the game
+    sfx.uiClick()
+    hap.select()
     setResult(null)
     setRunStarted(false)
     setRunLive(null)
@@ -254,6 +269,8 @@ export function CityPage() {
     setGameOpen(true)
   }
   function runAgain() {
+    sfx.uiClick()
+    hap.select()
     setResult(null)
     setRunStarted(false)
     setRunLive(null)
