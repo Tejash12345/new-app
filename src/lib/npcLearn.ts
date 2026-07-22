@@ -31,10 +31,13 @@ function knownTopics(b: NpcBrain): Set<string> {
 
 function pickTopic(b: NpcBrain): string | null {
   const known = knownTopics(b)
+  // 1) self-directed: things the player asked about that it couldn't answer
+  const queue = (b.wantsToLearn || []).filter((t) => t.length > 2 && !known.has(t.toLowerCase()))
+  if (queue.length) return queue[0]
+  // 2) otherwise a topic from its interests, then the curated pool
   const interests = Object.entries(b.interests).sort((a, c) => c[1] - a[1]).map((e) => e[0])
   const cands = [...interests, ...POOL].filter((t) => t.length > 2 && !known.has(t.toLowerCase()))
   if (!cands.length) return null
-  // bias toward the NPC's own interests (front of the list), with some randomness
   const idx = Math.random() < 0.6 ? Math.floor(Math.random() * Math.min(4, cands.length)) : Math.floor(Math.random() * cands.length)
   return cands[idx]
 }
@@ -66,7 +69,13 @@ export async function autoLearnStep(brains: NpcBrain[]): Promise<{ id: string; t
     const fact = await fetchPublicKnowledge(topic)
     if (!fact) return null
     learnWebFact(brain, topic, fact.summary, fact.url)
+    // it satisfied its curiosity — drop the topic from the self-directed queue
+    if (brain.wantsToLearn?.length) brain.wantsToLearn = brain.wantsToLearn.filter((t) => t.toLowerCase() !== topic.toLowerCase())
     brain.skills['research'] = Math.round(((brain.skills['research'] || 0) + 0.5) * 100) / 100
+    // learning about the built/natural world makes them better builders
+    if (/build|architect|garden|forest|city|design|engineer|nature|tree|structure|house|tower/i.test(topic)) {
+      brain.skills['building'] = Math.round(((brain.skills['building'] || 0) + 0.4) * 100) / 100
+    }
     saveBrain(brain)
     return { id: brain.id, topic }
   } finally {

@@ -56,6 +56,8 @@ export type CityOpts = {
   level: number; streak: number; reducedMotion?: boolean; character?: string
   /** tapped a living citizen in the 3D city — open its chat/brain (3D scene only). */
   onSelectCitizen?: (npcId: string, name: string, emoji: string) => void
+  /** the current roster of living citizens (3D scene only) — for a tappable list. */
+  onCitizens?: (list: { id: string; name: string; emoji: string }[]) => void
 }
 
 // ---------- tiny seeded RNG (mulberry32) ----------

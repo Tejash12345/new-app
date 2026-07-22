@@ -24,7 +24,8 @@ export type TraitKey = 'curiosity' | 'energy' | 'warmth' | 'discipline' | 'humor
 export type Traits = Record<TraitKey, number> // 0..1
 
 export type Mood = { valence: number; energy: number } // valence -1..1, energy 0..1
-export type Goal = { id: string; text: string; progress: number; done: boolean; t: number }
+export type Step = { text: string; done: boolean }
+export type Goal = { id: string; text: string; progress: number; done: boolean; t: number; steps: Step[] }
 export type MemoryEvent = { t: number; kind: 'life' | 'chat' | 'taught' | 'milestone'; text: string; salience: number }
 export type KnowledgeItem = { topic: string; text: string; source: 'taught' | 'web'; url?: string; t: number }
 export type ChatTurn = { role: 'player' | 'npc'; text: string; t: number; source?: 'sim' | 'web' | 'llm' }
@@ -35,6 +36,7 @@ export type NpcBrain = {
   id: string
   name: string
   emoji: string
+  profession: string
   createdAt: number
   lastActive: number
   traits: Traits
@@ -46,6 +48,7 @@ export type NpcBrain = {
   memories: MemoryEvent[]
   convo: ChatTurn[]
   bonds: Record<string, Relationship> // otherNpcId → relationship
+  wantsToLearn: string[] // self-directed curiosity queue — topics to look up when online
   player: { affinity: number; familiarity: number; interactions: number } // affinity 0..100
 }
 
@@ -123,6 +126,10 @@ const ARCHETYPE: Record<string, Partial<Traits>> = {
   dragon: { energy: 0.9, warmth: 0.4, discipline: 0.62, curiosity: 0.72, humor: 0.4 },
   hero: { warmth: 0.8, discipline: 0.75, energy: 0.78, curiosity: 0.6, humor: 0.6 },
   deer: { warmth: 0.7, energy: 0.55, curiosity: 0.7, discipline: 0.5, humor: 0.45 },
+  raptor: { energy: 0.92, warmth: 0.3, curiosity: 0.6, discipline: 0.55, humor: 0.3 },
+  trex: { energy: 0.85, warmth: 0.4, discipline: 0.7, curiosity: 0.5, humor: 0.35 },
+  adventurer: { curiosity: 0.9, energy: 0.75, warmth: 0.65, discipline: 0.55, humor: 0.6 },
+  horse: { energy: 0.85, warmth: 0.7, discipline: 0.6, curiosity: 0.55, humor: 0.5 },
 }
 const INTEREST_SEED: Record<string, string[]> = {
   lion: ['leadership', 'focus', 'the city'],
@@ -159,19 +166,51 @@ function freshBrain(id: string, name: string, emoji: string): NpcBrain {
   const interests: Record<string, number> = {}
   ;(INTEREST_SEED[id] || INTEREST_SEED.fallback).forEach((t, i) => (interests[t] = 1 + (2 - i) * 0.3))
   const now = Date.now()
+  const gtext = seededGoal(id, traits)
   return {
-    v: 1, id, name, emoji, createdAt: now, lastActive: now,
+    v: 1, id, name, emoji, profession: professionFor(id), createdAt: now, lastActive: now,
     traits,
     mood: { valence: (traits.warmth - 0.5) * 0.6, energy: traits.energy },
-    goals: [{ id: 'g0', text: seededGoal(id, traits), progress: 0.1 + hashStr(id) * 0.3, done: false, t: now }],
+    goals: [{ id: 'g0', text: gtext, progress: 0, done: false, t: now, steps: planFor(gtext) }],
     skills: {},
     interests,
     knowledge: [],
     memories: [{ t: now, kind: 'milestone', text: `Woke up in Lion City as ${name}.`, salience: 0.7 }],
     convo: [],
     bonds: {},
+    wantsToLearn: [],
     player: { affinity: 8, familiarity: 0, interactions: 0 },
   }
+}
+
+// A profession per citizen — flavours who they are and how they speak.
+const PROFESSION: Record<string, string> = {
+  lion: 'the mayor', lioness: 'a city guardian', wolf: 'a scout', fox: 'a trader',
+  robot: 'the city engineer', astronaut: 'an explorer', dragon: 'a keeper of legends',
+  shiba: 'a courier', husky: 'a marathon runner', deer: 'a gardener', stag: 'a ranger',
+  hero: 'a protector', bull: 'a builder', horse: 'a messenger', runner: 'a coach',
+  woman: 'a runner', adventurer: 'an explorer', raptor: 'a hunter', triceratops: 'a city guardian',
+  trex: 'a living legend',
+}
+function professionFor(id: string): string {
+  return PROFESSION[id] || 'a citizen'
+}
+
+/** Break a goal/task into a small, ordered plan the NPC can work through + explain. */
+function planFor(text: string): Step[] {
+  const t = text.toLowerCase()
+  const steps =
+    /learn|study|skill|master|practi[cs]e|read/.test(t) ? ['Find out the basics', 'Practise a little every day', 'Track what improves', 'Show what I learned']
+      : /explore|visit|find|discover|map/.test(t) ? ['Plan a route', 'Set out and explore', 'Note what I discover', 'Come back and share']
+        : /friend|meet|social|help|team|collaborat/.test(t) ? ['Say hello to someone new', 'Find something in common', 'Do a kind thing', 'Keep in touch']
+          : /focus|discipline|streak|habit|routine/.test(t) ? ['Set a clear intention', 'Remove distractions', 'Do one focused block', 'Repeat it daily']
+            : ['Break it into parts', 'Make a start today', 'Keep at it', 'Finish and review']
+  return steps.map((s) => ({ text: s, done: false }))
+}
+
+/** Progress 0..1 — derived from completed plan steps when a plan exists. */
+function goalPct(g: Goal): number {
+  return g.steps.length ? g.steps.filter((s) => s.done).length / g.steps.length : g.progress
 }
 
 function seededGoal(id: string, tr: Traits): string {
@@ -192,6 +231,9 @@ export function loadBrain(id: string, seed: { name: string; emoji: string }): Np
     // keep display identity fresh if the roster names changed
     brain.name = seed.name
     brain.emoji = seed.emoji
+    if (!Array.isArray(brain.wantsToLearn)) brain.wantsToLearn = [] // migrate older saves
+    if (!brain.profession) brain.profession = professionFor(brain.id)
+    if (Array.isArray(brain.goals)) brain.goals.forEach((g) => { if (!Array.isArray(g.steps)) g.steps = [] })
   } catch {
     brain = freshBrain(id, seed.name, seed.emoji)
   }
@@ -261,6 +303,41 @@ export function gossip(from: NpcBrain, to: NpcBrain): string | null {
   return k.topic
 }
 
+// ---- autonomous world-building ----
+// Citizens can construct things in Lion City on their own. WHAT they build is
+// flavoured by profession + a `building` skill that levels up over time (so the
+// world grows richer, with no fixed ceiling). Kinds must match the primitives
+// city3d knows how to spawn.
+const BUILD_BY_PROFESSION: Record<string, string[]> = {
+  'a gardener': ['tree', 'garden', 'tree', 'bench'],
+  'a ranger': ['tree', 'garden', 'rock'],
+  'the city engineer': ['tower', 'lamp', 'fountain'],
+  'a builder': ['hut', 'tower', 'bench'],
+  'the mayor': ['statue', 'fountain', 'tower'],
+  'a trader': ['hut', 'lamp', 'bench'],
+  'a protector': ['tower', 'statue'],
+}
+const BUILD_TIERS: string[][] = [
+  ['tree', 'rock', 'lamp', 'bench'], // beginner builder
+  ['hut', 'garden', 'tree', 'lamp'], // skilled
+  ['tower', 'fountain', 'statue', 'garden'], // master
+]
+/** Decide what this citizen builds next — profession- and skill-driven. */
+export function chooseBuildKind(brain: NpcBrain): string {
+  const lvl = Math.floor(brain.skills['building'] || 0)
+  const tier = lvl >= 5 ? 2 : lvl >= 3 ? 1 : 0
+  const prof = BUILD_BY_PROFESSION[brain.profession]
+  const pool = prof && Math.random() < 0.5 ? prof : BUILD_TIERS[tier]
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+/** Record a construction — levels the building skill + logs a memory. */
+export function recordBuild(brain: NpcBrain, kind: string) {
+  brain.skills['building'] = Math.round(((brain.skills['building'] || 0) + 0.5) * 100) / 100
+  rememberEvent(brain, 'milestone', `Built a ${kind} in the city.`, 0.6)
+  bumpInterest(brain, 'building', 0.5)
+  saveBrain(brain)
+}
+
 // ---------------------------------------------------------------- offline "life"
 
 const LIFE_EVENTS = [
@@ -290,8 +367,21 @@ export function simulateOfflineLife(brain: NpcBrain) {
     rememberEvent(brain, 'life', `While you were away I ${text}.`, 0.4 + Math.random() * 0.2)
   }
   for (const g of brain.goals) if (!g.done) {
-    g.progress = clamp(g.progress + Math.min(0.25, hours * 0.01), 0, 1)
-    if (g.progress >= 1) { g.done = true; rememberEvent(brain, 'milestone', `Achieved my goal: ${g.text}.`, 0.9) }
+    const wasDone = g.done
+    if (g.steps.length) {
+      // work the plan one step at a time (more likely the longer you're away)
+      const next = g.steps.find((s) => !s.done)
+      if (next && hours >= 3 && Math.random() < Math.min(0.9, hours / 8)) {
+        next.done = true
+        rememberEvent(brain, 'milestone', `Made progress on "${g.text}": ${next.text}.`, 0.55)
+      }
+      g.progress = goalPct(g)
+      g.done = g.progress >= 1
+    } else {
+      g.progress = clamp(g.progress + Math.min(0.25, hours * 0.01), 0, 1)
+      g.done = g.progress >= 1
+    }
+    if (!wasDone && g.done) rememberEvent(brain, 'milestone', `Achieved my goal: ${g.text}.`, 0.9)
   }
   brain.lastActive = now
 }
@@ -355,6 +445,12 @@ function recall(brain: NpcBrain, kw: string[]): { mem?: MemoryEvent; know?: Know
   return { mem: memScore > 0 ? mem : undefined, know: kScore > 0 ? know : undefined }
 }
 
+/** The most recently internet-learned fact, if any (for proactive sharing). */
+function recentWeb(brain: NpcBrain): KnowledgeItem | undefined {
+  for (let i = brain.knowledge.length - 1; i >= 0; i--) if (brain.knowledge[i].source === 'web') return brain.knowledge[i]
+  return undefined
+}
+
 function warmthPrefix(brain: NpcBrain): string {
   const a = brain.player.affinity
   if (a >= 60) return pick(['Always good to see you, friend! ', 'Hey, my favourite human! ', ''])
@@ -413,13 +509,36 @@ export function ruleRespond(brain: NpcBrain, raw: string, ctx: ResponderCtx): Re
   }
 
   // --- assign a goal ---
-  else if (/(?:your goal is|new goal|i want you to|can you)\s+(.+)/i.test(text)) {
-    const gm = text.match(/(?:your goal is|new goal[:]?|i want you to|can you)\s+(.+)/i)!
-    const g: Goal = { id: 'g' + Date.now(), text: gm[1].replace(/[?.!]+$/, '').trim(), progress: 0, done: false, t: Date.now() }
+  else if (/(?:your goal is|new goal|i want you to|can you|please|task[:])\s+(.+)/i.test(text)) {
+    const gm = text.match(/(?:your goal is|new goal[:]?|i want you to|can you|please|task[:])\s+(.+)/i)!
+    const gtext = gm[1].replace(/[?.!]+$/, '').trim()
+    const g: Goal = { id: 'g' + Date.now(), text: gtext, progress: 0, done: false, t: Date.now(), steps: planFor(gtext) }
     brain.goals.push(g)
     rememberEvent(brain, 'milestone', `New goal from you: ${g.text}.`, 0.8)
-    bump(3); tags.push('goal')
-    out = `New goal set: "${g.text}". I'll work on it and let you know how it goes. 🎯`
+    bump(3); tags.push('goal', 'plan')
+    // understand → plan → explain the plan back
+    out = `On it! Goal set: "${g.text}". Here's my plan:\n${g.steps.map((s, i) => `${i + 1}. ${s.text}`).join('\n')}\nI'll work through it and report back. 🎯`
+  }
+  // --- explain the plan for a goal (understand → plan → explain) ---
+  else if (/\bplan\b|\bsteps\b|\bexplain\b|how (will|would) you/i.test(low)) {
+    tags.push('plan')
+    const g = brain.goals.find((x) => !x.done) || brain.goals[brain.goals.length - 1]
+    if (g && g.steps.length) {
+      out = `For "${g.text}", my plan is:\n${g.steps.map((s) => `${s.done ? '✅' : '▫️'} ${s.text}`).join('\n')}\nI'm ${Math.round(goalPct(g) * 100)}% through — I adjust as I learn.`
+    } else if (g) {
+      out = `I'm working on "${g.text}" — I take it a step at a time and adapt as I go.`
+    } else out = `I don't have a plan yet. Give me a goal or task and I'll make one!`
+  }
+  // --- report progress on goals/tasks ---
+  else if (/\bprogress\b|\breport\b|\bstatus\b|how far|how'?s it going|how is it going/i.test(low)) {
+    tags.push('progress')
+    const activeG = brain.goals.filter((x) => !x.done)
+    if (activeG.length) {
+      out = activeG.map((g) => {
+        const next = g.steps.find((s) => !s.done)
+        return `“${g.text}” — ${Math.round(goalPct(g) * 100)}% done${next ? `, next: ${next.text}` : ''}`
+      }).join('\n')
+    } else out = `All my goals are done for now — proud of that! Got a new one for me?`
   }
 
   // --- ask what they remember ---
@@ -451,7 +570,9 @@ export function ruleRespond(brain: NpcBrain, raw: string, ctx: ResponderCtx): Re
   // --- greetings / farewells / thanks ---
   else if (/^(hi|hey|hello|yo|sup|howdy|hola)\b/i.test(low)) {
     tags.push('greet'); bump(1)
-    out = `${warmthPrefix(brain)}Hey! I'm ${brain.name}${brain.player.interactions < 3 ? `, one of the citizens here` : ''}. ${ctx.timeOfDay < 6 || ctx.timeOfDay > 20 ? 'Nice night, huh?' : 'Good to see you.'}`
+    out = `${warmthPrefix(brain)}Hey! I'm ${brain.name}${brain.player.interactions < 3 ? `, ${brain.profession} here` : ''}. ${ctx.timeOfDay < 6 || ctx.timeOfDay > 20 ? 'Nice night, huh?' : 'Good to see you.'}`
+    const wf = recentWeb(brain)
+    if (wf && Math.random() < 0.45) out += ` Oh — I just read something: ${trunc(wf.text, 130)}`
   } else if (/\b(bye|goodbye|see ya|later|cya|good night)\b/i.test(low)) {
     tags.push('bye'); rememberEvent(brain, 'chat', 'We said goodbye.', 0.3)
     out = `${brain.player.affinity >= 40 ? 'Catch you later, friend!' : 'See you around the city!'} 👋`
@@ -479,10 +600,15 @@ export function ruleRespond(brain: NpcBrain, raw: string, ctx: ResponderCtx): Re
     } else if (mem) {
       out = `That reminds me — ${mem.text}`
     } else {
-      // NPC doesn't know. Raise curiosity, and (only) flag a possible lookup.
+      // NPC doesn't know (yet). Raise curiosity, remember that it WANTS to learn
+      // this (so it looks it up later when online), and flag a possible lookup.
       kw.forEach((w) => bumpInterest(brain, w, 0.3))
       const topic = kw.slice(0, 4).join(' ')
-      out = `Hmm, I don't know much about ${topic} yet. ${brain.traits.curiosity > 0.6 ? "I'd love to learn, though." : ''}`
+      if (topic && !brain.wantsToLearn.includes(topic)) {
+        brain.wantsToLearn.push(topic)
+        if (brain.wantsToLearn.length > 12) brain.wantsToLearn.shift()
+      }
+      out = `Hmm, I don't know much about ${topic} yet. ${brain.traits.curiosity > 0.6 ? "I'll read up on it and remember it for next time." : "I'll try to find out."}`
       return finalize(brain, raw, out.trim(), tags, 'sim', topic)
     }
   }
@@ -497,6 +623,8 @@ export function ruleRespond(brain: NpcBrain, raw: string, ctx: ResponderCtx): Re
       `Interesting! ${brain.traits.curiosity > 0.6 ? 'Tell me more?' : 'Life in the city keeps me busy.'}`,
       `${brain.name} here — ${brain.mood.valence > 0.2 ? 'feeling good today.' : 'just doing my rounds.'} What's on your mind?`,
     ])
+    const wf = recentWeb(brain)
+    if (wf && Math.random() < 0.3) out += ` Also — did you know? ${trunc(wf.text, 120)}`
   }
 
   return finalize(brain, raw, out.trim() || `…`, tags, 'sim')
@@ -565,7 +693,12 @@ export async function converse(brain: NpcBrain, text: string, ctx: ResponderCtx)
 /** A short, brain-driven idle thought/line for the floating city bubbles. */
 export function idleLine(brain: NpcBrain, state: string): { text: string; think: boolean } {
   const r = Math.random()
-  if (r < 0.28) {
+  if (r < 0.2) {
+    const wf = recentWeb(brain)
+    if (wf) return { text: `🌐 Learned about ${trunc(wf.topic, 20)}`, think: true }
+    if (brain.wantsToLearn.length) return { text: `Curious about ${trunc(brain.wantsToLearn[brain.wantsToLearn.length - 1], 18)}`, think: true }
+  }
+  if (r < 0.34) {
     const g = brain.goals.find((x) => !x.done)
     if (g) return { text: `Goal: ${trunc(g.text, 22)}`, think: true }
   }

@@ -13,14 +13,16 @@
  * web-learned facts or reset the citizen entirely.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { Brain, Globe, Send, Sparkles, Target, Trash2, X } from 'lucide-react'
+import { Brain, Globe, Send, Sparkles, Target, Trash2, Volume2, VolumeX, X } from 'lucide-react'
 import {
   clearBrain, clearWebKnowledge, converse, deviceAiProfile, friendTier, learnWebFact, loadBrain, moodLabel,
   type NpcBrain,
 } from '../lib/npcMind'
 import { fetchPublicKnowledge } from '../lib/npcOnline'
-import { usePref } from '../lib/prefs'
+import { setPref, usePref } from '../lib/prefs'
+import { speech } from '../lib/speak'
 import { confirmDialog } from '../store/app'
 import { sfx } from '../game/sfx'
 import { hap } from '../lib/haptics'
@@ -34,6 +36,10 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
 }) {
   const [brain] = useState<NpcBrain>(() => loadBrain(npcId, { name, emoji }))
   const internetOn = usePref('npcInternet')
+  const voiceOn = usePref('npcVoice')
+  const [speaking, setSpeaking] = useState(false)
+  useEffect(() => speech.subscribe((s) => setSpeaking(s === 'playing')), [])
+  useEffect(() => () => speech.stop(), []) // stop reading aloud when the chat closes
   const prof = useMemo(() => deviceAiProfile(), [])
   const badge = prof.nativeBridge
     ? { icon: '🤖', label: 'On-device model' }
@@ -67,6 +73,7 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
       const ctx = { level, streak, timeOfDay: new Date().getHours() }
       const reply = await converse(brain, t, ctx)
       setMsgs((m) => [...m, { role: 'npc', text: reply.text, source: reply.source }])
+      if (voiceOn) speech.play(reply.text)
       // opt-in, per-lookup-confirmed online learning
       if (reply.lookup && internetOn) {
         const ok = await confirmDialog(
@@ -79,6 +86,7 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
           if (fact) {
             learnWebFact(brain, reply.lookup, fact.summary, fact.url)
             setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: `🌐 From Wikipedia — ${fact.summary}`, source: 'web' }])
+            if (voiceOn) speech.play(fact.summary)
           } else {
             setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: "I couldn't reach anything online just now, so I'll stick with what I know.", source: 'web' }])
           }
@@ -96,16 +104,17 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
   const skills = Object.entries(brain.skills)
   const webFacts = brain.knowledge.filter((k) => k.source === 'web')
 
-  return (
-    <motion.div className="fixed inset-0 z-[80] flex flex-col justify-end bg-black/55 backdrop-blur-[2px]"
+  return createPortal(
+    <motion.div className="fixed inset-0 z-[90] flex flex-col justify-end bg-black/60 backdrop-blur-[2px]"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
       <motion.div onClick={(e) => e.stopPropagation()}
         initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 26, stiffness: 240 }}
-        className="flex max-h-[86vh] flex-col rounded-t-3xl bg-[#0c0a18] ring-1 ring-white/12 pb-[env(safe-area-inset-bottom)]">
+        className="flex max-h-[90dvh] flex-col rounded-t-3xl bg-[#0c0a18] ring-1 ring-white/12 pb-[env(safe-area-inset-bottom)]">
         {/* header */}
         <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400/30 to-purple-500/25 text-2xl ring-1 ring-white/15">
+          <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400/30 to-purple-500/25 text-2xl ring-1 transition',
+            speaking ? 'ring-2 ring-amber-300 animate-pulse' : 'ring-white/15')}>
             {brain.emoji}
           </div>
           <div className="min-w-0 flex-1">
@@ -116,11 +125,16 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
               </span>
             </div>
             <div className="mt-0.5 flex items-center gap-2 text-[11px] text-white/55">
-              <span className="text-pink-300">{friendTier(brain.player.affinity)}</span>
+              <span className="truncate text-pink-300">{friendTier(brain.player.affinity)} · {brain.profession}</span>
               <span>·</span>
-              <span>{moodLabel(brain.mood)}</span>
+              <span className="shrink-0">{speaking ? '🔊 speaking…' : moodLabel(brain.mood)}</span>
             </div>
           </div>
+          <button onClick={() => { const v = !voiceOn; setPref('npcVoice', v); sfx.uiClick(); hap.tap(); if (!v) speech.stop() }}
+            aria-label={voiceOn ? 'Turn voice off' : 'Read replies aloud'} title={voiceOn ? 'Voice on' : 'Voice off'}
+            className={cn('rounded-full p-2 transition active:scale-90', voiceOn ? 'bg-white/10 text-amber-300' : 'text-white/60 hover:bg-white/10')}>
+            {voiceOn ? <Volume2 size={18} /> : <VolumeX size={18} />}
+          </button>
           <button onClick={onClose} aria-label="Close chat" className="rounded-full p-2 text-white/70 hover:bg-white/10 active:scale-90">
             <X size={18} />
           </button>
@@ -146,10 +160,10 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
 
         {tab === 'chat' ? (
           <>
-            <div ref={listRef} className="flex-1 space-y-2.5 overflow-y-auto px-4 py-3" style={{ minHeight: 220 }}>
+            <div ref={listRef} className="flex-1 space-y-2.5 overflow-y-auto px-4 py-3" style={{ minHeight: '40vh' }}>
               {msgs.map((m, i) => (
                 <div key={i} className={cn('flex', m.role === 'player' ? 'justify-end' : 'justify-start')}>
-                  <div className={cn('max-w-[82%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm leading-snug',
+                  <div className={cn('max-w-[86%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed',
                     m.role === 'player'
                       ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'
                       : m.source === 'web'
@@ -159,14 +173,14 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
                   </div>
                 </div>
               ))}
-              {busy && <div className="text-xs text-white/40">{brain.name} is thinking…</div>}
+              {busy && <div className="text-sm text-white/45">{brain.name} is thinking…</div>}
             </div>
 
             {/* quick chips */}
             <div className="flex gap-1.5 overflow-x-auto px-4 pb-2 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
               {CHIPS.map((c) => (
                 <button key={c} disabled={busy} onClick={() => send(c)}
-                  className="shrink-0 rounded-full bg-white/6 px-3 py-1.5 text-[11px] font-semibold text-white/80 ring-1 ring-white/10 transition active:scale-95 disabled:opacity-40">
+                  className="shrink-0 rounded-full bg-white/6 px-3.5 py-2 text-xs font-semibold text-white/85 ring-1 ring-white/10 transition active:scale-95 disabled:opacity-40">
                   {c}
                 </button>
               ))}
@@ -177,10 +191,10 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
               <input value={input} onChange={(e) => setInput(e.target.value)} disabled={busy}
                 onKeyDown={(e) => { if (e.key === 'Enter') send(input) }}
                 placeholder={`Talk to ${brain.name}…  (try “remember that…”)`}
-                className="min-w-0 flex-1 rounded-full bg-white/8 px-4 py-2.5 text-sm text-white placeholder:text-white/35 outline-none ring-1 ring-white/10 focus:ring-amber-400/50" />
+                className="min-w-0 flex-1 rounded-full bg-white/8 px-4 py-3 text-base text-white placeholder:text-white/35 outline-none ring-1 ring-white/10 focus:ring-amber-400/50" />
               <button onClick={() => send(input)} disabled={busy || !input.trim()} aria-label="Send"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-lg transition active:scale-90 disabled:opacity-40">
-                <Send size={16} />
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-lg transition active:scale-90 disabled:opacity-40">
+                <Send size={18} />
               </button>
             </div>
             <div className="px-4 pb-2 text-center text-[10px] text-white/35">
@@ -189,13 +203,23 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
           </>
         ) : (
           <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm" style={{ minHeight: 220 }}>
-            <MindRow icon={<Target size={14} />} title="Goals">
-              {active.length ? active.map((g) => (
-                <div key={g.id} className="mb-1.5">
-                  <div className="flex justify-between text-white/80"><span>{g.text}</span><span className="text-amber-300">{Math.round(g.progress * 100)}%</span></div>
-                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-amber-400" style={{ width: `${g.progress * 100}%` }} /></div>
-                </div>
-              )) : <span className="text-white/45">No active goals — try “can you explore every district”.</span>}
+            <MindRow icon={<Target size={14} />} title="Goals & plans">
+              {active.length ? active.map((g) => {
+                const pct = g.steps.length ? g.steps.filter((s) => s.done).length / g.steps.length : g.progress
+                return (
+                  <div key={g.id} className="mb-2.5">
+                    <div className="flex justify-between text-white/85"><span className="pr-2">{g.text}</span><span className="shrink-0 text-amber-300">{Math.round(pct * 100)}%</span></div>
+                    <div className="mt-1 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-amber-400 transition-all" style={{ width: `${pct * 100}%` }} /></div>
+                    {g.steps.length > 0 && (
+                      <div className="mt-1.5 space-y-0.5">
+                        {g.steps.map((s, i) => (
+                          <div key={i} className={cn('text-[11px]', s.done ? 'text-emerald-300/80 line-through' : 'text-white/55')}>{s.done ? '✅' : '▫️'} {s.text}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              }) : <span className="text-white/45">No active goals — try “can you explore every district”.</span>}
             </MindRow>
 
             <MindRow icon={<span className="text-xs">💡</span>} title="Interests">
@@ -205,6 +229,16 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
                 )) : <span className="text-white/45">Still figuring out what it likes.</span>}
               </div>
             </MindRow>
+
+            {brain.wantsToLearn.length > 0 && (
+              <MindRow icon={<Globe size={14} />} title="Wants to learn (from your questions)">
+                <div className="flex flex-wrap gap-1.5">
+                  {brain.wantsToLearn.slice(-6).map((t) => (
+                    <span key={t} className="rounded-full bg-sky-500/12 px-2.5 py-1 text-[11px] text-sky-200 ring-1 ring-sky-400/25">{t}</span>
+                  ))}
+                </div>
+              </MindRow>
+            )}
 
             {skills.length > 0 && (
               <MindRow icon={<span className="text-xs">🎓</span>} title="Skills learned">
@@ -258,7 +292,8 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
           </div>
         )}
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   )
 }
 

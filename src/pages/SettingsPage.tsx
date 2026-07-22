@@ -153,6 +153,9 @@ function ChatPrefsCard() {
         <PrefRow icon="🌐" title="NPC internet learning" desc="Citizens automatically read public info (Wikipedia) in the background to grow their knowledge, and look things up when you ask. Off = fully offline. Web facts are labelled 🌐 and clearable; personal memories always stay on-device.">
           <Toggle on={p.npcInternet} onChange={(v) => set('npcInternet', v)} />
         </PrefRow>
+        <PrefRow icon="🗣️" title="NPC voice (read aloud)" desc="Citizens speak their chat replies using your device's text-to-speech. You can also toggle it inside any chat.">
+          <Toggle on={p.npcVoice} onChange={(v) => set('npcVoice', v)} />
+        </PrefRow>
         <PrefRow icon="🎞️" title="Reduce motion" desc="Calmer animations across the app">
           <Toggle on={p.reduceMotion} onChange={(v) => set('reduceMotion', v)} />
         </PrefRow>

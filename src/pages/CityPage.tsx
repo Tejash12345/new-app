@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Camera, ChevronRight, Flame, Gamepad2, Play, Star, Trophy, X, Zap } from 'lucide-react'
+import { Camera, ChevronRight, Flame, Gamepad2, Maximize2, Play, Star, Trophy, X, Zap } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { AiMission, Habit, StudySession, Task } from '../lib/types'
@@ -46,15 +47,22 @@ export function CityPage() {
   const [cityPickerOpen, setCityPickerOpen] = useState(false)
   // tapped a living citizen → open its offline-brain chat
   const [chatNpc, setChatNpc] = useState<{ id: string; name: string; emoji: string } | null>(null)
+  // roster of living citizens (reported by the 3D scene) → reliable tappable list
+  const [citizenList, setCitizenList] = useState<{ id: string; name: string; emoji: string }[]>([])
+  // full-screen immersive Lion City (portaled to body so it truly fills the viewport)
+  const [cityFull, setCityFull] = useState(false)
+  const fullRef = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const el = cityRef.current
     if (!el) return
+    if (cityFull) return // the fullscreen scene takes over — don't run two WebGL cities
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     // the city avatar (monument) starts as the persisted runner; live changes go
     // through setAvatar (below) so we never rebuild the whole city
     const sceneOpts = {
       level, streak, reducedMotion, character: localStorage.getItem('fl-character') || DEFAULT_CHARACTER,
       onSelectCitizen: (id: string, name: string, emoji: string) => setChatNpc({ id, name, emoji }),
+      onCitizens: (list: { id: string; name: string; emoji: string }[]) => setCitizenList(list),
     }
     let stop: (() => void) | undefined
     let cancelled = false
@@ -81,7 +89,30 @@ export function CityPage() {
       citySetAvatar.current = null
       stop?.()
     }
-  }, [level, streak])
+  }, [level, streak, cityFull])
+
+  // full-screen Lion City: its own 3D scene on a viewport-filling canvas
+  useEffect(() => {
+    if (!cityFull) return
+    const el = fullRef.current
+    if (!el) return
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const sceneOpts = {
+      level, streak, reducedMotion, character: localStorage.getItem('fl-character') || DEFAULT_CHARACTER,
+      onSelectCitizen: (id: string, name: string, emoji: string) => setChatNpc({ id, name, emoji }),
+      onCitizens: (list: { id: string; name: string; emoji: string }[]) => setCitizenList(list),
+    }
+    let stop: (() => void) | undefined
+    let cancelled = false
+    import('../game/city3d')
+      .then(({ startCity3D }) => {
+        if (cancelled) return
+        const h = startCity3D(el, sceneOpts)
+        stop = h ? h.stop : startCityScene(el, sceneOpts)
+      })
+      .catch(() => { if (!cancelled) stop = startCityScene(el, sceneOpts) })
+    return () => { cancelled = true; stop?.() }
+  }, [cityFull, level, streak])
 
   // Photo Mode — share the current city view, or download it if sharing isn't available
   async function photoMode() {
@@ -331,6 +362,15 @@ export function CityPage() {
           <Camera size={17} />
         </button>
 
+        {/* fullscreen city */}
+        <button
+          onClick={() => { sfx.resume(); sfx.uiClick(); hap.tap(); setCityFull(true) }}
+          aria-label="Open Lion City fullscreen"
+          className="absolute bottom-[152px] right-3 rounded-full bg-black/45 p-2.5 text-white/85 backdrop-blur-md transition hover:bg-black/65 active:scale-90"
+        >
+          <Maximize2 size={17} />
+        </button>
+
         {/* city avatar picker — choose who stands as the monument */}
         <button
           onClick={() => setCityPickerOpen((o) => !o)}
@@ -380,6 +420,22 @@ export function CityPage() {
           </div>
         </div>
       </div>
+
+      {/* ---- citizens — tap to chat with their on-device brains ---- */}
+      {citizenList.length > 0 && (
+        <div className="mb-5">
+          <SectionTitle>Citizens · tap to chat 🧠</SectionTitle>
+          <div className="flex gap-2 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+            {citizenList.map((c) => (
+              <button key={c.id} onClick={() => { sfx.resume(); sfx.uiClick(); hap.tap(); setChatNpc(c) }}
+                className="flex shrink-0 flex-col items-center gap-1 rounded-2xl bg-white/70 px-4 py-2.5 shadow-sm ring-1 ring-black/5 transition active:scale-95 dark:bg-white/5 dark:ring-white/10">
+                <span className="text-2xl leading-none">{c.emoji}</span>
+                <span className="max-w-[80px] truncate text-[11px] font-bold text-slate-700 dark:text-white/85">{c.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ---- Lion Run ---- */}
       <GlassCard className="mb-5 overflow-hidden !border-amber-400/30 bg-gradient-to-br from-amber-400/10 via-transparent to-purple-500/10">
@@ -717,6 +773,39 @@ export function CityPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ---- full-screen immersive Lion City (portaled to body → truly fills the viewport) ---- */}
+      {createPortal(
+        <AnimatePresence>
+          {cityFull && (
+            <motion.div className="fixed inset-0 z-[85] bg-[#06050d]"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <canvas ref={fullRef} className="absolute inset-0 h-full w-full" />
+              <div className="pointer-events-none absolute left-3 top-[calc(0.75rem+env(safe-area-inset-top))] rounded-full bg-black/50 px-3 py-1.5 text-[11px] font-semibold text-white/80 backdrop-blur-md">
+                Lion City · drag to look around · tap a citizen to chat
+              </div>
+              <button onClick={() => { sfx.uiClick(); hap.tap(); setCityFull(false) }} aria-label="Exit fullscreen"
+                className="absolute right-3 top-[calc(0.75rem+env(safe-area-inset-top))] z-10 rounded-full bg-black/55 p-2.5 text-white backdrop-blur-md transition active:scale-90">
+                <X size={20} />
+              </button>
+              {citizenList.length > 0 && (
+                <div className="absolute inset-x-0 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] px-3">
+                  <div className="mx-auto flex max-w-3xl gap-2 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+                    {citizenList.map((c) => (
+                      <button key={c.id} onClick={() => { sfx.uiClick(); hap.tap(); setChatNpc(c) }}
+                        className="flex shrink-0 flex-col items-center gap-1 rounded-2xl bg-black/50 px-4 py-2.5 text-white ring-1 ring-white/15 backdrop-blur-md transition active:scale-95">
+                        <span className="text-2xl leading-none">{c.emoji}</span>
+                        <span className="max-w-[80px] truncate text-[11px] font-bold text-white/85">{c.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
 
       {/* ---- tap a citizen → chat with its on-device brain ---- */}
       <AnimatePresence>

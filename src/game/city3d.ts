@@ -27,8 +27,8 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { CITY_TOTAL_BUILDINGS, cityUnlocked, nextDistrict, type CityOpts } from './cityScene'
 import { buildCharacter, type CharacterRig } from './characterModel'
-import { PLAYABLE_CHARACTERS, characterById, isCharacterUnlocked } from '../lib/characters'
-import { loadBrain, saveBrain, idleLine, rememberEvent, gossip, type NpcBrain } from '../lib/npcMind'
+import { PLAYABLE_CHARACTERS, characterById } from '../lib/characters'
+import { loadBrain, saveBrain, idleLine, rememberEvent, gossip, chooseBuildKind, recordBuild, type NpcBrain } from '../lib/npcMind'
 import { autoLearnStep } from '../lib/npcLearn'
 
 export type City3DHandle = { stop: () => void; capture: () => string | null; setAvatar: (id: string) => void }
@@ -780,15 +780,18 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   // roster you've UNLOCKED, so the city fills with life as you level up.
   const POIS: [number, number][] = [[0, 0], [-4.4, 1.6], [9, 9], [-9, 9], [9, -9], [-9, -9], [15, 0], [-15, 0], [0, 15], [0, -15]]
   // walking characters/animals only (road cars live in `cars`; no flyers on foot)
-  const roster = PLAYABLE_CHARACTERS.filter((c) => isCharacterUnlocked(c, level) && !c.fly && !c.vehicle)
-  const citizenCount = opts.reducedMotion ? 0 : lowEnd ? 3 : Math.min(8, 4 + Math.floor(level / 4))
+  // NPCs are the WHOLE walking cast (lions, wolves, foxes, deer, humans, robots,
+  // dinosaurs…) — not gated by the player's unlocks — so the city is a varied,
+  // lively crowd of animals + humans from level 1. Bigger crowd on capable phones.
+  const roster = PLAYABLE_CHARACTERS.filter((c) => !c.fly && !c.vehicle)
+  const citizenCount = opts.reducedMotion ? 0 : lowEnd ? 4 : Math.min(12, 6 + Math.floor(level / 3))
   const CITIZEN_SCALE = 1.6 // bigger, easier-to-see citizens
   const BUBBLE_W = 11 // bubble width in world units — large so the text is readable
   const BUBBLE_Y = 5.6 // bubble centre height above the ground (clears the model head)
   type Bubble = { sprite: THREE.Sprite; mat: THREE.SpriteMaterial; draw: (text: string, think: boolean) => void }
   type Citizen = {
     rig: CharacterRig; pos: THREE.Vector2; heading: number
-    state: 'wander' | 'goto' | 'rest' | 'watch'; target: THREE.Vector2; timer: number; poi: number | null
+    state: 'wander' | 'goto' | 'rest' | 'watch' | 'build'; target: THREE.Vector2; timer: number; poi: number | null
     speed: number; curiosity: number; social: number; home: THREE.Vector2; visited: Set<number>
     bubble: Bubble; speakT: number; showing: boolean
     npcId: string; brain: NpcBrain
@@ -837,6 +840,62 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     }
     return { sprite, mat, draw }
   }
+
+  // ---------- citizen-built world: structures NPCs construct on their own ----------
+  // Cheap procedural primitives; what gets built is decided by the citizen's
+  // brain (profession + building skill). Persisted so the city THEY build grows
+  // across sessions. Capped for performance ("unlimited" in spirit, bounded in
+  // practice so mid-range phones stay smooth).
+  type BuildRec = { kind: string; x: number; z: number; level: number; by: string }
+  const BUILDS_KEY = 'fl-city-builds-v1'
+  const MAX_BUILDS = 48
+  let buildRecords: BuildRec[] = []
+  try { const raw = localStorage.getItem(BUILDS_KEY); if (raw) buildRecords = JSON.parse(raw) as BuildRec[] } catch { /* ignore */ }
+  const bMat = {
+    wood: track(new THREE.MeshLambertMaterial({ color: 0x6b4a2b })),
+    leaf: track(new THREE.MeshLambertMaterial({ color: 0x3f7a3a })),
+    leaf2: track(new THREE.MeshLambertMaterial({ color: 0x4f8a42 })),
+    stone: track(new THREE.MeshLambertMaterial({ color: 0x8a8f99 })),
+    wall: track(new THREE.MeshLambertMaterial({ color: 0xcaa06a })),
+    roof: track(new THREE.MeshLambertMaterial({ color: 0xb0503a })),
+    metal: track(new THREE.MeshStandardMaterial({ color: 0x9fb2c8, metalness: 0.55, roughness: 0.4 })),
+  }
+  function buildStructure(kind: string, x: number, z: number, level: number): THREE.Group | null {
+    const g = new THREE.Group()
+    const s = 1 + level * 0.15 // structures grow with the builder's skill
+    const box = (w: number, h: number, d: number, m: THREE.Material, y: number) => {
+      const me = new THREE.Mesh(track(new THREE.BoxGeometry(w, h, d)), m); me.position.y = y; g.add(me); return me
+    }
+    const cyl = (r1: number, r2: number, h: number, m: THREE.Material, y: number) => {
+      const me = new THREE.Mesh(track(new THREE.CylinderGeometry(r1, r2, h, 10)), m); me.position.y = y; g.add(me); return me
+    }
+    const cone = (r: number, h: number, m: THREE.Material, y: number) => {
+      const me = new THREE.Mesh(track(new THREE.ConeGeometry(r, h, 10)), m); me.position.y = y; g.add(me); return me
+    }
+    switch (kind) {
+      case 'tree': cyl(0.16, 0.22, 1.4 * s, bMat.wood, 0.7 * s); cone(0.95 * s, 1.7 * s, bMat.leaf, 2.0 * s); break
+      case 'garden':
+        for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; const t = cone(0.4 * s, 0.9 * s, i % 2 ? bMat.leaf : bMat.leaf2, 0.6 * s); t.position.x = Math.cos(a) * 0.9; t.position.z = Math.sin(a) * 0.9 }
+        break
+      case 'rock': { const r = cyl(0.7 * s, 0.95 * s, 0.7 * s, bMat.stone, 0.3 * s); r.scale.y = 0.6; break }
+      case 'lamp': { cyl(0.08, 0.1, 2.2 * s, bMat.metal, 1.1 * s); const glow = glowSprite('rgba(255,214,140,0.9)', 2.4 * s); glow.position.y = 2.3 * s; g.add(glow); break }
+      case 'bench': { box(1.4 * s, 0.14, 0.5 * s, bMat.wood, 0.5 * s); const back = box(1.4 * s, 0.4 * s, 0.12, bMat.wood, 0.75 * s); back.position.z = -0.2 * s; break }
+      case 'hut': box(1.8 * s, 1.4 * s, 1.8 * s, bMat.wall, 0.7 * s); cone(1.5 * s, 1.0 * s, bMat.roof, 1.9 * s); break
+      case 'tower': { const floors = 2 + level; for (let i = 0; i < floors; i++) box((1.5 - i * 0.12) * s, 0.9 * s, (1.5 - i * 0.12) * s, i % 2 ? bMat.wall : bMat.stone, 0.45 * s + i * 0.9 * s); break }
+      case 'fountain': cyl(1.2 * s, 1.35 * s, 0.4 * s, bMat.stone, 0.2 * s); cyl(0.2, 0.24, 1.0 * s, bMat.stone, 0.7 * s); cone(0.5 * s, 0.6 * s, bMat.metal, 1.4 * s); break
+      case 'statue': { box(0.9 * s, 0.5 * s, 0.9 * s, bMat.stone, 0.25 * s); cyl(0.28 * s, 0.34 * s, 1.4 * s, bMat.metal, 1.2 * s); break }
+      default: return null
+    }
+    g.position.set(x, 0, z)
+    scene.add(g)
+    return g
+  }
+  function persistBuilds() {
+    try { localStorage.setItem(BUILDS_KEY, JSON.stringify(buildRecords.slice(-MAX_BUILDS))) } catch { /* quota */ }
+  }
+  // replay everything citizens have already built — the city they made persists
+  for (const rec of buildRecords.slice(-MAX_BUILDS)) buildStructure(rec.kind, rec.x, rec.z, rec.level)
+
   const citizens: Citizen[] = []
   const seen: Record<string, number> = {} // dedupe identities when a species repeats
   for (let i = 0; i < citizenCount; i++) {
@@ -852,7 +911,8 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     const bubble = makeBubble()
     scene.add(bubble.sprite) // in world space, positioned above the citizen each frame
     const a = (i / Math.max(1, citizenCount)) * Math.PI * 2
-    const home = new THREE.Vector2(Math.cos(a) * 12, Math.sin(a) * 12)
+    const rad0 = 8 + (i % 3) * 5 // vary the radius (8/13/18) so the crowd spreads out
+    const home = new THREE.Vector2(Math.cos(a) * rad0, Math.sin(a) * rad0)
     citizens.push({
       rig, pos: home.clone(), heading: a, state: 'wander', target: home.clone(), timer: 0.5 + r() * 2, poi: null,
       // personality traits from the brain drive how each one moves + socialises
@@ -860,6 +920,8 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       home, visited: new Set<number>(), bubble, speakT: 0.6 + i * 0.7 + r() * 3, showing: false, npcId, brain,
     })
   }
+  // hand the roster to the hub so it can offer a reliable tappable citizen list
+  opts.onCitizens?.(citizens.map((c) => ({ id: c.npcId, name: c.brain.name, emoji: c.brain.emoji })))
   const tmpV2 = new THREE.Vector2()
   const shortestAngle = (from: number, to: number) => {
     let d = (to - from) % (Math.PI * 2)
@@ -869,10 +931,21 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   }
   // pick the citizen's next intent from its personality + memory
   function citizenDecide(c: Citizen) {
+    // contextual daily-life routine: at night citizens rest + head home more,
+    // by day they roam, explore and socialise
+    const hour = new Date().getHours()
+    const night = hour < 6 || hour >= 21
     const roll = Math.random()
     c.poi = null
-    if (roll < 0.16) { c.state = 'rest'; c.timer = 2 + Math.random() * 4; return } // stop + look around
-    if (roll < 0.18 + c.social * 0.34) {
+    if (roll < (night ? 0.42 : 0.16)) { c.state = 'rest'; c.timer = 2 + Math.random() * 4; return } // stop + look around
+    // sometimes decide to BUILD something (daytime, while there's room in the city)
+    if (!night && buildRecords.length < MAX_BUILDS && Math.random() < 0.14 + c.brain.traits.curiosity * 0.12) {
+      const ang = Math.random() * Math.PI * 2, rr = 6 + Math.random() * 13
+      c.target.set(Math.cos(ang) * rr, Math.sin(ang) * rr)
+      c.state = 'build'; c.timer = 12
+      return
+    }
+    if (!night && roll < 0.18 + c.social * 0.34) {
       // sociable → go watch the monument, or drift toward another citizen
       const other = citizens[Math.floor(Math.random() * citizens.length)]
       c.target.copy(Math.random() < 0.55 || !other ? new THREE.Vector2(0, 0) : other.pos)
@@ -883,21 +956,33 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     if (c.curiosity > 0.5) {
       for (let k = 0; k < POIS.length; k++) { const j = (idx + k) % POIS.length; if (!c.visited.has(j)) { idx = j; break } }
     }
-    if (Math.random() < 0.22) { c.target.copy(c.home); c.state = 'goto' } // memory: sometimes head home
+    if (night || Math.random() < 0.22) { c.target.copy(c.home); c.state = 'goto' } // routine: home at night
     else { c.target.set(POIS[idx][0], POIS[idx][1]); c.poi = idx; c.state = 'goto' }
     c.timer = 6 + Math.random() * 6
   }
   let learnT = 0 // seconds since the last autonomous internet-learning attempt
   let gossipT = 0 // seconds since the last offline peer-gossip attempt
+  // a citizen has walked to a chosen spot → construct what its brain decided on
+  function doBuild(c: Citizen) {
+    if (buildRecords.length >= MAX_BUILDS) return
+    const kind = chooseBuildKind(c.brain)
+    const level = Math.min(6, 1 + Math.floor(c.brain.skills['building'] || 0))
+    if (!buildStructure(kind, c.target.x, c.target.y, level)) return
+    buildRecords.push({ kind, x: c.target.x, z: c.target.y, level, by: c.brain.name })
+    persistBuilds()
+    recordBuild(c.brain, kind)
+    c.bubble.draw(`🔨 Built a ${kind}!`, false); c.showing = true; c.speakT = 4.5
+  }
   function updateCitizens(tSec: number, dt: number) {
     for (const c of citizens) {
       c.timer -= dt
       tmpV2.copy(c.target).sub(c.pos)
       const dist = tmpV2.length()
-      const moving = (c.state === 'goto' || c.state === 'wander') && dist > 0.7
+      const moving = (c.state === 'goto' || c.state === 'wander' || c.state === 'build') && dist > 0.7
       const desired = Math.atan2(-tmpV2.x, -tmpV2.y) // face travel/target (model forward = -z)
       if (dist > 0.05) c.heading += shortestAngle(c.heading, desired) * Math.min(1, dt * (moving ? 4 : 2.5))
       if (moving) { tmpV2.normalize(); const s = c.speed * dt; c.pos.x += tmpV2.x * s; c.pos.y += tmpV2.y * s }
+      else if (c.state === 'build') { doBuild(c); citizenDecide(c) } // arrived → construct
       else if (c.timer <= 0 || (c.state === 'goto' || c.state === 'wander')) {
         if (c.poi != null) { // remember where it went — becomes a recallable memory
           c.visited.add(c.poi)

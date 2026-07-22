@@ -33,6 +33,8 @@ export type Prefs = {
   // questions. OFF by default; every lookup still asks first. Personal NPC
   // memories always stay on-device regardless of this.
   npcInternet: boolean
+  // Read NPC chat replies aloud with the device's text-to-speech. OFF by default.
+  npcVoice: boolean
   // media
   autoDownloadMedia: boolean
 }
@@ -56,6 +58,7 @@ export const DEFAULT_PREFS: Prefs = {
   music: true,
   reduceMotion: false,
   npcInternet: false,
+  npcVoice: false,
   autoDownloadMedia: true,
 }
 
