@@ -29,6 +29,10 @@ export type Prefs = {
   sounds: boolean
   music: boolean
   reduceMotion: boolean
+  // NPC intelligence — let citizens fetch public info (Wikipedia) to answer
+  // questions. OFF by default; every lookup still asks first. Personal NPC
+  // memories always stay on-device regardless of this.
+  npcInternet: boolean
   // media
   autoDownloadMedia: boolean
 }
@@ -51,6 +55,7 @@ export const DEFAULT_PREFS: Prefs = {
   sounds: true,
   music: true,
   reduceMotion: false,
+  npcInternet: false,
   autoDownloadMedia: true,
 }
 

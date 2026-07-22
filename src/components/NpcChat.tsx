@@ -1,0 +1,272 @@
+/**
+ * NpcChat — talk to any Lion City citizen.
+ *
+ * A slide-up glass panel that opens when you tap a citizen in the 3D city. It
+ * drives the offline NPC brain (`npcMind`): the citizen remembers what you teach
+ * it, recalls past events, grows a friendship, works on goals, and learns skills
+ * — all stored locally on the device. If you've turned ON internet learning in
+ * Settings, and only after you confirm each lookup, it can fetch a public fact
+ * from Wikipedia (clearly labelled) and file it in the NPC's local knowledge.
+ *
+ * The "Mind" tab is a live window into that brain: mood, friendship, goals,
+ * interests, skills, memories and knowledge — with controls to forget the
+ * web-learned facts or reset the citizen entirely.
+ */
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { motion } from 'framer-motion'
+import { Brain, Globe, Send, Sparkles, Target, Trash2, X } from 'lucide-react'
+import {
+  clearBrain, clearWebKnowledge, converse, deviceAiProfile, friendTier, learnWebFact, loadBrain, moodLabel,
+  type NpcBrain,
+} from '../lib/npcMind'
+import { fetchPublicKnowledge } from '../lib/npcOnline'
+import { usePref } from '../lib/prefs'
+import { confirmDialog } from '../store/app'
+import { sfx } from '../game/sfx'
+import { hap } from '../lib/haptics'
+import { cn } from '../lib/utils'
+
+type Msg = { role: 'player' | 'npc'; text: string; source?: string }
+const CHIPS = ['What do you remember?', 'How are you?', 'What are your goals?', 'Tell me about focus']
+
+export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
+  npcId: string; name: string; emoji: string; level: number; streak: number; onClose: () => void
+}) {
+  const [brain] = useState<NpcBrain>(() => loadBrain(npcId, { name, emoji }))
+  const internetOn = usePref('npcInternet')
+  const prof = useMemo(() => deviceAiProfile(), [])
+  const badge = prof.nativeBridge
+    ? { icon: '🤖', label: 'On-device model' }
+    : prof.tier === 'accelerated'
+      ? { icon: '⚡', label: 'Accelerated brain' }
+      : { icon: '🧠', label: 'Offline brain' }
+
+  const [tab, setTab] = useState<'chat' | 'mind'>('chat')
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [, force] = useState(0)
+  const [msgs, setMsgs] = useState<Msg[]>(() => {
+    const prior = brain.convo.slice(-24).map((t) => ({ role: t.role, text: t.text, source: t.source }))
+    if (prior.length) return prior
+    const lived = brain.memories.some((m) => m.kind === 'life')
+    return [{ role: 'npc', text: `Hi! I'm ${brain.name}. ${lived ? 'Ask me what I got up to while you were away 🙂' : 'Nice to meet you — ask me anything, or teach me something!'}` }]
+  })
+
+  const listRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' }) }, [msgs])
+  useEffect(() => { sfx.resume(); sfx.hologram(); hap.select() }, [])
+
+  async function send(text: string) {
+    const t = text.trim()
+    if (!t || busy) return
+    sfx.resume(); sfx.uiClick(); hap.tap()
+    setInput('')
+    setMsgs((m) => [...m, { role: 'player', text: t }])
+    setBusy(true)
+    try {
+      const ctx = { level, streak, timeOfDay: new Date().getHours() }
+      const reply = await converse(brain, t, ctx)
+      setMsgs((m) => [...m, { role: 'npc', text: reply.text, source: reply.source }])
+      // opt-in, per-lookup-confirmed online learning
+      if (reply.lookup && internetOn) {
+        const ok = await confirmDialog(
+          `Let ${brain.name} look up “${reply.lookup}” on Wikipedia? Their personal memories stay on your device.`,
+          { yesLabel: 'Look it up', noLabel: 'No' },
+        )
+        if (ok) {
+          setMsgs((m) => [...m, { role: 'npc', text: '🌐 Looking that up…', source: 'web' }])
+          const fact = await fetchPublicKnowledge(reply.lookup)
+          if (fact) {
+            learnWebFact(brain, reply.lookup, fact.summary, fact.url)
+            setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: `🌐 From Wikipedia — ${fact.summary}`, source: 'web' }])
+          } else {
+            setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: "I couldn't reach anything online just now, so I'll stick with what I know.", source: 'web' }])
+          }
+        }
+      }
+      hap.reward()
+    } finally {
+      setBusy(false)
+      force((x) => x + 1)
+    }
+  }
+
+  const active = brain.goals.filter((g) => !g.done)
+  const interests = Object.entries(brain.interests).sort((a, b) => b[1] - a[1]).slice(0, 5)
+  const skills = Object.entries(brain.skills)
+  const webFacts = brain.knowledge.filter((k) => k.source === 'web')
+
+  return (
+    <motion.div className="fixed inset-0 z-[80] flex flex-col justify-end bg-black/55 backdrop-blur-[2px]"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
+      <motion.div onClick={(e) => e.stopPropagation()}
+        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 26, stiffness: 240 }}
+        className="flex max-h-[86vh] flex-col rounded-t-3xl bg-[#0c0a18] ring-1 ring-white/12 pb-[env(safe-area-inset-bottom)]">
+        {/* header */}
+        <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400/30 to-purple-500/25 text-2xl ring-1 ring-white/15">
+            {brain.emoji}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate city-display text-lg text-white">{brain.name}</span>
+              <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300 ring-1 ring-white/10" title={badge.label}>
+                {badge.icon} {badge.label}
+              </span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-2 text-[11px] text-white/55">
+              <span className="text-pink-300">{friendTier(brain.player.affinity)}</span>
+              <span>·</span>
+              <span>{moodLabel(brain.mood)}</span>
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close chat" className="rounded-full p-2 text-white/70 hover:bg-white/10 active:scale-90">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* affinity bar */}
+        <div className="px-4 pt-2">
+          <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-gradient-to-r from-pink-400 to-amber-400 transition-all duration-500" style={{ width: `${brain.player.affinity}%` }} />
+          </div>
+        </div>
+
+        {/* tabs */}
+        <div className="flex gap-1 px-4 pt-3">
+          {(['chat', 'mind'] as const).map((tb) => (
+            <button key={tb} onClick={() => { setTab(tb); sfx.uiClick(); hap.tap() }}
+              className={cn('flex items-center gap-1.5 rounded-t-xl px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition',
+                tab === tb ? 'bg-white/10 text-white' : 'text-white/45 hover:text-white/70')}>
+              {tb === 'chat' ? <Sparkles size={13} /> : <Brain size={13} />}{tb}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'chat' ? (
+          <>
+            <div ref={listRef} className="flex-1 space-y-2.5 overflow-y-auto px-4 py-3" style={{ minHeight: 220 }}>
+              {msgs.map((m, i) => (
+                <div key={i} className={cn('flex', m.role === 'player' ? 'justify-end' : 'justify-start')}>
+                  <div className={cn('max-w-[82%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm leading-snug',
+                    m.role === 'player'
+                      ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'
+                      : m.source === 'web'
+                        ? 'bg-sky-500/15 text-sky-100 ring-1 ring-sky-400/30'
+                        : 'bg-white/8 text-white/90 ring-1 ring-white/10')}>
+                    {m.text}
+                  </div>
+                </div>
+              ))}
+              {busy && <div className="text-xs text-white/40">{brain.name} is thinking…</div>}
+            </div>
+
+            {/* quick chips */}
+            <div className="flex gap-1.5 overflow-x-auto px-4 pb-2 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+              {CHIPS.map((c) => (
+                <button key={c} disabled={busy} onClick={() => send(c)}
+                  className="shrink-0 rounded-full bg-white/6 px-3 py-1.5 text-[11px] font-semibold text-white/80 ring-1 ring-white/10 transition active:scale-95 disabled:opacity-40">
+                  {c}
+                </button>
+              ))}
+            </div>
+
+            {/* composer */}
+            <div className="flex items-center gap-2 border-t border-white/10 px-3 py-2.5">
+              <input value={input} onChange={(e) => setInput(e.target.value)} disabled={busy}
+                onKeyDown={(e) => { if (e.key === 'Enter') send(input) }}
+                placeholder={`Talk to ${brain.name}…  (try “remember that…”)`}
+                className="min-w-0 flex-1 rounded-full bg-white/8 px-4 py-2.5 text-sm text-white placeholder:text-white/35 outline-none ring-1 ring-white/10 focus:ring-amber-400/50" />
+              <button onClick={() => send(input)} disabled={busy || !input.trim()} aria-label="Send"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-lg transition active:scale-90 disabled:opacity-40">
+                <Send size={16} />
+              </button>
+            </div>
+            <div className="px-4 pb-2 text-center text-[10px] text-white/35">
+              {internetOn ? '🌐 Internet learning is ON — lookups ask first' : '🔒 Fully offline · enable internet learning in Settings'}
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm" style={{ minHeight: 220 }}>
+            <MindRow icon={<Target size={14} />} title="Goals">
+              {active.length ? active.map((g) => (
+                <div key={g.id} className="mb-1.5">
+                  <div className="flex justify-between text-white/80"><span>{g.text}</span><span className="text-amber-300">{Math.round(g.progress * 100)}%</span></div>
+                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-amber-400" style={{ width: `${g.progress * 100}%` }} /></div>
+                </div>
+              )) : <span className="text-white/45">No active goals — try “can you explore every district”.</span>}
+            </MindRow>
+
+            <MindRow icon={<span className="text-xs">💡</span>} title="Interests">
+              <div className="flex flex-wrap gap-1.5">
+                {interests.length ? interests.map(([t]) => (
+                  <span key={t} className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] text-white/80 ring-1 ring-white/10">{t}</span>
+                )) : <span className="text-white/45">Still figuring out what it likes.</span>}
+              </div>
+            </MindRow>
+
+            {skills.length > 0 && (
+              <MindRow icon={<span className="text-xs">🎓</span>} title="Skills learned">
+                <div className="flex flex-wrap gap-1.5">
+                  {skills.map(([s, lv]) => (
+                    <span key={s} className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-200 ring-1 ring-emerald-400/30">{s} · Lv {lv}</span>
+                  ))}
+                </div>
+              </MindRow>
+            )}
+
+            <MindRow icon={<Sparkles size={14} />} title="Recent memories">
+              <div className="space-y-1 text-white/70">
+                {[...brain.memories].filter((m) => m.salience >= 0.4).slice(-6).reverse().map((m, i) => (
+                  <div key={i} className="text-[12px]">• {m.text}</div>
+                ))}
+              </div>
+            </MindRow>
+
+            <MindRow icon={<Globe size={14} />} title={`Knowledge (${brain.knowledge.length})`}>
+              {brain.knowledge.length ? (
+                <div className="space-y-1.5">
+                  {[...brain.knowledge].slice(-6).reverse().map((k, i) => (
+                    <div key={i} className="text-[12px] text-white/75">
+                      <span className={k.source === 'web' ? 'text-sky-300' : 'text-amber-300'}>{k.source === 'web' ? '🌐' : '📘'}</span> {k.text}
+                    </div>
+                  ))}
+                </div>
+              ) : <span className="text-white/45">Teach it with “remember that …”.</span>}
+            </MindRow>
+
+            <div className="flex flex-wrap gap-2 border-t border-white/10 pt-3">
+              {webFacts.length > 0 && (
+                <button onClick={() => { clearWebKnowledge(brain); sfx.uiBack(); hap.select(); force((x) => x + 1) }}
+                  className="flex items-center gap-1.5 rounded-xl bg-white/8 px-3 py-2 text-xs font-semibold text-sky-200 ring-1 ring-white/10 active:scale-95">
+                  <Globe size={13} /> Forget web knowledge ({webFacts.length})
+                </button>
+              )}
+              <button onClick={async () => {
+                if (await confirmDialog(`Reset ${brain.name} completely? Their personality, memories and our friendship will be wiped.`, { yesLabel: 'Reset', noLabel: 'Keep' })) {
+                  clearBrain(brain.id); sfx.uiBack(); hap.crash(); onClose()
+                }
+              }}
+                className="flex items-center gap-1.5 rounded-xl bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-200 ring-1 ring-rose-400/30 active:scale-95">
+                <Trash2 size={13} /> Reset this citizen
+              </button>
+            </div>
+            <div className="text-center text-[10px] text-white/30">
+              {badge.icon} {badge.label} · {prof.cores} cores · {prof.deviceMemoryGB} GB{prof.webgpu ? ' · WebGPU' : ''} — all data stored on this device
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
+  )
+}
+
+function MindRow({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-white/45">{icon} {title}</div>
+      {children}
+    </div>
+  )
+}

@@ -52,7 +52,11 @@ export function nextDistrict(level: number) {
   return DISTRICTS.find((d) => d.level > level) ?? null
 }
 
-export type CityOpts = { level: number; streak: number; reducedMotion?: boolean; character?: string }
+export type CityOpts = {
+  level: number; streak: number; reducedMotion?: boolean; character?: string
+  /** tapped a living citizen in the 3D city — open its chat/brain (3D scene only). */
+  onSelectCitizen?: (npcId: string, name: string, emoji: string) => void
+}
 
 // ---------- tiny seeded RNG (mulberry32) ----------
 function rng(seed: number) {

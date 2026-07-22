@@ -150,6 +150,9 @@ function ChatPrefsCard() {
         <PrefRow icon="🎵" title="Music" desc="Adaptive soundtrack that swells with the action in Lion Run">
           <Toggle on={p.music} onChange={(v) => set('music', v)} />
         </PrefRow>
+        <PrefRow icon="🌐" title="NPC internet learning" desc="Let Lion City citizens look up public info (Wikipedia) to answer you. Off = fully offline; every lookup still asks first. Memories always stay on-device.">
+          <Toggle on={p.npcInternet} onChange={(v) => set('npcInternet', v)} />
+        </PrefRow>
         <PrefRow icon="🎞️" title="Reduce motion" desc="Calmer animations across the app">
           <Toggle on={p.reduceMotion} onChange={(v) => set('reduceMotion', v)} />
         </PrefRow>

@@ -13,6 +13,7 @@ import { PLAYABLE_CHARACTERS, DEFAULT_CHARACTER, characterById, isCharacterUnloc
 import { UPGRADES, getCoins, addCoins, getUpgrades, getDailyMissions, tallyMissions, buyUpgrade, nextCost, type Mission } from '../lib/lionShop'
 import { sfx } from '../game/sfx'
 import { hap } from '../lib/haptics'
+import { NpcChat } from '../components/NpcChat'
 
 /** Free run every day, +1 per completed focus session, capped. */
 const MAX_RUNS_PER_DAY = 3
@@ -43,13 +44,18 @@ export function CityPage() {
   const captureRef = useRef<(() => string | null) | null>(null)
   const citySetAvatar = useRef<((id: string) => void) | null>(null)
   const [cityPickerOpen, setCityPickerOpen] = useState(false)
+  // tapped a living citizen → open its offline-brain chat
+  const [chatNpc, setChatNpc] = useState<{ id: string; name: string; emoji: string } | null>(null)
   useEffect(() => {
     const el = cityRef.current
     if (!el) return
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     // the city avatar (monument) starts as the persisted runner; live changes go
     // through setAvatar (below) so we never rebuild the whole city
-    const sceneOpts = { level, streak, reducedMotion, character: localStorage.getItem('fl-character') || DEFAULT_CHARACTER }
+    const sceneOpts = {
+      level, streak, reducedMotion, character: localStorage.getItem('fl-character') || DEFAULT_CHARACTER,
+      onSelectCitizen: (id: string, name: string, emoji: string) => setChatNpc({ id, name, emoji }),
+    }
     let stop: (() => void) | undefined
     let cancelled = false
     const fallback2d = () => {
@@ -709,6 +715,14 @@ export function CityPage() {
               </AnimatePresence>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ---- tap a citizen → chat with its on-device brain ---- */}
+      <AnimatePresence>
+        {chatNpc && (
+          <NpcChat key={chatNpc.id} npcId={chatNpc.id} name={chatNpc.name} emoji={chatNpc.emoji}
+            level={level} streak={streak} onClose={() => setChatNpc(null)} />
         )}
       </AnimatePresence>
     </Page>

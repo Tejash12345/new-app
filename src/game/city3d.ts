@@ -28,6 +28,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { CITY_TOTAL_BUILDINGS, cityUnlocked, nextDistrict, type CityOpts } from './cityScene'
 import { buildCharacter, type CharacterRig } from './characterModel'
 import { PLAYABLE_CHARACTERS, characterById, isCharacterUnlocked } from '../lib/characters'
+import { loadBrain, saveBrain, idleLine, rememberEvent, type NpcBrain } from '../lib/npcMind'
 
 export type City3DHandle = { stop: () => void; capture: () => string | null; setAvatar: (id: string) => void }
 
@@ -137,6 +138,17 @@ function glowSprite(color: string, size: number) {
   }))
   sp.scale.setScalar(size)
   return sp
+}
+
+/** Trace a rounded-rectangle path (no ctx.roundRect — older WebViews lack it). */
+function roundRectPath(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  g.beginPath()
+  g.moveTo(x + r, y)
+  g.arcTo(x + w, y, x + w, y + h, r)
+  g.arcTo(x + w, y + h, x, y + h, r)
+  g.arcTo(x, y + h, x, y, r)
+  g.arcTo(x, y, x + w, y, r)
+  g.closePath()
 }
 
 export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHandle | null {
@@ -769,22 +781,77 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   // walking characters/animals only (road cars live in `cars`; no flyers on foot)
   const roster = PLAYABLE_CHARACTERS.filter((c) => isCharacterUnlocked(c, level) && !c.fly && !c.vehicle)
   const citizenCount = opts.reducedMotion ? 0 : lowEnd ? 3 : Math.min(8, 4 + Math.floor(level / 4))
+  type Bubble = { sprite: THREE.Sprite; mat: THREE.SpriteMaterial; draw: (text: string, think: boolean) => void }
   type Citizen = {
     rig: CharacterRig; pos: THREE.Vector2; heading: number
     state: 'wander' | 'goto' | 'rest' | 'watch'; target: THREE.Vector2; timer: number; poi: number | null
     speed: number; curiosity: number; social: number; home: THREE.Vector2; visited: Set<number>
+    bubble: Bubble; speakT: number; showing: boolean
+    npcId: string; brain: NpcBrain
+  }
+  // A floating speech / thought bubble above a citizen's head — its own reusable
+  // canvas texture, redrawn only when the phrase changes; billboards to the camera.
+  function makeBubble(): Bubble {
+    const W = 256, H = 140
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H
+    const g = cv.getContext('2d')!
+    const tex = track(new THREE.CanvasTexture(cv)); tex.colorSpace = THREE.SRGBColorSpace
+    const mat = track(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0, fog: false, depthWrite: false }))
+    const sprite = new THREE.Sprite(mat)
+    sprite.scale.set(3.3, (3.3 * H) / W, 1)
+    sprite.position.set(0, 2.6, 0)
+    const draw = (text: string, think: boolean) => {
+      g.clearRect(0, 0, W, H)
+      g.font = '700 30px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+      const maxW = W - 52
+      const lines: string[] = []
+      let cur = ''
+      for (const word of text.split(' ')) {
+        const t = cur ? cur + ' ' + word : word
+        if (g.measureText(t).width > maxW && cur) { lines.push(cur); cur = word } else cur = t
+      }
+      if (cur) lines.push(cur)
+      if (lines.length > 2) { lines.length = 2; lines[1] = lines[1].replace(/\s*\S*$/, '') + '…' }
+      const bodyY = 6, bodyH = 94, bx = 6, bw = W - 12
+      roundRectPath(g, bx, bodyY, bw, bodyH, 22)
+      g.fillStyle = 'rgba(12,10,24,0.85)'; g.fill()
+      g.lineWidth = 3; g.strokeStyle = think ? 'rgba(130,180,255,0.6)' : 'rgba(255,190,90,0.65)'; g.stroke()
+      g.fillStyle = 'rgba(12,10,24,0.85)'
+      if (think) {
+        for (const [dx, dy, r0] of [[-10, 12, 9], [-24, 30, 5]] as const) {
+          g.beginPath(); g.arc(W / 2 + dx, bodyY + bodyH + dy, r0, 0, Math.PI * 2); g.fill(); g.stroke()
+        }
+      } else {
+        g.beginPath(); g.moveTo(W / 2 - 15, bodyY + bodyH - 3); g.lineTo(W / 2 + 15, bodyY + bodyH - 3); g.lineTo(W / 2 - 6, bodyY + bodyH + 28); g.closePath(); g.fill()
+      }
+      g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'
+      const lh = 34, startY = bodyY + bodyH / 2 - ((lines.length - 1) * lh) / 2
+      lines.forEach((ln, i) => g.fillText(ln, W / 2, startY + i * lh))
+      tex.needsUpdate = true
+    }
+    return { sprite, mat, draw }
   }
   const citizens: Citizen[] = []
+  const seen: Record<string, number> = {} // dedupe identities when a species repeats
   for (let i = 0; i < citizenCount; i++) {
     const def = roster.length ? roster[i % roster.length] : characterById('lion')
     const rig = buildCharacter(def, { phase: i * 1.3 })
     rig.group.scale.setScalar(0.95)
     scene.add(rig.group)
+    // stable per-citizen identity so the local brain persists across sessions
+    const occ = (seen[def.id] = (seen[def.id] || 0) + 1)
+    const npcId = occ > 1 ? `${def.id}-${occ}` : def.id
+    const brain = loadBrain(npcId, { name: occ > 1 ? `${def.name} ${occ}` : def.name, emoji: def.emoji })
+    rig.group.userData.npcId = npcId
+    const bubble = makeBubble()
+    rig.group.add(bubble.sprite)
     const a = (i / Math.max(1, citizenCount)) * Math.PI * 2
     const home = new THREE.Vector2(Math.cos(a) * 12, Math.sin(a) * 12)
     citizens.push({
       rig, pos: home.clone(), heading: a, state: 'wander', target: home.clone(), timer: 0.5 + r() * 2, poi: null,
-      speed: 1.4 + r() * 1.7, curiosity: r(), social: r(), home, visited: new Set<number>(),
+      // personality traits from the brain drive how each one moves + socialises
+      speed: 1.3 + brain.traits.energy * 1.8, curiosity: brain.traits.curiosity, social: brain.traits.warmth,
+      home, visited: new Set<number>(), bubble, speakT: 0.6 + i * 0.7 + r() * 3, showing: false, npcId, brain,
     })
   }
   const tmpV2 = new THREE.Vector2()
@@ -824,7 +891,10 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       if (dist > 0.05) c.heading += shortestAngle(c.heading, desired) * Math.min(1, dt * (moving ? 4 : 2.5))
       if (moving) { tmpV2.normalize(); const s = c.speed * dt; c.pos.x += tmpV2.x * s; c.pos.y += tmpV2.y * s }
       else if (c.timer <= 0 || (c.state === 'goto' || c.state === 'wander')) {
-        if (c.poi != null) c.visited.add(c.poi) // remember where it went
+        if (c.poi != null) { // remember where it went — becomes a recallable memory
+          c.visited.add(c.poi)
+          if (Math.random() < 0.5) rememberEvent(c.brain, 'life', 'I explored a corner of the city.', 0.3)
+        }
         citizenDecide(c)
       }
       const rad = Math.hypot(c.pos.x, c.pos.y) // stay inside the plaza
@@ -833,6 +903,13 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       c.rig.group.rotation.y = c.heading
       c.rig.pose({ tSec, running: false, walk: moving, airborne: false, sliding: false, dead: false })
       c.rig.update(dt)
+      // speech / thought bubble — brain-driven; cycle show → hold → hide, fade the sprite
+      c.speakT -= dt
+      if (c.speakT <= 0) {
+        if (c.showing) { c.showing = false; c.speakT = 3 + Math.random() * 7 }
+        else { const p = idleLine(c.brain, c.state); c.bubble.draw(p.text, p.think); c.showing = true; c.speakT = 2.8 + Math.random() * 2.4 }
+      }
+      c.bubble.mat.opacity += ((c.showing ? 1 : 0) - c.bubble.mat.opacity) * Math.min(1, dt * 6)
     }
   }
 
@@ -959,19 +1036,50 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     camera.position.set(Math.cos(az) * rad, height, Math.sin(az) * rad)
     camera.lookAt(0, 4, 0)
   }
+  // tap-to-select: a raycast picks the citizen under a quick, still tap so the
+  // hub can open its chat/brain — dragging still orbits the camera as before
+  const raycaster = new THREE.Raycaster()
+  const ndc = new THREE.Vector2()
+  let downX = 0, downY = 0, downMoved = 0, downAt = 0
+  function pickCitizen(cx: number, cy: number) {
+    if (!opts.onSelectCitizen || !citizens.length) return
+    const rect = canvas.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    ndc.x = ((cx - rect.left) / rect.width) * 2 - 1
+    ndc.y = -((cy - rect.top) / rect.height) * 2 + 1
+    raycaster.setFromCamera(ndc, camera)
+    const hits = raycaster.intersectObjects(citizens.map((c) => c.rig.group), true)
+    for (const h of hits) {
+      let o: THREE.Object3D | null = h.object
+      while (o) {
+        const id = o.userData?.npcId as string | undefined
+        if (id) {
+          const c = citizens.find((z) => z.npcId === id)
+          if (c) opts.onSelectCitizen(id, c.brain.name, c.brain.emoji)
+          return
+        }
+        o = o.parent
+      }
+    }
+  }
   function onDown(e: PointerEvent) {
     dragging = true
     lastX = e.clientX
+    downX = e.clientX; downY = e.clientY; downMoved = 0; downAt = performance.now()
     canvas.setPointerCapture(e.pointerId)
   }
   function onMove(e: PointerEvent) {
     if (!dragging) return
     const dx = e.clientX - lastX
     lastX = e.clientX
+    downMoved = Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY)
     azVel = dx * 0.004
     azimuth += azVel
   }
-  function onUp() { dragging = false }
+  function onUp(e?: PointerEvent) {
+    dragging = false
+    if (e && downMoved < 12 && performance.now() - downAt < 400) pickCitizen(e.clientX, e.clientY)
+  }
   canvas.addEventListener('pointerdown', onDown)
   canvas.addEventListener('pointermove', onMove)
   canvas.addEventListener('pointerup', onUp)
@@ -1212,7 +1320,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       canvas.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('pointercancel', onUp)
       monument.dispose()
-      for (const c of citizens) c.rig.dispose()
+      for (const c of citizens) { saveBrain(c.brain); c.rig.dispose() } // persist session memories
       scene.traverse((o) => {
         const m = o as THREE.Mesh
         if (m.material) {
