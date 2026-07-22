@@ -184,7 +184,7 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
               </button>
             </div>
             <div className="px-4 pb-2 text-center text-[10px] text-white/35">
-              {internetOn ? '🌐 Internet learning is ON — lookups ask first' : '🔒 Fully offline · enable internet learning in Settings'}
+              {internetOn ? '🌐 Internet learning ON — citizens also learn in the background · your lookups ask first' : '🔒 Fully offline · enable internet learning in Settings'}
             </div>
           </>
         ) : (

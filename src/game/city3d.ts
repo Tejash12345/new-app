@@ -28,7 +28,8 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { CITY_TOTAL_BUILDINGS, cityUnlocked, nextDistrict, type CityOpts } from './cityScene'
 import { buildCharacter, type CharacterRig } from './characterModel'
 import { PLAYABLE_CHARACTERS, characterById, isCharacterUnlocked } from '../lib/characters'
-import { loadBrain, saveBrain, idleLine, rememberEvent, type NpcBrain } from '../lib/npcMind'
+import { loadBrain, saveBrain, idleLine, rememberEvent, gossip, type NpcBrain } from '../lib/npcMind'
+import { autoLearnStep } from '../lib/npcLearn'
 
 export type City3DHandle = { stop: () => void; capture: () => string | null; setAvatar: (id: string) => void }
 
@@ -781,6 +782,9 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   // walking characters/animals only (road cars live in `cars`; no flyers on foot)
   const roster = PLAYABLE_CHARACTERS.filter((c) => isCharacterUnlocked(c, level) && !c.fly && !c.vehicle)
   const citizenCount = opts.reducedMotion ? 0 : lowEnd ? 3 : Math.min(8, 4 + Math.floor(level / 4))
+  const CITIZEN_SCALE = 1.6 // bigger, easier-to-see citizens
+  const BUBBLE_W = 11 // bubble width in world units — large so the text is readable
+  const BUBBLE_Y = 5.6 // bubble centre height above the ground (clears the model head)
   type Bubble = { sprite: THREE.Sprite; mat: THREE.SpriteMaterial; draw: (text: string, think: boolean) => void }
   type Citizen = {
     rig: CharacterRig; pos: THREE.Vector2; heading: number
@@ -789,21 +793,23 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     bubble: Bubble; speakT: number; showing: boolean
     npcId: string; brain: NpcBrain
   }
-  // A floating speech / thought bubble above a citizen's head — its own reusable
-  // canvas texture, redrawn only when the phrase changes; billboards to the camera.
+  // A floating speech / thought bubble that hovers over a citizen. Big + high-res
+  // so the words are readable at the city's far camera. It's added to the SCENE
+  // (not parented to the model) and positioned every frame, so its size is
+  // independent of how large the character models are. Billboards to the camera.
   function makeBubble(): Bubble {
-    const W = 256, H = 140
+    const W = 512, H = 288
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H
     const g = cv.getContext('2d')!
     const tex = track(new THREE.CanvasTexture(cv)); tex.colorSpace = THREE.SRGBColorSpace
     const mat = track(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0, fog: false, depthWrite: false }))
     const sprite = new THREE.Sprite(mat)
-    sprite.scale.set(3.3, (3.3 * H) / W, 1)
-    sprite.position.set(0, 2.6, 0)
+    sprite.scale.set(BUBBLE_W, (BUBBLE_W * H) / W, 1) // big world-space bubble
+    sprite.renderOrder = 999
     const draw = (text: string, think: boolean) => {
       g.clearRect(0, 0, W, H)
-      g.font = '700 30px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
-      const maxW = W - 52
+      g.font = '700 52px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+      const maxW = W - 96
       const lines: string[] = []
       let cur = ''
       for (const word of text.split(' ')) {
@@ -812,20 +818,20 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       }
       if (cur) lines.push(cur)
       if (lines.length > 2) { lines.length = 2; lines[1] = lines[1].replace(/\s*\S*$/, '') + '…' }
-      const bodyY = 6, bodyH = 94, bx = 6, bw = W - 12
-      roundRectPath(g, bx, bodyY, bw, bodyH, 22)
-      g.fillStyle = 'rgba(12,10,24,0.85)'; g.fill()
-      g.lineWidth = 3; g.strokeStyle = think ? 'rgba(130,180,255,0.6)' : 'rgba(255,190,90,0.65)'; g.stroke()
-      g.fillStyle = 'rgba(12,10,24,0.85)'
+      const bodyY = 12, bodyH = 196, bx = 12, bw = W - 24
+      roundRectPath(g, bx, bodyY, bw, bodyH, 40)
+      g.fillStyle = 'rgba(12,10,24,0.88)'; g.fill()
+      g.lineWidth = 5; g.strokeStyle = think ? 'rgba(130,180,255,0.7)' : 'rgba(255,190,90,0.75)'; g.stroke()
+      g.fillStyle = 'rgba(12,10,24,0.88)'
       if (think) {
-        for (const [dx, dy, r0] of [[-10, 12, 9], [-24, 30, 5]] as const) {
+        for (const [dx, dy, r0] of [[-20, 26, 18], [-46, 62, 10]] as const) {
           g.beginPath(); g.arc(W / 2 + dx, bodyY + bodyH + dy, r0, 0, Math.PI * 2); g.fill(); g.stroke()
         }
       } else {
-        g.beginPath(); g.moveTo(W / 2 - 15, bodyY + bodyH - 3); g.lineTo(W / 2 + 15, bodyY + bodyH - 3); g.lineTo(W / 2 - 6, bodyY + bodyH + 28); g.closePath(); g.fill()
+        g.beginPath(); g.moveTo(W / 2 - 30, bodyY + bodyH - 6); g.lineTo(W / 2 + 30, bodyY + bodyH - 6); g.lineTo(W / 2 - 12, bodyY + bodyH + 58); g.closePath(); g.fill()
       }
       g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'
-      const lh = 34, startY = bodyY + bodyH / 2 - ((lines.length - 1) * lh) / 2
+      const lh = 62, startY = bodyY + bodyH / 2 - ((lines.length - 1) * lh) / 2
       lines.forEach((ln, i) => g.fillText(ln, W / 2, startY + i * lh))
       tex.needsUpdate = true
     }
@@ -836,7 +842,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   for (let i = 0; i < citizenCount; i++) {
     const def = roster.length ? roster[i % roster.length] : characterById('lion')
     const rig = buildCharacter(def, { phase: i * 1.3 })
-    rig.group.scale.setScalar(0.95)
+    rig.group.scale.setScalar(CITIZEN_SCALE)
     scene.add(rig.group)
     // stable per-citizen identity so the local brain persists across sessions
     const occ = (seen[def.id] = (seen[def.id] || 0) + 1)
@@ -844,7 +850,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     const brain = loadBrain(npcId, { name: occ > 1 ? `${def.name} ${occ}` : def.name, emoji: def.emoji })
     rig.group.userData.npcId = npcId
     const bubble = makeBubble()
-    rig.group.add(bubble.sprite)
+    scene.add(bubble.sprite) // in world space, positioned above the citizen each frame
     const a = (i / Math.max(1, citizenCount)) * Math.PI * 2
     const home = new THREE.Vector2(Math.cos(a) * 12, Math.sin(a) * 12)
     citizens.push({
@@ -881,6 +887,8 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     else { c.target.set(POIS[idx][0], POIS[idx][1]); c.poi = idx; c.state = 'goto' }
     c.timer = 6 + Math.random() * 6
   }
+  let learnT = 0 // seconds since the last autonomous internet-learning attempt
+  let gossipT = 0 // seconds since the last offline peer-gossip attempt
   function updateCitizens(tSec: number, dt: number) {
     for (const c of citizens) {
       c.timer -= dt
@@ -903,13 +911,42 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       c.rig.group.rotation.y = c.heading
       c.rig.pose({ tSec, running: false, walk: moving, airborne: false, sliding: false, dead: false })
       c.rig.update(dt)
-      // speech / thought bubble — brain-driven; cycle show → hold → hide, fade the sprite
+      // speech / thought bubble — brain-driven; follows the citizen, cycles + fades
+      c.bubble.sprite.position.set(c.pos.x, BUBBLE_Y, c.pos.y)
       c.speakT -= dt
       if (c.speakT <= 0) {
         if (c.showing) { c.showing = false; c.speakT = 3 + Math.random() * 7 }
         else { const p = idleLine(c.brain, c.state); c.bubble.draw(p.text, p.think); c.showing = true; c.speakT = 2.8 + Math.random() * 2.4 }
       }
       c.bubble.mat.opacity += ((c.showing ? 1 : 0) - c.bubble.mat.opacity) * Math.min(1, dt * 6)
+    }
+
+    // autonomous internet self-learning (opt-in): a curious citizen quietly reads
+    // up on a topic, then shows what it learned. The module rate-limits itself.
+    learnT += dt
+    if (learnT >= 6 && citizens.length) {
+      learnT = 0
+      void autoLearnStep(citizens.map((c) => c.brain)).then((res) => {
+        if (!res) return
+        const c = citizens.find((z) => z.npcId === res.id)
+        if (c) { c.bubble.draw(`🌐 Learned about ${res.topic}`, false); c.showing = true; c.speakT = 4.5 }
+      })
+    }
+    // offline peer learning: nearby citizens swap a fact they know (works offline)
+    gossipT += dt
+    if (gossipT >= 9 && citizens.length > 1) {
+      gossipT = 0
+      let done = false
+      for (let i = 0; i < citizens.length && !done; i++) {
+        for (let j = i + 1; j < citizens.length && !done; j++) {
+          const a = citizens[i], b = citizens[j]
+          if (a.pos.distanceTo(b.pos) < 5 && Math.random() < 0.5) {
+            const topic = gossip(a.brain, b.brain)
+            if (topic) { b.bubble.draw(`Heard about ${topic} from ${a.brain.name}`, false); b.showing = true; b.speakT = 4.5 }
+            done = true
+          }
+        }
+      }
     }
   }
 

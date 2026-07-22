@@ -242,6 +242,25 @@ export function learnWebFact(brain: NpcBrain, topic: string, text: string, url: 
   saveBrain(brain)
 }
 
+/**
+ * Offline peer learning — `from` teaches `to` one fact `to` doesn't have yet.
+ * Knowledge spreads through the city on its own, and the two become a little
+ * friendlier. Returns the topic learned, or null if there was nothing to share.
+ */
+export function gossip(from: NpcBrain, to: NpcBrain): string | null {
+  const known = new Set(to.knowledge.map((k) => k.topic))
+  const cand = from.knowledge.filter((k) => !known.has(k.topic))
+  if (!cand.length) return null
+  const k = cand[Math.floor(Math.random() * cand.length)]
+  to.knowledge.push({ topic: k.topic, text: k.text, source: k.source, url: k.url, t: Date.now() })
+  rememberEvent(to, 'life', `Learned about ${k.topic} from ${from.name}.`, 0.45)
+  bumpInterest(to, k.topic, 0.4)
+  to.skills['social learning'] = Math.round(((to.skills['social learning'] || 0) + 0.34) * 100) / 100
+  to.bonds[from.id] = { affinity: Math.min(100, (to.bonds[from.id]?.affinity || 0) + 3) }
+  saveBrain(to)
+  return k.topic
+}
+
 // ---------------------------------------------------------------- offline "life"
 
 const LIFE_EVENTS = [
