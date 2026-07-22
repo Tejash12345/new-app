@@ -785,6 +785,23 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   // lively crowd of animals + humans from level 1. Bigger crowd on capable phones.
   const roster = PLAYABLE_CHARACTERS.filter((c) => !c.fly && !c.vehicle)
   const citizenCount = opts.reducedMotion ? 0 : lowEnd ? 4 : Math.min(12, 6 + Math.floor(level / 3))
+  // Build a HUMAN + ANIMAL crowd: without this, `i % roster.length` only ever
+  // picks the front of the cast (mostly animals) and humans never appear. Shuffle
+  // each group (seeded → stable) and interleave so the plaza is a true mix.
+  const HUMANOID = new Set(['astronaut', 'runner', 'woman', 'robot', 'hero', 'adventurer'])
+  const cr = rng(1337)
+  function shuf(arr: typeof roster): typeof roster {
+    const a = arr.slice()
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(cr() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t }
+    return a
+  }
+  const humans = shuf(roster.filter((c) => HUMANOID.has(c.id)))
+  const animals = shuf(roster.filter((c) => !HUMANOID.has(c.id)))
+  const crowd: typeof roster = []
+  for (let i = 0; i < Math.max(humans.length, animals.length); i++) {
+    if (animals[i]) crowd.push(animals[i])
+    if (humans[i]) crowd.push(humans[i])
+  }
   const CITIZEN_SCALE = 1.6 // bigger, easier-to-see citizens
   const BUBBLE_W = 11 // bubble width in world units — large so the text is readable
   const BUBBLE_Y = 5.6 // bubble centre height above the ground (clears the model head)
@@ -899,7 +916,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   const citizens: Citizen[] = []
   const seen: Record<string, number> = {} // dedupe identities when a species repeats
   for (let i = 0; i < citizenCount; i++) {
-    const def = roster.length ? roster[i % roster.length] : characterById('lion')
+    const def = crowd.length ? crowd[i % crowd.length] : characterById('lion')
     const rig = buildCharacter(def, { phase: i * 1.3 })
     rig.group.scale.setScalar(CITIZEN_SCALE)
     scene.add(rig.group)
