@@ -43,6 +43,8 @@ export type City3DHandle = {
   command: (npcId: string, action: CmdAction, targetId?: string) => void
   /** drive the camera from UI buttons (zoom / pan / rotate / recenter). */
   view: (op: ViewOp) => void
+  /** pause only the GPU draw (keep logic running) while an overlay hides the city. */
+  setRenderPaused: (paused: boolean) => void
 }
 
 // ---------- tiny seeded RNG (mulberry32) ----------
@@ -1418,6 +1420,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   let raf = 0
   let running = true
   let visible = true
+  let renderPaused = false // skip the GPU draw when an overlay (chat/minds) covers the city
   let lastTint = -1
   let prevT = 0
   const startT = performance.now()
@@ -1594,8 +1597,13 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     if (fxOn && dt > 0.04) {
       if (++slowFrames > 90) fxOn = false
     } else if (slowFrames > 0 && dt < 0.03) slowFrames--
-    if (fxOn) composer.render()
-    else renderer.render(scene, camera)
+    // logic above keeps running (so state + command timing stay correct); we just
+    // skip the expensive GPU draw while an overlay hides the city — frees the main
+    // thread so chat typing/taps stay responsive (INP).
+    if (!renderPaused) {
+      if (fxOn) composer.render()
+      else renderer.render(scene, camera)
+    }
   }
 
   function resize() {
@@ -1684,6 +1692,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     setAvatar,
     command,
     view: viewControl,
+    setRenderPaused: (p: boolean) => { renderPaused = p },
     stop: () => {
       running = false
       cancelAnimationFrame(raf)

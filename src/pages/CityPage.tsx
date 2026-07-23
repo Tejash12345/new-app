@@ -48,6 +48,7 @@ export function CityPage() {
   const citySetAvatar = useRef<((id: string) => void) | null>(null)
   const cityCommand = useRef<((npcId: string, action: CmdAction, targetId?: string) => void) | null>(null)
   const cityView = useRef<((op: ViewOp) => void) | null>(null)
+  const cityRenderPause = useRef<((p: boolean) => void) | null>(null)
   const [cityPickerOpen, setCityPickerOpen] = useState(false)
   // tapped a living citizen → open its offline-brain chat
   const [chatNpc, setChatNpc] = useState<{ id: string; name: string; emoji: string } | null>(null)
@@ -91,6 +92,7 @@ export function CityPage() {
           citySetAvatar.current = h.setAvatar
           cityCommand.current = h.command
           cityView.current = h.view
+          cityRenderPause.current = h.setRenderPaused
         } else fallback2d()
       })
       .catch(() => {
@@ -102,6 +104,7 @@ export function CityPage() {
       citySetAvatar.current = null
       cityCommand.current = null
       cityView.current = null
+      cityRenderPause.current = null
       stop?.()
     }
   }, [level, streak, cityFull])
@@ -125,11 +128,17 @@ export function CityPage() {
         if (cancelled) return
         const h = startCity3D(el, sceneOpts)
         stop = h ? h.stop : startCityScene(el, sceneOpts)
-        if (h) { cityCommand.current = h.command; cityView.current = h.view }
+        if (h) { cityCommand.current = h.command; cityView.current = h.view; cityRenderPause.current = h.setRenderPaused }
       })
       .catch(() => { if (!cancelled) stop = startCityScene(el, sceneOpts) })
-    return () => { cancelled = true; cityCommand.current = null; cityView.current = null; stop?.() }
+    return () => { cancelled = true; cityCommand.current = null; cityView.current = null; cityRenderPause.current = null; stop?.() }
   }, [cityFull, level, streak])
+
+  // when a full-screen overlay hides the city (chat / minds), pause its GPU draw
+  // so the panel's typing + taps stay responsive; resume when it closes
+  useEffect(() => {
+    cityRenderPause.current?.(!!chatNpc || mindsOpen)
+  }, [chatNpc, mindsOpen])
 
   // Photo Mode — share the current city view, or download it if sharing isn't available
   async function photoMode() {
@@ -436,9 +445,9 @@ export function CityPage() {
             Districts {districts}/{DISTRICTS.length}{upcoming && <> · {upcoming.name} opens at Lv {upcoming.level}</>}
           </div>
         </div>
-
-        {/* camera controls — zoom / pan / rotate / recenter */}
-        {citizenList.length > 0 && <CityViewControls onView={(op) => cityView.current?.(op)} />}
+        {/* NB: camera control buttons live in the FULLSCREEN view only — on the
+            small hero they overlapped (and blocked) the photo/fullscreen buttons.
+            The hero uses touch gestures (drag/pinch/two-finger pan). */}
       </div>
 
       {/* ---- live activity — what the citizens are doing right now ---- */}

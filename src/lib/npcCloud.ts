@@ -15,10 +15,10 @@
  * citizen keeps growing its own local memory + neural model either way.
  */
 import {
-  ruleRespond, registerResponder, moodLabel, friendTier,
+  ruleRespond, registerResponder, moodLabel, friendTier, synthesize, expertiseOf,
   type NpcBrain, type Responder,
 } from './npcMind'
-import { neuralLearn, neuralTokens } from './npcNeural'
+import { neuralChain, neuralLearn, neuralTokens } from './npcNeural'
 import { webLookup, type WebFact } from './npcOnline'
 import { getPref } from './prefs'
 import { askLion } from './ai'
@@ -45,31 +45,43 @@ function traitWords(b: NpcBrain): string {
   return w.length ? w.join(', ') : 'easygoing'
 }
 
-/** Build the in-character instruction sent to the model as the user turn. */
+/** Build the in-character instruction sent to the model as the user turn.
+ *  Grounded in the citizen's OWN knowledge, specialisation and neural reasoning
+ *  chain, so the real-AI reply reflects what THIS citizen actually knows/thinks. */
 function personaPrompt(b: NpcBrain, text: string): string {
   const interests = Object.entries(b.interests).sort((a, c) => c[1] - a[1]).slice(0, 4).map((e) => e[0])
   const mems = b.memories.filter((m) => m.salience >= 0.5).slice(-4).map((m) => m.text)
-  const facts = b.knowledge.slice(-4).map((k) => k.text)
+  const kw = neuralTokens(text)
+  const grounded = kw.length ? synthesize(b, kw) : null // what it actually knows re: the question
+  const chain = kw.length && b.net ? neuralChain(b.net, kw[0], 4) : []
+  const exp = expertiseOf(b)
   return [
     `Role-play as a citizen of "Lion City", a friendly game world. Stay fully in character. Never say you are an AI, a model, an assistant, or mention any app or company.`,
     `You are ${b.name}, ${b.profession}. Personality: ${traitWords(b)}. Right now you feel ${moodLabel(b.mood)}.`,
     `The person talking to you is your ${friendTier(b.player.affinity).toLowerCase()}.`,
+    exp ? `You specialise in ${exp.field}.` : '',
     interests.length ? `You care about: ${interests.join(', ')}.` : '',
     mems.length ? `Recently on your mind: ${mems.join(' ')}` : '',
-    facts.length ? `Some things you know: ${facts.join(' ')}` : '',
-    `Answer helpfully and ACCURATELY using real-world knowledge, but keep your citizen voice. Reply in the SAME language the person used. 1-3 short, natural sentences. Plain text only — no markdown, no lists.`,
+    grounded ? `What you already know that's relevant: ${grounded}` : '',
+    chain.length >= 2 ? `Your mind links these ideas: ${chain.join(' → ')}.` : '',
+    `Answer helpfully and ACCURATELY using real-world knowledge, weaving in what you know above; think it through but keep your citizen voice. Reply in the SAME language the person used. 2-4 natural sentences. Plain text only — no markdown, no lists.`,
     `The person says: "${text}"`,
   ].filter(Boolean).join('\n')
 }
 
-/** Ask the online model for an in-character reply. Returns null on any failure. */
+/** Ask the online model for an in-character reply. Returns null on any failure OR
+ *  if it takes too long — so the hybrid brain drops to the offline engine quickly
+ *  instead of leaving the player waiting on a slow free-tier call. */
 export async function cloudBrainReply(brain: NpcBrain, text: string): Promise<string | null> {
   try {
-    const out = await askLion({ task: 'chat', input: personaPrompt(brain, text), fast: true })
+    const out = await Promise.race([
+      askLion({ task: 'chat', input: personaPrompt(brain, text), fast: true }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 14000)),
+    ])
     const clean = (out || '').trim()
     return clean ? clean.slice(0, 700) : null
   } catch {
-    return null // offline / rate-limited / timeout — caller falls back to the offline brain
+    return null // offline / rate-limited / error — caller falls back to the offline brain
   }
 }
 

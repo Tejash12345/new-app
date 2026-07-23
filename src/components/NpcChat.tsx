@@ -84,7 +84,7 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose, onCommand 
   const [tab, setTab] = useState<'chat' | 'mind'>('chat')
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [, force] = useState(0)
+  const [ver, force] = useState(0) // bumped after a chat/edit → recompute Mind-tab data
   const [msgs, setMsgs] = useState<Msg[]>(() => {
     const prior = brain.convo.slice(-24).map((t) => ({ role: t.role, text: t.text, source: t.source }))
     if (prior.length) return prior
@@ -128,24 +128,19 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose, onCommand 
       const reply = await converse(brain, t, ctx)
       setMsgs((m) => [...m, { role: 'npc', text: reply.text, source: reply.source }])
       if (voiceOn) speech.play(reply.text)
-      // opt-in, per-lookup-confirmed online learning (offline brain only — the
-      // genius brain answers directly, so it never reaches this branch)
-      if (reply.lookup && (internetOn || cloudOn)) {
-        const ok = await confirmDialog(
-          `Let ${brain.name} look up “${reply.lookup}” online? Their personal memories stay on your device.`,
-          { yesLabel: 'Look it up', noLabel: 'No' },
-        )
-        if (ok) {
-          setMsgs((m) => [...m, { role: 'npc', text: '🌐 Looking that up…', source: 'web' }])
-          const fact = await researchTopic(reply.lookup)
-          if (fact) {
-            learnWebFact(brain, reply.lookup, fact.summary, fact.url)
-            const src = fact.source === 'ai' ? 'the web' : 'Wikipedia'
-            setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: `🌐 From ${src} — ${fact.summary}`, source: 'web' }])
-            if (voiceOn) speech.play(fact.summary)
-          } else {
-            setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: "I couldn't reach anything online just now, so I'll stick with what I know.", source: 'web' }])
-          }
+      // Asked something it doesn't know yet + internet learning is ON → look it up
+      // from the FREE web (Wikipedia + DuckDuckGo + page scrape) right now and
+      // answer with the real fact. No confirm popup (the Settings toggle is the
+      // consent) and no paid AI — this is the free "living" path.
+      if (reply.lookup && internetOn) {
+        setMsgs((m) => [...m, { role: 'npc', text: '🌐 Let me check…', source: 'web' }])
+        const fact = await researchTopic(reply.lookup)
+        if (fact) {
+          learnWebFact(brain, reply.lookup, fact.summary, fact.url)
+          setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: `🌐 ${fact.summary}`, source: 'web' }])
+          if (voiceOn) speech.play(fact.summary)
+        } else {
+          setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: "I couldn't find that online just now — I'll keep it in mind and try again later.", source: 'web' }])
         }
       }
       hap.reward()
@@ -155,13 +150,21 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose, onCommand 
     }
   }
 
-  const active = brain.goals.filter((g) => !g.done)
-  const interests = Object.entries(brain.interests).sort((a, b) => b[1] - a[1]).slice(0, 5)
-  const skills = Object.entries(brain.skills)
-  const webFacts = brain.knowledge.filter((k) => k.source === 'web')
-  const iq = intelligence(brain) // neural-model snapshot (recomputed each render)
-  const insights = brain.knowledge.filter((k) => k.source === 'insight').slice(-5).reverse()
-  const expert = expertiseOf(brain)
+  // Mind-tab data (incl. the neural-model stats) — memoised so it recomputes only
+  // after a chat/edit (ver) or tab switch, NOT on every keystroke in the composer.
+  // Recomputing intelligence()/expertiseOf() per keystroke was blocking typing (INP).
+  // brain mutates in place, so tab/msgs/ver are the intentional recompute signals
+  // (the exhaustive-deps rule can't see the in-place mutation → disabled below).
+  const { active, interests, skills, webFacts, iq, insights, expert } = useMemo(() => ({
+    active: brain.goals.filter((g) => !g.done),
+    interests: Object.entries(brain.interests).sort((a, b) => b[1] - a[1]).slice(0, 5),
+    skills: Object.entries(brain.skills),
+    webFacts: brain.knowledge.filter((k) => k.source === 'web'),
+    iq: intelligence(brain),
+    insights: brain.knowledge.filter((k) => k.source === 'insight').slice(-5).reverse(),
+    expert: expertiseOf(brain),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [brain, tab, msgs, ver])
 
   return createPortal(
     <motion.div className="fixed inset-0 z-[90] flex flex-col justify-end bg-black/60 backdrop-blur-[2px]"

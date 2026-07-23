@@ -153,7 +153,7 @@ function ChatPrefsCard() {
         <PrefRow icon="🌐" title="NPC internet learning" desc="Citizens search and scrape the live web (Wikipedia, DuckDuckGo and real web pages) in the background to grow their knowledge, and look things up when you ask. Off = fully offline. Web facts are labelled 🌐 and clearable; personal memories always stay on-device.">
           <Toggle on={p.npcInternet} onChange={(v) => set('npcInternet', v)} />
         </PrefRow>
-        <PrefRow icon="🧠" title="NPC genius brain (online AI)" desc="Let citizens think through Lion AI so they can answer about almost anything — in character. Needs internet + sign-in and uses your daily AI allowance. Off = citizens use their fast, fully-offline brain (neural model + memory). Their personality and memories stay on-device either way.">
+        <PrefRow icon="🧠" title="NPC hybrid AI brain" desc="Citizens reply with real AI (free — the Lion AI model) when online, and automatically fall back to their fast offline brain when offline or the daily free AI is used up. ON by default. Real-AI replies need sign-in and share your daily AI allowance; the offline brain is always free + unlimited. Turn OFF for fully-offline, no-login replies only.">
           <Toggle on={p.npcCloudBrain} onChange={(v) => set('npcCloudBrain', v)} />
         </PrefRow>
         <PrefRow icon="🗣️" title="NPC voice (read aloud)" desc="Citizens speak their chat replies using your device's text-to-speech. You can also toggle it inside any chat.">

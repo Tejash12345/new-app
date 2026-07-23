@@ -58,6 +58,7 @@ export type NpcBrain = {
   convo: ChatTurn[]
   bonds: Record<string, Relationship> // otherNpcId → relationship
   wantsToLearn: string[] // self-directed curiosity queue — topics to look up when online
+  lastTopic?: string // what we were just talking about — lets follow-ups ("why?") continue it
   net: NeuralNet // the citizen's own neural model — concepts + weighted connections
   player: { affinity: number; familiarity: number; interactions: number } // affinity 0..100
 }
@@ -604,6 +605,36 @@ function recall(brain: NpcBrain, kw: string[]): { mem?: MemoryEvent; know?: Know
   return { mem: memScore > 0 ? mem : undefined, know: kScore > 0 ? know : undefined }
 }
 
+/** The best-matching knowledge items for these keywords (most relevant first). */
+function recallMany(brain: NpcBrain, kw: string[], n = 3): KnowledgeItem[] {
+  return brain.knowledge
+    .map((k) => {
+      const hay = (k.topic + ' ' + k.text).toLowerCase()
+      return { k, s: kw.reduce((a, w) => a + (hay.includes(w) ? 1 : 0), 0) }
+    })
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, n)
+    .map((x) => x.k)
+}
+
+/**
+ * Compose a richer answer from EVERYTHING the citizen knows about a topic —
+ * several matching facts stitched together, plus the concepts its neural model
+ * associates with them ("its own thinking"). Returns null if it knows nothing.
+ * This is what makes an answer feel considered rather than a single lookup.
+ */
+export function synthesize(brain: NpcBrain, kw: string[]): string | null {
+  const items = recallMany(brain, kw, 3)
+  if (!items.length) return null
+  const seen = new Set<string>()
+  const bits = items.map((k) => k.text.trim()).filter((t) => { const key = t.slice(0, 40); if (seen.has(key)) return false; seen.add(key); return true })
+  let out = bits.join(' ')
+  const assoc = neuralThink(brain.net, kw, 2, 4).filter((a) => !kw.includes(a))
+  if (assoc.length) out += ` In my mind this connects to ${assoc.slice(0, 3).join(', ')}.`
+  return out.trim()
+}
+
 /** The most recently internet-learned fact, if any (for proactive sharing). */
 function recentWeb(brain: NpcBrain): KnowledgeItem | undefined {
   for (let i = brain.knowledge.length - 1; i >= 0; i--) if (brain.knowledge[i].source === 'web') return brain.knowledge[i]
@@ -621,6 +652,65 @@ function style(brain: NpcBrain, text: string): string {
   // a playful tag for high-humor personalities
   if (brain.traits.humor > 0.7 && Math.random() < 0.4) text += ' ' + pick(['😄', '😏', '🙃'])
   return text
+}
+
+// ---- conversation skills: empathy, opinions, jokes, stories, questions back ----
+
+const JOKES = [
+  'Why did the lion bring a ladder to the city? To reach the next level! 🦁',
+  "I told a joke to the fountain… it didn't laugh, but it splashed anyway. 💧",
+  "What's a citizen's favourite music? Anything with a good BEAT — we walk to it. 🎵",
+  'I tried to catch the fog this morning. I mist. 🌫️',
+  "Why don't statues get tired? They're great at standing their ground. 🗿",
+  'I tried to learn everything about the moon… but the topic was over my head. 🌙',
+]
+
+/** Warm, personality-shaded response when the PLAYER shares how they feel. */
+function empathyReply(brain: NpcBrain, low: string): string {
+  const positive = /(happy|excited|great|good|awesome|amazing|fine|okay|better)/.test(low)
+  if (positive) {
+    brain.mood.valence = clamp(brain.mood.valence + 0.1, -1, 1)
+    return pick([
+      `That's wonderful to hear! ${brain.traits.warmth > 0.6 ? 'Your good mood is contagious. ' : ''}What made your day?`,
+      `Love that energy — ride it! What's next for you?`,
+      `Great to hear! Little wins add up. 🙌`,
+    ])
+  }
+  brain.mood.valence = clamp(brain.mood.valence - 0.04, -1, 1)
+  return pick([
+    `I'm sorry you're feeling that way. ${brain.traits.warmth > 0.6 ? "I'm here if you want to talk. " : ''}Want to take it one small step at a time?`,
+    `That sounds heavy. Be kind to yourself today — even a short break counts.`,
+    `I hear you. Rough patches pass. What's one tiny thing that might help right now?`,
+  ])
+}
+
+/** A short anecdote drawn from the citizen's own remembered life. */
+function anecdote(brain: NpcBrain): string {
+  const lifes = brain.memories.filter((m) => m.kind === 'life' || m.kind === 'milestone').slice(-8)
+  if (lifes.length) return `Oh! ${pick(lifes).text}${brain.traits.humor > 0.6 ? ' Good times. 😄' : ''}`
+  return `Honestly my days are simple — I wander the city, learn a little, and look out for friends like you.`
+}
+
+/** An opinion, grounded in what the citizen knows + how its mind associates. */
+function opinionOn(brain: NpcBrain, kw: string[]): string {
+  const topic = kw.slice(0, 3).join(' ')
+  const syn = kw.length ? synthesize(brain, kw) : null
+  if (syn) return `I think ${topic} is fascinating. ${syn}`
+  const assoc = kw.length ? neuralThink(brain.net, kw, 2, 3) : []
+  if (assoc.length) return `When I think about ${topic}, my mind jumps to ${assoc.join(', ')}. I'd love to understand it better.`
+  const interest = Object.entries(brain.interests).sort((a, b) => b[1] - a[1])[0]?.[0]
+  return `I'm still forming my view on ${topic || 'that'}. ${interest ? `Personally I care a lot about ${interest}.` : 'Tell me what YOU think?'}`
+}
+
+/** A question the citizen asks the player back, to keep the conversation alive. */
+function askBack(brain: NpcBrain): string {
+  const interest = Object.entries(brain.interests).sort((a, b) => b[1] - a[1])[0]?.[0]
+  return pick([
+    `What about you — what's on your mind?`,
+    interest ? `Do you like ${interest} too?` : `What do you enjoy doing?`,
+    `What are you working on today?`,
+    `Tell me something about you?`,
+  ])
 }
 
 /** The shipped offline conversation engine: interprets intent, mutates the brain
@@ -750,26 +840,58 @@ export function ruleRespond(brain: NpcBrain, raw: string, ctx: ResponderCtx): Re
     out = brain.traits.warmth > 0.6 ? `Ouch… that stings a bit. I'll try to do better.` : `Hmph. I'll remember that.`
   }
 
+  // --- short follow-up ("why?", "tell me more") → keep going on the last topic ---
+  else if (brain.lastTopic && /^(why|really|and|so|go on|tell me more|more|then|how come|continue|explain more|and\?)\b/i.test(low)) {
+    tags.push('followup')
+    const syn = synthesize(brain, keywords(brain.lastTopic))
+    out = syn ? `More on ${brain.lastTopic} — ${syn}` : `About ${brain.lastTopic}, I'm still learning. ${brain.traits.curiosity > 0.6 ? "Let me look it up." : ''}`
+    if (!syn) return finalize(brain, raw, out.trim(), tags, 'sim', brain.lastTopic)
+  }
+
+  // --- empathy: the PLAYER shares how they feel ---
+  else if (/\bi(?:'m| am| feel|'ve been| was)\b/i.test(low) && /(tired|exhausted|sad|down|stressed|anxious|worried|angry|upset|happy|excited|great|good|bored|lonely|sick|nervous|okay|fine|amazing|better)/i.test(low)) {
+    tags.push('empathy'); bump(1); out = empathyReply(brain, low)
+  }
+  // --- joke ---
+  else if (/\b(joke|make me laugh|something funny|cheer me up)\b/i.test(low)) {
+    tags.push('joke'); brain.mood.valence = clamp(brain.mood.valence + 0.1, -1, 1); out = pick(JOKES)
+  }
+  // --- story / anecdote ---
+  else if (/\b(tell me a story|your day|what have you been|anecdote|something interesting)\b/i.test(low)) {
+    tags.push('story'); out = anecdote(brain)
+  }
+  // --- opinion ("what do you think about X") ---
+  else if (/what do you think|your opinion|thoughts on|do you (?:like|prefer|believe|enjoy)/i.test(low)) {
+    tags.push('opinion'); out = opinionOn(brain, kw); if (kw.length) brain.lastTopic = kw.slice(0, 3).join(' ')
+  }
+
   // --- ask about a topic → recall memory / knowledge, else flag for opt-in lookup ---
-  else if (/\b(what|who|where|why|how|tell me|do you know|explain)\b/i.test(low) && kw.length) {
+  else if (/\b(what|who|where|why|how|tell me|do you know|explain|teach)\b/i.test(low)) {
     tags.push('ask')
-    const { mem, know } = recall(brain, kw)
-    if (know) {
-      out = `${know.source === 'web' ? '🌐 From what I read: ' : 'I remember this: '}${know.text}`
-      if (know.url) out += `\n(source: ${know.url})`
+    // "teach me" / "explain" with no clear topic → teach its own specialisation
+    const kwEff = kw.length ? kw : (expertise(brain.net)?.concepts ?? [])
+    const teach = /teach/i.test(low)
+    // compose an answer from EVERYTHING it knows on the topic (multi-fact + associations)
+    const syn = synthesize(brain, kwEff)
+    const { mem, know } = recall(brain, kwEff)
+    if (kw.length) brain.lastTopic = kw.slice(0, 3).join(' ') // remember topic for follow-ups
+    if (syn) {
+      out = `${teach ? 'Let me teach you what I know. ' : ''}${syn}`
+      if (know?.url) out += `\n(source: ${know.url})`
     } else if (mem) {
       out = `That reminds me — ${mem.text}`
-    } else {
-      // NPC doesn't know (yet). Raise curiosity, remember that it WANTS to learn
-      // this (so it looks it up later when online), and flag a possible lookup.
+    } else if (kw.length) {
+      // doesn't know yet → raise curiosity, queue it, flag a live lookup
       kw.forEach((w) => bumpInterest(brain, w, 0.3))
       const topic = kw.slice(0, 4).join(' ')
       if (topic && !brain.wantsToLearn.includes(topic)) {
         brain.wantsToLearn.push(topic)
         if (brain.wantsToLearn.length > 12) brain.wantsToLearn.shift()
       }
-      out = `Hmm, I don't know much about ${topic} yet. ${brain.traits.curiosity > 0.6 ? "I'll read up on it and remember it for next time." : "I'll try to find out."}`
+      out = `Hmm, I don't know much about ${topic} yet. ${brain.traits.curiosity > 0.6 ? "Let me look it up." : "I'll try to find out."}`
       return finalize(brain, raw, out.trim(), tags, 'sim', topic)
+    } else {
+      out = `Ask me about something and I'll tell you what I know — or teach me and I'll remember it.`
     }
   }
 
@@ -778,13 +900,16 @@ export function ruleRespond(brain: NpcBrain, raw: string, ctx: ResponderCtx): Re
     tags.push('smalltalk')
     kw.forEach((w) => bumpInterest(brain, w, 0.25))
     const topInterest = Object.entries(brain.interests).sort((a, b) => b[1] - a[1])[0]?.[0]
+    // try to keep it flowing: reflect what was said + relate to what it knows/thinks
+    const assoc = kw.length ? neuralThink(brain.net, kw, 2, 2) : []
     out = pick([
-      `${warmthPrefix(brain)}${brain.traits.humor > 0.6 ? 'Ha, ' : ''}I hear you. ${topInterest ? `Personally I can't stop thinking about ${topInterest}.` : ''}`,
-      `Interesting! ${brain.traits.curiosity > 0.6 ? 'Tell me more?' : 'Life in the city keeps me busy.'}`,
-      `${brain.name} here — ${brain.mood.valence > 0.2 ? 'feeling good today.' : 'just doing my rounds.'} What's on your mind?`,
+      `${warmthPrefix(brain)}${brain.traits.humor > 0.6 ? 'Ha, ' : ''}I hear you.${assoc.length ? ` That makes me think of ${assoc.join(' and ')}.` : topInterest ? ` Personally I can't stop thinking about ${topInterest}.` : ''}`,
+      `Interesting!${assoc.length ? ` ${assoc[0]} comes to mind.` : ''} ${brain.traits.curiosity > 0.6 ? 'Tell me more?' : 'Life in the city keeps me busy.'}`,
+      `${brain.name} here — ${brain.mood.valence > 0.2 ? 'feeling good today.' : 'just doing my rounds.'} ${askBack(brain)}`,
     ])
+    if (Math.random() < 0.4) out += ' ' + askBack(brain) // stay engaged — ask something back
     const wf = recentWeb(brain)
-    if (wf && Math.random() < 0.3) out += ` Also — did you know? ${trunc(wf.text, 120)}`
+    if (wf && Math.random() < 0.25) out += ` Also — did you know? ${trunc(wf.text, 120)}`
   }
 
   return finalize(brain, raw, out.trim() || `…`, tags, 'sim')
