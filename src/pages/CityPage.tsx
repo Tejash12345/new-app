@@ -2,19 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Camera, ChevronRight, Flame, Gamepad2, Maximize2, Play, Star, Trophy, X, Zap } from 'lucide-react'
+import { Brain, Camera, ChevronRight, Flame, Gamepad2, Maximize2, Play, Star, Trophy, X, Zap } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { AiMission, Habit, StudySession, Task } from '../lib/types'
 import { GlassCard, Page, SectionTitle } from '../components/ui'
 import { cn, levelForXp, levelProgress, levelTitle, todayKey, xpForLevel } from '../lib/utils'
-import { CITY_TOTAL_BUILDINGS, DISTRICTS, cityUnlocked, districtsUnlocked, nextDistrict, startCityScene } from '../game/cityScene'
+import { CITY_TOTAL_BUILDINGS, DISTRICTS, cityUnlocked, districtsUnlocked, nextDistrict, startCityScene, type CityActivity } from '../game/cityScene'
 import { startLionRun, type RunResult } from '../game/lionRun'
 import { PLAYABLE_CHARACTERS, DEFAULT_CHARACTER, characterById, isCharacterUnlocked } from '../lib/characters'
 import { UPGRADES, getCoins, addCoins, getUpgrades, getDailyMissions, tallyMissions, buyUpgrade, nextCost, type Mission } from '../lib/lionShop'
 import { sfx } from '../game/sfx'
 import { hap } from '../lib/haptics'
 import { NpcChat } from '../components/NpcChat'
+import { CityMinds } from '../components/CityMinds'
 
 /** Free run every day, +1 per completed focus session, capped. */
 const MAX_RUNS_PER_DAY = 3
@@ -47,6 +48,10 @@ export function CityPage() {
   const [cityPickerOpen, setCityPickerOpen] = useState(false)
   // tapped a living citizen → open its offline-brain chat
   const [chatNpc, setChatNpc] = useState<{ id: string; name: string; emoji: string } | null>(null)
+  const [mindsOpen, setMindsOpen] = useState(false) // City Minds dashboard (watch citizens develop)
+  // live feed of what citizens are doing (building/learning/thinking/talking)
+  const [activity, setActivity] = useState<CityActivity[]>([])
+  const pushActivity = (a: CityActivity) => setActivity((list) => [a, ...list].slice(0, 30))
   // roster of living citizens (reported by the 3D scene) → reliable tappable list
   const [citizenList, setCitizenList] = useState<{ id: string; name: string; emoji: string }[]>([])
   // full-screen immersive Lion City (portaled to body so it truly fills the viewport)
@@ -63,6 +68,7 @@ export function CityPage() {
       level, streak, reducedMotion, character: localStorage.getItem('fl-character') || DEFAULT_CHARACTER,
       onSelectCitizen: (id: string, name: string, emoji: string) => setChatNpc({ id, name, emoji }),
       onCitizens: (list: { id: string; name: string; emoji: string }[]) => setCitizenList(list),
+      onActivity: pushActivity,
     }
     let stop: (() => void) | undefined
     let cancelled = false
@@ -101,6 +107,7 @@ export function CityPage() {
       level, streak, reducedMotion, character: localStorage.getItem('fl-character') || DEFAULT_CHARACTER,
       onSelectCitizen: (id: string, name: string, emoji: string) => setChatNpc({ id, name, emoji }),
       onCitizens: (list: { id: string; name: string; emoji: string }[]) => setCitizenList(list),
+      onActivity: pushActivity,
     }
     let stop: (() => void) | undefined
     let cancelled = false
@@ -421,10 +428,30 @@ export function CityPage() {
         </div>
       </div>
 
+      {/* ---- live activity — what the citizens are doing right now ---- */}
+      {citizenList.length > 0 && (
+        <div className="mb-5">
+          <SectionTitle right={
+            <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-500">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live
+            </span>
+          }>City feed · what they're doing 👀</SectionTitle>
+          <div className="rounded-3xl bg-[#0c0a18] p-3 ring-1 ring-white/10">
+            <ActivityFeed items={activity} max={8}
+              onPick={(a) => setChatNpc(citizenList.find((c) => c.id === a.id) ?? { id: a.id, name: a.name, emoji: a.emoji })} />
+          </div>
+        </div>
+      )}
+
       {/* ---- citizens — tap to chat with their on-device brains ---- */}
       {citizenList.length > 0 && (
         <div className="mb-5">
-          <SectionTitle>Citizens · tap to chat 🧠</SectionTitle>
+          <SectionTitle right={
+            <button onClick={() => { sfx.resume(); sfx.uiClick(); hap.tap(); setMindsOpen(true) }}
+              className="flex shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-br from-purple-500/20 to-amber-400/20 px-3 py-1.5 text-[11px] font-bold text-purple-600 ring-1 ring-purple-400/30 transition active:scale-95 dark:text-purple-200">
+              <Brain size={13} /> View all minds
+            </button>
+          }>Citizens · tap to chat 🧠</SectionTitle>
           <div className="flex gap-2 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
             {citizenList.map((c) => (
               <button key={c.id} onClick={() => { sfx.resume(); sfx.uiClick(); hap.tap(); setChatNpc(c) }}
@@ -784,6 +811,14 @@ export function CityPage() {
               <div className="pointer-events-none absolute left-3 top-[calc(0.75rem+env(safe-area-inset-top))] rounded-full bg-black/50 px-3 py-1.5 text-[11px] font-semibold text-white/80 backdrop-blur-md">
                 Lion City · drag to look around · tap a citizen to chat
               </div>
+              {activity.length > 0 && (
+                <div className="pointer-events-auto absolute left-3 top-[calc(3.2rem+env(safe-area-inset-top))] max-h-[42vh] w-[min(80vw,340px)] overflow-y-auto rounded-2xl bg-black/45 p-2 backdrop-blur-md [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+                  <div className="mb-1 flex items-center gap-1 px-1 text-[9px] font-bold uppercase tracking-[0.2em] text-white/50">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live activity
+                  </div>
+                  <ActivityFeed items={activity} max={10} onPick={(a) => setChatNpc({ id: a.id, name: a.name, emoji: a.emoji })} />
+                </div>
+              )}
               <button onClick={() => { sfx.uiClick(); hap.tap(); setCityFull(false) }} aria-label="Exit fullscreen"
                 className="absolute right-3 top-[calc(0.75rem+env(safe-area-inset-top))] z-10 rounded-full bg-black/55 p-2.5 text-white backdrop-blur-md transition active:scale-90">
                 <X size={20} />
@@ -807,6 +842,15 @@ export function CityPage() {
         document.body,
       )}
 
+      {/* ---- City Minds dashboard → watch every citizen's mind develop ---- */}
+      <AnimatePresence>
+        {mindsOpen && citizenList.length > 0 && (
+          <CityMinds citizens={citizenList}
+            onPick={(c) => { setMindsOpen(false); setChatNpc(c) }}
+            onClose={() => setMindsOpen(false)} />
+        )}
+      </AnimatePresence>
+
       {/* ---- tap a citizen → chat with its on-device brain ---- */}
       <AnimatePresence>
         {chatNpc && (
@@ -815,5 +859,47 @@ export function CityPage() {
         )}
       </AnimatePresence>
     </Page>
+  )
+}
+
+// ---- live activity feed: what the citizens are doing, learning + saying ----
+const ACT_META: Record<CityActivity['kind'], { emoji: string; cls: string }> = {
+  build: { emoji: '🔨', cls: 'text-amber-300' },
+  invent: { emoji: '🏛️', cls: 'text-pink-300' },
+  learn: { emoji: '🌐', cls: 'text-sky-300' },
+  think: { emoji: '💡', cls: 'text-purple-300' },
+  talk: { emoji: '💬', cls: 'text-emerald-300' },
+  say: { emoji: '🗨️', cls: 'text-white/70' },
+}
+
+function ActivityFeed({ items, max = 8, onPick }: {
+  items: CityActivity[]
+  max?: number
+  onPick?: (a: CityActivity) => void
+}) {
+  if (items.length === 0) {
+    return <div className="px-1 py-2 text-[11px] text-white/45">Bring Lion City to life — citizens will start building, learning and chatting here…</div>
+  }
+  return (
+    <div className="space-y-1">
+      <AnimatePresence initial={false}>
+        {items.slice(0, max).map((a) => {
+          const m = ACT_META[a.kind]
+          return (
+            <motion.button key={a.t + a.id} layout
+              initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              onClick={() => onPick?.(a)}
+              className="flex w-full items-center gap-2 rounded-xl bg-white/5 px-2.5 py-1.5 text-left ring-1 ring-white/10 transition active:scale-[0.98]">
+              <span className="shrink-0 text-sm leading-none">{a.emoji}</span>
+              <span className="min-w-0 flex-1 truncate text-[11px] text-white/80">
+                <span className="font-bold text-white/95">{a.name}</span>{' '}
+                <span className={m.cls}>{a.text}</span>
+              </span>
+              <span className="shrink-0 text-xs leading-none">{m.emoji}</span>
+            </motion.button>
+          )
+        })}
+      </AnimatePresence>
+    </div>
   )
 }

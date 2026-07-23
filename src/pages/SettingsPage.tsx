@@ -150,7 +150,7 @@ function ChatPrefsCard() {
         <PrefRow icon="🎵" title="Music" desc="Adaptive soundtrack that swells with the action in Lion Run">
           <Toggle on={p.music} onChange={(v) => set('music', v)} />
         </PrefRow>
-        <PrefRow icon="🌐" title="NPC internet learning" desc="Citizens automatically read public info (Wikipedia) in the background to grow their knowledge, and look things up when you ask. Off = fully offline. Web facts are labelled 🌐 and clearable; personal memories always stay on-device.">
+        <PrefRow icon="🌐" title="NPC internet learning" desc="Citizens automatically read free public web sources (Wikipedia + DuckDuckGo) in the background to grow their knowledge, and look things up when you ask. Off = fully offline. Web facts are labelled 🌐 and clearable; personal memories always stay on-device.">
           <Toggle on={p.npcInternet} onChange={(v) => set('npcInternet', v)} />
         </PrefRow>
         <PrefRow icon="🧠" title="NPC genius brain (online AI)" desc="Let citizens think through Lion AI so they can answer about almost anything — in character. Needs internet + sign-in and uses your daily AI allowance. Off = citizens use their fast, fully-offline brain (neural model + memory). Their personality and memories stay on-device either way.">

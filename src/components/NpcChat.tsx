@@ -17,10 +17,11 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { Brain, Globe, Send, Sparkles, Target, Trash2, Volume2, VolumeX, X } from 'lucide-react'
 import {
-  clearBrain, clearWebKnowledge, converse, deviceAiProfile, friendTier, intelligence, learnWebFact, loadBrain, moodLabel,
-  type NpcBrain,
+  clearBrain, clearWebKnowledge, converse, deviceAiProfile, expertiseOf, friendTier, intelligence, learnWebFact,
+  loadBrain, moodLabel, skillRank, type NpcBrain,
 } from '../lib/npcMind'
 import { edgesAmong, topConcepts } from '../lib/npcNeural'
+import { googleSearchUrl } from '../lib/npcOnline'
 import { researchTopic } from '../lib/npcCloud' // importing also registers the genius-brain responder
 import { setPref, usePref } from '../lib/prefs'
 import { speech } from '../lib/speak'
@@ -111,6 +112,7 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
   const webFacts = brain.knowledge.filter((k) => k.source === 'web')
   const iq = intelligence(brain) // neural-model snapshot (recomputed each render)
   const insights = brain.knowledge.filter((k) => k.source === 'insight').slice(-5).reverse()
+  const expert = expertiseOf(brain)
 
   return createPortal(
     <motion.div className="fixed inset-0 z-[90] flex flex-col justify-end bg-black/60 backdrop-blur-[2px]"
@@ -223,8 +225,14 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
               <div className="rounded-2xl bg-black/30 p-2 ring-1 ring-white/10">
                 <NeuralMap brain={brain} />
               </div>
+              {expert && (
+                <div className="mt-2 text-[11px] text-white/70">
+                  🎯 Specialises in <span className="font-semibold text-amber-200">{expert.field}</span>
+                  {expert.concepts.length > 1 && <span className="text-white/45"> · linked to {expert.concepts.slice(1, 4).join(', ')}</span>}
+                </div>
+              )}
               <div className="mt-1 text-[10px] text-white/40">
-                Concepts it meets become neurons; ideas that occur together wire up. It thinks by firing across them.
+                Concepts it meets become neurons; ideas that occur together wire up. It thinks by firing across them, sleeps to consolidate memory, and makes creative leaps.
                 {' '}{internetOn || cloudOn ? 'Growing from the internet too.' : 'Enable internet learning to grow it faster.'}
               </div>
             </MindRow>
@@ -265,10 +273,11 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
             </MindRow>
 
             {brain.wantsToLearn.length > 0 && (
-              <MindRow icon={<Globe size={14} />} title="Wants to learn (from your questions)">
+              <MindRow icon={<Globe size={14} />} title="Wants to learn · tap to search Google">
                 <div className="flex flex-wrap gap-1.5">
                   {brain.wantsToLearn.slice(-6).map((t) => (
-                    <span key={t} className="rounded-full bg-sky-500/12 px-2.5 py-1 text-[11px] text-sky-200 ring-1 ring-sky-400/25">{t}</span>
+                    <a key={t} href={googleSearchUrl(t)} target="_blank" rel="noreferrer"
+                      className="rounded-full bg-sky-500/12 px-2.5 py-1 text-[11px] text-sky-200 ring-1 ring-sky-400/25 transition active:scale-95 hover:bg-sky-500/20">🔎 {t}</a>
                   ))}
                 </div>
               </MindRow>
@@ -278,7 +287,7 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
               <MindRow icon={<span className="text-xs">🎓</span>} title="Skills learned">
                 <div className="flex flex-wrap gap-1.5">
                   {skills.map(([s, lv]) => (
-                    <span key={s} className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-200 ring-1 ring-emerald-400/30">{s} · Lv {lv}</span>
+                    <span key={s} className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-200 ring-1 ring-emerald-400/30">{s} · {skillRank(lv)} (Lv {lv})</span>
                   ))}
                 </div>
               </MindRow>

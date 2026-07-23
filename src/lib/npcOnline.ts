@@ -10,7 +10,14 @@
  * the NPC falls back to its offline brain.
  */
 
-export type WebFact = { title: string; summary: string; url: string; source: 'wikipedia' | 'ai' }
+export type WebFact = { title: string; summary: string; url: string; source: 'wikipedia' | 'ai' | 'web' }
+
+/** A real Google web-search link for a query — so a citizen (or you) can open the
+ *  full web results. The app can't scrape Google directly (browser CORS + ToS),
+ *  but it can hand off to it, and it learns from the free sources below. */
+export function googleSearchUrl(query: string): string {
+  return `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`
+}
 
 type OpenSearch = [string, string[], string[], string[]]
 type Summary = { title?: string; extract?: string; content_urls?: { desktop?: { page?: string } } }
@@ -54,4 +61,37 @@ export async function fetchPublicKnowledge(query: string): Promise<WebFact | nul
     url: sum.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(title)}`,
     source: 'wikipedia',
   }
+}
+
+type DdgAnswer = { Heading?: string; AbstractText?: string; AbstractURL?: string; RelatedTopics?: Array<{ Text?: string; FirstURL?: string }> }
+
+/**
+ * DuckDuckGo Instant Answer — a second free, keyless web source. Broadens
+ * learning beyond Wikipedia to "the web". Some browsers/WebViews block it with
+ * CORS; if so it just returns null and the caller falls back, so it's harmless
+ * to try. Never the first source (used only when Wikipedia misses).
+ */
+export async function fetchDuckDuckGo(query: string): Promise<WebFact | null> {
+  const q = query.trim()
+  if (!q) return null
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1&t=focuslion`
+  const d = await fetchJson<DdgAnswer>(url, 6000)
+  if (!d) return null
+  let text = (d.AbstractText || '').trim()
+  let link = d.AbstractURL || ''
+  if (!text && Array.isArray(d.RelatedTopics)) {
+    const rt = d.RelatedTopics.find((r) => r.Text)
+    if (rt) { text = (rt.Text || '').trim(); link = rt.FirstURL || link }
+  }
+  if (!text || text.length < 8) return null
+  return { title: d.Heading || q, summary: trunc(text, 320), url: link || googleSearchUrl(q), source: 'web' }
+}
+
+/**
+ * Learn from the open web using free, keyless sources: Wikipedia first, then
+ * DuckDuckGo. Returns the first good result, or null. This is the citizens'
+ * autonomous "search the internet" — no API key, no paid service.
+ */
+export async function webLookup(query: string): Promise<WebFact | null> {
+  return (await fetchPublicKnowledge(query)) || (await fetchDuckDuckGo(query))
 }

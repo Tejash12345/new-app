@@ -19,7 +19,7 @@ import {
   type NpcBrain, type Responder,
 } from './npcMind'
 import { neuralLearn, neuralTokens } from './npcNeural'
-import { fetchPublicKnowledge, type WebFact } from './npcOnline'
+import { webLookup, type WebFact } from './npcOnline'
 import { getPref } from './prefs'
 import { askLion } from './ai'
 
@@ -100,10 +100,10 @@ export async function researchTopic(query: string): Promise<WebFact | null> {
   const q = query.trim()
   if (!q) return null
   if (getPref('npcInternet') && online()) {
-    const wiki = await fetchPublicKnowledge(q)
-    if (wiki) return wiki
+    const web = await webLookup(q) // Wikipedia + DuckDuckGo (free)
+    if (web) return web
   }
-  if (cloudBrainOn()) return cloudFact(q)
+  if (cloudBrainOn()) return cloudFact(q) // internet-scale AI knowledge, in reserve
   return null
 }
 

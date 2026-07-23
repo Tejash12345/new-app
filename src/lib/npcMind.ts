@@ -22,7 +22,8 @@
  * "thinks" by spreading activation across them to form associations + insights.
  */
 import {
-  ensureNet, freshNet, neuralInsight, neuralLearn, neuralStats, neuralThink, neuralTokens,
+  consolidate, curiosityGap, ensureNet, expertise, freshNet, neuralChain, neuralDream, neuralInsight,
+  neuralLearn, neuralStats, neuralThink, neuralTokens, topConcepts,
   type NeuralNet, type NeuralStats,
 } from './npcNeural'
 
@@ -348,11 +349,23 @@ const BUILD_BY_PROFESSION: Record<string, string[]> = {
 }
 const BUILD_TIERS: string[][] = [
   ['tree', 'rock', 'lamp', 'bench'], // beginner builder
-  ['hut', 'garden', 'tree', 'lamp'], // skilled
-  ['tower', 'fountain', 'statue', 'garden'], // master
+  ['hut', 'garden', 'tree', 'lamp', 'park'], // skilled
+  ['tower', 'fountain', 'statue', 'garden', 'library', 'lab', 'market', 'park'], // master
 ]
-/** Decide what this citizen builds next — profession- and skill-driven. */
+/** Decide what this citizen builds next — driven by what it KNOWS (its neural
+ *  expertise), then its profession, then its building-skill tier. */
 export function chooseBuildKind(brain: NpcBrain): string {
+  // build from expertise: a citizen that thinks about science builds a lab, etc.
+  const exp = expertise(brain.net)
+  if (exp && Math.random() < 0.5) {
+    const c = exp.field
+    if (/garden|tree|nature|forest|plant|flower|leaf/.test(c)) return pick(['garden', 'tree', 'park'])
+    if (/science|data|tech|robot|energy|physic|research|space|engineer|machine/.test(c)) return pick(['lab', 'tower'])
+    if (/book|story|knowledge|learn|memory|language|history|art|idea/.test(c)) return 'library'
+    if (/trade|market|coin|shop|food|snack|courier/.test(c)) return 'market'
+    if (/water|ocean|river|sea/.test(c)) return 'fountain'
+    if (/build|city|tower|architect|structure/.test(c)) return pick(['tower', 'monument', 'statue'])
+  }
   const lvl = Math.floor(brain.skills['building'] || 0)
   const tier = lvl >= 5 ? 2 : lvl >= 3 ? 1 : 0
   const prof = BUILD_BY_PROFESSION[brain.profession]
@@ -376,32 +389,93 @@ const INSIGHT_TEMPLATES: Array<(a: string, b: string) => string> = [
   (a, b) => `My mind links "${a}" with "${b}". I wonder what else connects.`,
   (a, b) => `Idea: if I get better at "${a}", I bet "${b}" follows.`,
 ]
+const DREAM_TEMPLATES: Array<(a: string, b: string) => string> = [
+  (a, b) => `What if "${a}" and "${b}" are connected? Nobody's put them together before.`,
+  (a, b) => `A wild idea just came to me — bridging "${a}" with "${b}".`,
+  (a, b) => `I dreamt up something new: "${a}" meeting "${b}".`,
+  (a, b) => `Creative spark! I think "${a}" could reinvent "${b}".`,
+]
 
-/**
- * Let the citizen THINK: spread activation across its neural model, form one
- * fresh insight from a strongly-wired pair of concepts, and remember it.
- * Reflecting reinforces that connection (thinking about something strengthens
- * it) and levels a "reasoning" skill. Returns the insight text, or null if the
- * mind is still too small or it just had this exact thought.
- */
-export function reflect(brain: NpcBrain): string | null {
-  const ins = neuralInsight(brain.net)
-  if (!ins) return null
-  const topic = `${ins.a}+${ins.b}`
-  const recent = brain.knowledge.filter((k) => k.source === 'insight').slice(-6)
-  if (recent.some((k) => k.topic === topic)) return null // don't repeat the same thought
-  const text = pick(INSIGHT_TEMPLATES)(ins.a, ins.b)
+function bumpSkill(brain: NpcBrain, skill: string, by: number) {
+  brain.skills[skill] = Math.round(((brain.skills[skill] || 0) + by) * 100) / 100
+}
+function repeatInsight(brain: NpcBrain, topic: string): boolean {
+  return brain.knowledge.filter((k) => k.source === 'insight').slice(-8).some((k) => k.topic === topic)
+}
+function addInsight(brain: NpcBrain, topic: string, text: string, verb: string, skill: string): string {
   brain.knowledge.push({ topic, text, source: 'insight', t: Date.now() })
-  rememberEvent(brain, 'life', `Had a thought — ${text}`, 0.4)
-  brain.skills['reasoning'] = Math.round(((brain.skills['reasoning'] || 0) + 0.3) * 100) / 100
-  neuralLearn(brain.net, [ins.a, ins.b], 0.5)
+  rememberEvent(brain, 'life', `${verb} — ${text}`, 0.45)
+  bumpSkill(brain, skill, 0.3)
   saveBrain(brain)
   return text
+}
+
+/**
+ * Let the citizen THINK using its neural model. It might (a) make a CREATIVE LEAP
+ * — wire two unconnected ideas into something new (grows "creativity"); (b) follow
+ * a CHAIN of thought across several linked concepts (grows "reasoning"); or (c)
+ * form a simpler insight from a strongly-wired pair. Thinking reinforces the
+ * links it uses. Returns the thought text, or null if the mind is still too small
+ * or it just had this exact thought.
+ */
+export function reflect(brain: NpcBrain): string | null {
+  const roll = Math.random()
+  // (a) creative leap — build a brand-new connection in its own model
+  if (roll < 0.3) {
+    const d = neuralDream(brain.net)
+    if (d && !repeatInsight(brain, `dream:${d.a}+${d.b}`)) {
+      return addInsight(brain, `dream:${d.a}+${d.b}`, pick(DREAM_TEMPLATES)(d.a, d.b), 'Imagined', 'creativity')
+    }
+  }
+  // (b) chain of thought — follow one idea to the next
+  if (roll < 0.62) {
+    const seed = topConcepts(brain.net, 1)[0]?.concept
+    const chain = seed ? neuralChain(brain.net, seed, 4) : []
+    if (chain.length >= 3 && !repeatInsight(brain, `chain:${chain[0]}`)) {
+      neuralLearn(brain.net, chain, 0.4)
+      return addInsight(brain, `chain:${chain[0]}`, `I can see how ${chain.join(' → ')} all connect.`, 'Reasoned', 'reasoning')
+    }
+  }
+  // (c) simple pair insight
+  const ins = neuralInsight(brain.net)
+  if (!ins || repeatInsight(brain, `${ins.a}+${ins.b}`)) return null
+  neuralLearn(brain.net, [ins.a, ins.b], 0.5)
+  return addInsight(brain, `${ins.a}+${ins.b}`, pick(INSIGHT_TEMPLATES)(ins.a, ins.b), 'Had a thought', 'reasoning')
+}
+
+/**
+ * The citizen designs its OWN creation from the concepts it knows best — a named
+ * invention it can build in the city. Grows an "engineering" skill. Returns the
+ * creation (name + the concept behind it), or null if the mind is too small.
+ */
+const INVENTION_NOUNS = ['Engine', 'Garden', 'Lab', 'Beacon', 'Machine', 'Archive', 'Forge', 'Hub', 'Sanctuary', 'Spire', 'Nexus', 'Works']
+export function invent(brain: NpcBrain): { name: string; concept: string } | null {
+  const top = topConcepts(brain.net, 3)[0]
+  if (!top) return null
+  const concept = top.concept
+  const name = `${concept.charAt(0).toUpperCase() + concept.slice(1)} ${pick(INVENTION_NOUNS)}`
+  brain.knowledge.push({ topic: `invention:${concept}`, text: `I designed the ${name} — my own creation.`, source: 'insight', t: Date.now() })
+  rememberEvent(brain, 'milestone', `Invented the ${name}!`, 0.85)
+  bumpSkill(brain, 'engineering', 0.5)
+  bumpInterest(brain, concept, 0.6)
+  saveBrain(brain)
+  return { name, concept }
 }
 
 /** Concepts the citizen associates with a topic — its own "thinking" about it. */
 export function associate(brain: NpcBrain, topic: string, n = 4): string[] {
   return neuralThink(brain.net, neuralTokens(topic), 2, n)
+}
+
+/** The citizen's field of specialisation, from its neural model. */
+export function expertiseOf(brain: NpcBrain): { field: string; concepts: string[] } | null {
+  return expertise(brain.net)
+}
+
+const SKILL_RANKS = ['Novice', 'Apprentice', 'Skilled', 'Expert', 'Master']
+/** A friendly rank title for a skill level. */
+export function skillRank(level: number): string {
+  return SKILL_RANKS[Math.min(SKILL_RANKS.length - 1, Math.floor(level / 2))]
 }
 
 export type Intelligence = NeuralStats & { knowledge: number; skills: number }
@@ -456,6 +530,17 @@ export function simulateOfflineLife(brain: NpcBrain) {
       g.done = g.progress >= 1
     }
     if (!wasDone && g.done) rememberEvent(brain, 'milestone', `Achieved my goal: ${g.text}.`, 0.9)
+  }
+  // while away, the mind CONSOLIDATES (memory "sleep" — strong links sharpen,
+  // noise fades) and may set ITSELF a new curiosity from a weakly-explored idea.
+  if (hours >= 1) consolidate(brain.net, Math.min(0.35, hours / 48))
+  if (hours >= 2 && Math.random() < 0.5) {
+    const gap = curiosityGap(brain.net)
+    if (gap && !brain.wantsToLearn.includes(gap)) {
+      brain.wantsToLearn.push(gap)
+      if (brain.wantsToLearn.length > 16) brain.wantsToLearn.shift()
+      rememberEvent(brain, 'life', `I got curious about ${gap} and want to learn more.`, 0.4)
+    }
   }
   brain.lastActive = now
 }

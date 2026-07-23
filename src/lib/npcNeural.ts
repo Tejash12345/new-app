@@ -31,9 +31,9 @@ export type NeuralNet = {
   gen: number // total learning events — a simple "age" of the mind
 }
 
-// Phone-safe caps: a mind this size thinks in well under a millisecond.
-const NEURON_CAP = 160
-const SYN_CAP = 640
+// Phone-safe caps: a mind this size still thinks in well under a millisecond.
+const NEURON_CAP = 220
+const SYN_CAP = 900
 const ACT_CAP = 6
 const W_CAP = 6
 
@@ -255,4 +255,95 @@ export function edgesAmong(net: NeuralNet, concepts: string[]): Array<{ a: strin
     if (set.has(a) && set.has(b)) out.push({ a, b, w: net.syn[k].w })
   }
   return out
+}
+
+// ---------------------------------------------------------------- advanced dynamics
+
+/**
+ * Memory consolidation — the "sleep" of the neural model. Weakly-used synapses
+ * fade a little and the faintest are forgotten, while strong, reinforced links
+ * survive; neuron activation relaxes toward rest, and orphaned, rarely-fired
+ * neurons drop out. Run over elapsed offline time so a mind naturally sharpens
+ * around what it uses and lets go of noise. `amount` 0..0.5 scales the fade.
+ */
+export function consolidate(net: NeuralNet, amount = 0.1): void {
+  ensureNet(net)
+  const a = Math.min(0.5, Math.max(0, amount))
+  const decay = 1 - a
+  for (const k of Object.keys(net.syn)) {
+    net.syn[k].w *= decay
+    if (net.syn[k].w < 0.12) delete net.syn[k] // forget the faintest links
+  }
+  for (const id of Object.keys(net.neurons)) {
+    net.neurons[id].act = Math.max(0.05, net.neurons[id].act * (1 - a * 0.5))
+  }
+  // prune orphaned, weak, rarely-fired neurons (nothing connects to them now)
+  const connected = new Set<string>()
+  for (const k of Object.keys(net.syn)) { const [x, y] = k.split(SEP); connected.add(x); connected.add(y) }
+  for (const id of Object.keys(net.neurons)) {
+    const n = net.neurons[id]
+    if (!connected.has(id) && n.fires <= 1 && n.act < 0.2) delete net.neurons[id]
+  }
+}
+
+/**
+ * Chain of thought: start at `seed` and hop along the strongest fresh link,
+ * `depth` times, to build a reasoning chain [seed, a, b, …]. This is how the
+ * citizen follows one idea to the next.
+ */
+export function neuralChain(net: NeuralNet, seed: string, depth = 4): string[] {
+  ensureNet(net)
+  if (!net.neurons[seed]) return []
+  const adj = adjacency(net)
+  const chain = [seed]
+  const used = new Set([seed])
+  let cur = seed
+  for (let i = 0; i < depth; i++) {
+    const edges = (adj.get(cur) || []).filter(([m]) => !used.has(m)).sort((x, y) => y[1] - x[1])
+    if (!edges.length) break
+    cur = edges[0][0]
+    used.add(cur)
+    chain.push(cur)
+  }
+  return chain
+}
+
+/**
+ * A creative leap: wire together two strong but currently-UNconnected concepts,
+ * forming a brand-new association in the model — the citizen building a new
+ * piece of its own mental model. Returns the newly-linked pair, or null.
+ */
+export function neuralDream(net: NeuralNet): { a: string; b: string } | null {
+  ensureNet(net)
+  const strong = topConcepts(net, 12).map((c) => c.concept)
+  if (strong.length < 2) return null
+  for (let tries = 0; tries < 14; tries++) {
+    const a = strong[Math.floor(Math.random() * strong.length)]
+    const b = strong[Math.floor(Math.random() * strong.length)]
+    if (a === b || net.syn[key2(a, b)]) continue
+    net.syn[key2(a, b)] = { w: 0.45 } // the creative new connection
+    net.gen += 1
+    return { a, b }
+  }
+  return null
+}
+
+/** The citizen's area of specialisation: its strongest concept plus the cluster
+ *  wired most tightly around it. */
+export function expertise(net: NeuralNet): { field: string; concepts: string[] } | null {
+  ensureNet(net)
+  const top = topConcepts(net, 1)[0]
+  if (!top) return null
+  return { field: top.concept, concepts: [top.concept, ...neuralThink(net, [top.concept], 1, 4)] }
+}
+
+/** A concept the mind cares about but has barely connected — something it would
+ *  be curious to explore further (drives self-directed learning). */
+export function curiosityGap(net: NeuralNet): string | null {
+  ensureNet(net)
+  const deg: Record<string, number> = {}
+  for (const k of Object.keys(net.syn)) { const [a, b] = k.split(SEP); deg[a] = (deg[a] || 0) + 1; deg[b] = (deg[b] || 0) + 1 }
+  const cands = topConcepts(net, 14).filter((c) => (deg[c.concept] || 0) <= 2)
+  if (!cands.length) return null
+  return cands[Math.floor(Math.random() * cands.length)].concept
 }

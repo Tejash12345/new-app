@@ -52,12 +52,22 @@ export function nextDistrict(level: number) {
   return DISTRICTS.find((d) => d.level > level) ?? null
 }
 
+/** A live thing a citizen just did — surfaced from the 3D scene so the UI can
+ *  show a running activity feed of the city coming alive. */
+export type CityActivity = {
+  id: string; name: string; emoji: string
+  kind: 'build' | 'invent' | 'learn' | 'think' | 'talk' | 'say'
+  text: string; t: number
+}
+
 export type CityOpts = {
   level: number; streak: number; reducedMotion?: boolean; character?: string
   /** tapped a living citizen in the 3D city — open its chat/brain (3D scene only). */
   onSelectCitizen?: (npcId: string, name: string, emoji: string) => void
   /** the current roster of living citizens (3D scene only) — for a tappable list. */
   onCitizens?: (list: { id: string; name: string; emoji: string }[]) => void
+  /** a citizen just did something (built, learned, thought, talked…) — for a live feed. */
+  onActivity?: (a: CityActivity) => void
 }
 
 // ---------- tiny seeded RNG (mulberry32) ----------
