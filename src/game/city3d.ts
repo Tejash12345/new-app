@@ -31,7 +31,15 @@ import { PLAYABLE_CHARACTERS, characterById } from '../lib/characters'
 import { loadBrain, saveBrain, idleLine, rememberEvent, gossip, reflect, invent, intelligence, chooseBuildKind, recordBuild, type NpcBrain } from '../lib/npcMind'
 import { autoLearnStep } from '../lib/npcLearn'
 
-export type City3DHandle = { stop: () => void; capture: () => string | null; setAvatar: (id: string) => void }
+/** Actions the player can order a citizen to perform, live in the 3D city. */
+export type CmdAction = 'come' | 'walk' | 'explore' | 'dance' | 'fight' | 'wave' | 'build' | 'rest'
+export type City3DHandle = {
+  stop: () => void
+  capture: () => string | null
+  setAvatar: (id: string) => void
+  /** tell a citizen to do something (walk, fight, come here…) — it obeys, in 3D. */
+  command: (npcId: string, action: CmdAction, targetId?: string) => void
+}
 
 // ---------- tiny seeded RNG (mulberry32) ----------
 function rng(seed: number) {
@@ -829,6 +837,8 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     speed: number; curiosity: number; social: number; home: THREE.Vector2; visited: Set<number>
     bubble: Bubble; speakT: number; showing: boolean
     npcId: string; brain: NpcBrain
+    // a player-issued command the citizen is currently carrying out (see command())
+    cmd?: { action: CmdAction; until: number; targetId?: string }
   }
   // A floating speech / thought bubble that hovers over a citizen. Big + high-res
   // so the words are readable at the city's far camera. It's added to the SCENE
@@ -882,8 +892,10 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   // practice so mid-range phones stay smooth).
   type BuildRec = { kind: string; x: number; z: number; level: number; by: string; label?: string }
   const BUILDS_KEY = 'fl-city-builds-v1'
-  // the city can EXPAND as the player levels — citizens keep building outward
-  const MAX_BUILDS = Math.min(120, 56 + level * 4)
+  // the city can EXPAND as the player levels — citizens keep building outward.
+  // Bounded for phone perf (each build is a small primitive group); "unlimited"
+  // in feel via the growing spread + the free-roaming explore camera.
+  const MAX_BUILDS = Math.min(150, 60 + level * 5)
   let buildRecords: BuildRec[] = []
   try { const raw = localStorage.getItem(BUILDS_KEY); if (raw) buildRecords = JSON.parse(raw) as BuildRec[] } catch { /* ignore */ }
   const bMat = {
@@ -1004,8 +1016,8 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     if (roll < (night ? 0.42 : 0.16)) { c.state = 'rest'; c.timer = 2 + Math.random() * 4; return } // stop + look around
     // sometimes decide to BUILD something (daytime, while there's room in the city)
     if (!night && buildRecords.length < MAX_BUILDS && Math.random() < 0.14 + c.brain.traits.curiosity * 0.12) {
-      // the more they've built, the further out they expand the city
-      const ang = Math.random() * Math.PI * 2, rr = 6 + Math.random() * (13 + Math.min(24, buildRecords.length * 0.35))
+      // the more they've built, the further out they expand the city (spreads wide)
+      const ang = Math.random() * Math.PI * 2, rr = 6 + Math.random() * (16 + Math.min(70, buildRecords.length * 0.7))
       c.target.set(Math.cos(ang) * rr, Math.sin(ang) * rr)
       c.state = 'build'; c.timer = 12
       return
@@ -1031,6 +1043,63 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   let learnT = 0 // seconds since the last autonomous internet-learning attempt
   let gossipT = 0 // seconds since the last offline peer-gossip attempt
   let reflectT = 0 // seconds since a citizen last "thought" (formed an insight)
+  let lastTSec = 0 // latest scene clock — so command() can time its duration
+
+  // ---- player commands: tell a citizen what to do, it obeys live in 3D ----
+  const CMD_ACK: Record<CmdAction, string> = {
+    come: 'Coming to you! 🏃', walk: 'Off I go! 🚶', explore: "I'll look around! 🧭",
+    dance: 'Watch me dance! 💃', fight: "Let's spar! 🤺", wave: 'Hey! 👋',
+    build: "I'll build something! 🔨", rest: 'Taking a break… 😌',
+  }
+  const CMD_FEED: Record<CmdAction, string> = {
+    come: 'is coming over', walk: 'is walking', explore: 'is exploring',
+    dance: 'is dancing', fight: 'is sparring', wave: 'is waving',
+    build: 'is off to build', rest: 'is resting',
+  }
+  function pickRoam(c: Citizen) {
+    const ang = Math.random() * Math.PI * 2
+    const rr = 10 + Math.random() * (20 + Math.min(60, buildRecords.length * 0.6))
+    c.target.set(Math.cos(ang) * rr, Math.sin(ang) * rr)
+    c.state = 'goto'
+  }
+  // keep a commanded citizen's target fresh each frame (chase, re-roam…)
+  function cmdUpkeep(c: Citizen) {
+    const a = c.cmd!.action
+    if (a === 'walk' || a === 'explore') {
+      if (Math.hypot(c.target.x - c.pos.x, c.target.y - c.pos.y) < 1.2) pickRoam(c)
+      c.state = 'goto'
+    } else if (a === 'fight') {
+      const opp = citizens.find((z) => z.npcId === c.cmd!.targetId)
+      if (!opp || opp === c) { c.cmd!.action = 'wave'; c.state = 'rest'; return }
+      const dx = opp.pos.x - c.pos.x, dz = opp.pos.y - c.pos.y, g = Math.hypot(dx, dz) || 1
+      c.target.set(opp.pos.x - (dx / g) * 2.2, opp.pos.y - (dz / g) * 2.2) // stand off ~2 apart
+      c.state = 'goto'
+    } else if (a === 'dance' || a === 'wave' || a === 'rest') {
+      c.state = 'rest'
+    }
+  }
+  // per-frame flourish for stationary commands (procedural — the Quaternius rigs
+  // have no dance/fight clips, so this is an honest approximation, like the
+  // "speaking pulse"): hop, spin, and lunge toward a sparring partner.
+  function cmdAnim(c: Citizen, tSec: number) {
+    const a = c.cmd!.action
+    const beat = Math.max(0, Math.sin(tSec * 7))
+    if (a === 'dance') { c.rig.group.rotation.y = tSec * 3.2; c.rig.group.position.y = 0.15 + Math.abs(Math.sin(tSec * 6)) * 0.5 }
+    else if (a === 'wave') { c.rig.group.position.y = 0.15 + beat * 0.35 }
+    else if (a === 'fight') {
+      const opp = citizens.find((z) => z.npcId === c.cmd!.targetId)
+      if (opp) {
+        const dx = opp.pos.x - c.pos.x, dz = opp.pos.y - c.pos.y, g = Math.hypot(dx, dz) || 1
+        c.rig.group.rotation.y = Math.atan2(-dx, -dz) // face the opponent
+        if (g < 3.4) {
+          c.rig.group.position.x = c.pos.x + (dx / g) * beat * 0.7
+          c.rig.group.position.z = c.pos.y + (dz / g) * beat * 0.7
+          c.rig.group.position.y = 0.15 + beat * 0.3
+        }
+      }
+    }
+  }
+
   // a citizen has walked to a chosen spot → construct what its brain decided on
   function doBuild(c: Citizen) {
     if (buildRecords.length >= MAX_BUILDS) return
@@ -1047,7 +1116,10 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     emitAct(c, inv ? 'invent' : 'build', inv ? `invented the ${inv.name}` : `built a ${kind}`)
   }
   function updateCitizens(tSec: number, dt: number) {
+    lastTSec = tSec
     for (const c of citizens) {
+      // carrying out a player command? keep its target fresh; drop it when done
+      if (c.cmd) { if (tSec >= c.cmd.until) c.cmd = undefined; else cmdUpkeep(c) }
       c.timer -= dt
       tmpV2.copy(c.target).sub(c.pos)
       const dist = tmpV2.length()
@@ -1055,20 +1127,22 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       const desired = Math.atan2(-tmpV2.x, -tmpV2.y) // face travel/target (model forward = -z)
       if (dist > 0.05) c.heading += shortestAngle(c.heading, desired) * Math.min(1, dt * (moving ? 4 : 2.5))
       if (moving) { tmpV2.normalize(); const s = c.speed * dt; c.pos.x += tmpV2.x * s; c.pos.y += tmpV2.y * s }
-      else if (c.state === 'build') { doBuild(c); citizenDecide(c) } // arrived → construct
+      else if (c.state === 'build') { doBuild(c); if (c.cmd?.action === 'build') c.cmd = undefined; c.state = 'rest'; if (!c.cmd) citizenDecide(c) } // arrived → construct
       else if (c.timer <= 0 || (c.state === 'goto' || c.state === 'wander')) {
         if (c.poi != null) { // remember where it went — becomes a recallable memory
           c.visited.add(c.poi)
           if (Math.random() < 0.5) rememberEvent(c.brain, 'life', 'I explored a corner of the city.', 0.3)
         }
-        citizenDecide(c)
+        if (!c.cmd) citizenDecide(c) // a command overrides autonomous decisions
       }
-      const rad = Math.hypot(c.pos.x, c.pos.y) // stay inside the plaza
-      if (rad > 22) c.pos.multiplyScalar(22 / rad)
+      const rad = Math.hypot(c.pos.x, c.pos.y) // roam the whole (expanding) city
+      const bound = 30 + Math.min(70, buildRecords.length * 0.7)
+      if (rad > bound) c.pos.multiplyScalar(bound / rad)
       c.rig.group.position.set(c.pos.x, 0.15, c.pos.y)
       c.rig.group.rotation.y = c.heading
       c.rig.pose({ tSec, running: false, walk: moving, airborne: false, sliding: false, dead: false })
       c.rig.update(dt)
+      if (c.cmd) cmdAnim(c, tSec) // procedural dance/fight/wave flourish (overrides pose transform)
       // speech / thought bubble — brain-driven; follows the citizen, cycles + fades
       c.bubble.sprite.position.set(c.pos.x, BUBBLE_Y, c.pos.y)
       c.speakT -= dt
@@ -1223,22 +1297,32 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   scene.add(new THREE.Points(precipGeo, precipMat))
   let flashTimer = 0
 
-  // ---------- camera: cinematic intro, then a gentle drag-steerable orbit ----------
+  // ---------- camera: cinematic intro, then FREE explore ----------
+  // one finger = orbit + tilt · two fingers = pinch-zoom + pan · wheel = zoom.
+  // Pan + zoom let the player roam the whole (expanding) city, not just spin.
   let azimuth = -0.7
   let azVel = 0
+  let zoom = 1 // 0.45 (close) .. 2.8 (far overview)
+  let pitch = 1 // 0.5 (low/cinematic) .. 1.7 (high/top-down)
+  let panX = 0, panZ = 0 // focus offset — travel across the city
   let dragging = false
-  let lastX = 0
   const INTRO_S = 3.2
   let introT = opts.reducedMotion ? INTRO_S : 0
   const radius = () => (camera.aspect < 0.85 ? 104 : 88)
+  const clampC = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v)
   function placeCamera() {
     const k = Math.min(1, introT / INTRO_S)
     const e = 1 - (1 - k) * (1 - k) * (1 - k)
-    const rad = radius() * (2.3 - 1.3 * e)
-    const height = 130 - 84 * e
+    const rad = radius() * (2.3 - 1.3 * e) * zoom
+    const height = (130 - 84 * e) * zoom * pitch
     const az = azimuth - 1.2 * (1 - e)
-    camera.position.set(Math.cos(az) * rad, height, Math.sin(az) * rad)
-    camera.lookAt(0, 4, 0)
+    const tx = panX * e, tz = panZ * e // pan eases in with the intro
+    camera.position.set(tx + Math.cos(az) * rad, height, tz + Math.sin(az) * rad)
+    camera.lookAt(tx, 4, tz)
+    // recede the fog as you pull back so the whole expanded city stays visible
+    const f = scene.fog as THREE.Fog
+    const zf = Math.max(0.85, zoom)
+    f.near = 130 * zf; f.far = Math.min(690, 380 * zf)
   }
   // tap-to-select: a raycast picks the citizen under a quick, still tap so the
   // hub can open its chat/brain — dragging still orbits the camera as before
@@ -1266,29 +1350,65 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       }
     }
   }
+  const pointers = new Map<number, { x: number; y: number }>()
+  let lastX = 0, lastY = 0
+  let pinchDist = 0, pinchMidX = 0, pinchMidY = 0
+  function twoFinger() {
+    const p = [...pointers.values()]
+    return { dist: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), mx: (p[0].x + p[1].x) / 2, my: (p[0].y + p[1].y) / 2 }
+  }
   function onDown(e: PointerEvent) {
-    dragging = true
-    lastX = e.clientX
-    downX = e.clientX; downY = e.clientY; downMoved = 0; downAt = performance.now()
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
     canvas.setPointerCapture(e.pointerId)
+    if (pointers.size === 1) {
+      dragging = true; lastX = e.clientX; lastY = e.clientY
+      downX = e.clientX; downY = e.clientY; downMoved = 0; downAt = performance.now()
+    } else if (pointers.size === 2) {
+      const s = twoFinger(); pinchDist = s.dist; pinchMidX = s.mx; pinchMidY = s.my
+    }
   }
   function onMove(e: PointerEvent) {
-    if (!dragging) return
-    const dx = e.clientX - lastX
-    lastX = e.clientX
+    if (!pointers.has(e.pointerId)) return
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pointers.size >= 2) {
+      const s = twoFinger()
+      if (pinchDist > 0) zoom = clampC(zoom * (pinchDist / s.dist), 0.45, 2.8) // pinch out → zoom in
+      const mdx = s.mx - pinchMidX, mdy = s.my - pinchMidY
+      const az = azimuth
+      const scale = radius() * zoom * 0.0016
+      const rx = -Math.sin(az), rz = Math.cos(az) // screen-right in world
+      const fx = -Math.cos(az), fz = -Math.sin(az) // screen-up → toward focus
+      panX = clampC(panX - (mdx * rx + mdy * fx) * scale, -240, 240)
+      panZ = clampC(panZ - (mdx * rz + mdy * fz) * scale, -240, 240)
+      pinchDist = s.dist; pinchMidX = s.mx; pinchMidY = s.my
+      downMoved += Math.abs(mdx) + Math.abs(mdy)
+      return
+    }
+    const dx = e.clientX - lastX, dy = e.clientY - lastY
+    lastX = e.clientX; lastY = e.clientY
     downMoved = Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY)
     azVel = dx * 0.004
     azimuth += azVel
+    pitch = clampC(pitch - dy * 0.004, 0.5, 1.7) // vertical drag tilts the view
   }
-  function onUp(e?: PointerEvent) {
-    dragging = false
-    if (e && downMoved < 12 && performance.now() - downAt < 400) pickCitizen(e.clientX, e.clientY)
+  function onUp(e: PointerEvent) {
+    const tap = pointers.size === 1 && downMoved < 12 && performance.now() - downAt < 400
+    pointers.delete(e.pointerId)
+    try { canvas.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
+    if (pointers.size < 2) pinchDist = 0
+    if (pointers.size === 0) dragging = false
+    if (tap) pickCitizen(e.clientX, e.clientY)
+  }
+  function onWheel(e: WheelEvent) {
+    e.preventDefault()
+    zoom = clampC(zoom * (1 + (e.deltaY > 0 ? 0.12 : -0.12)), 0.45, 2.8)
   }
   canvas.addEventListener('pointerdown', onDown)
   canvas.addEventListener('pointermove', onMove)
   canvas.addEventListener('pointerup', onUp)
   canvas.addEventListener('pointercancel', onUp)
-  canvas.style.touchAction = 'pan-y'
+  canvas.addEventListener('wheel', onWheel, { passive: false })
+  canvas.style.touchAction = 'none' // we handle all gestures (orbit/zoom/pan) ourselves
 
   // ---------- loop ----------
   let raf = 0
@@ -1502,6 +1622,33 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     raf = requestAnimationFrame(frame)
   }
 
+  function nearestOther(c: Citizen): Citizen | null {
+    let best: Citizen | null = null, bd = Infinity
+    for (const z of citizens) { if (z === c) continue; const d = z.pos.distanceTo(c.pos); if (d < bd) { bd = d; best = z } }
+    return best
+  }
+  // The player orders a citizen to do something — it obeys, live in the 3D city.
+  function command(npcId: string, action: CmdAction, targetId?: string) {
+    const c = citizens.find((z) => z.npcId === npcId)
+    if (!c) return
+    const dur = action === 'wave' ? 3.5 : action === 'fight' ? 7 : action === 'dance' ? 8 : action === 'build' ? 16 : 12
+    c.cmd = { action, until: lastTSec + dur, targetId }
+    c.timer = dur
+    if (action === 'come') { c.target.set(panX, panZ); c.state = 'goto' } // come to where you're looking
+    else if (action === 'walk' || action === 'explore') pickRoam(c)
+    else if (action === 'build') { const ang = Math.random() * Math.PI * 2, rr = 8 + Math.random() * 42; c.target.set(Math.cos(ang) * rr, Math.sin(ang) * rr); c.state = 'build' }
+    else if (action === 'fight') {
+      const opp = targetId ? citizens.find((z) => z.npcId === targetId && z !== c) : nearestOther(c)
+      if (opp) {
+        c.cmd.targetId = opp.npcId
+        opp.cmd = { action: 'fight', until: lastTSec + dur, targetId: c.npcId }; opp.timer = dur // spar back
+        opp.bubble.draw(CMD_ACK.fight, false); opp.showing = true; opp.speakT = 3
+      } else c.cmd.action = 'wave'
+    } else c.state = 'rest' // dance / wave / rest stand in place
+    c.bubble.draw(CMD_ACK[c.cmd.action], false); c.showing = true; c.speakT = 3.5
+    emitAct(c, 'say', CMD_FEED[c.cmd.action])
+  }
+
   return {
     // Photo Mode: render a fresh frame and read it back synchronously
     capture: () => {
@@ -1514,6 +1661,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       }
     },
     setAvatar,
+    command,
     stop: () => {
       running = false
       cancelAnimationFrame(raf)
@@ -1523,6 +1671,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('pointercancel', onUp)
+      canvas.removeEventListener('wheel', onWheel)
       monument.dispose()
       for (const c of citizens) { saveBrain(c.brain); c.rig.dispose() } // persist session memories
       scene.traverse((o) => {

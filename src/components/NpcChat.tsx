@@ -23,6 +23,7 @@ import {
 import { edgesAmong, topConcepts } from '../lib/npcNeural'
 import { googleSearchUrl } from '../lib/npcOnline'
 import { researchTopic } from '../lib/npcCloud' // importing also registers the genius-brain responder
+import type { CmdAction } from '../game/city3d' // type-only — does NOT pull the three.js chunk
 import { setPref, usePref } from '../lib/prefs'
 import { speech } from '../lib/speak'
 import { confirmDialog } from '../store/app'
@@ -33,8 +34,36 @@ import { cn } from '../lib/utils'
 type Msg = { role: 'player' | 'npc'; text: string; source?: string }
 const CHIPS = ['What do you remember?', 'How are you?', 'What are your goals?', 'Tell me about focus']
 
-export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
+// Player commands the citizen carries out live in the 3D city (see city3d command()).
+const CMD_CHIPS: Array<{ emoji: string; label: string; action: CmdAction }> = [
+  { emoji: '🎯', label: 'Come here', action: 'come' },
+  { emoji: '🚶', label: 'Walk', action: 'walk' },
+  { emoji: '🧭', label: 'Explore', action: 'explore' },
+  { emoji: '🤺', label: 'Fight', action: 'fight' },
+  { emoji: '💃', label: 'Dance', action: 'dance' },
+  { emoji: '👋', label: 'Wave', action: 'wave' },
+  { emoji: '🏗️', label: 'Build', action: 'build' },
+  { emoji: '😌', label: 'Rest', action: 'rest' },
+]
+// natural-language → command (checked in order; specific before generic)
+const CMD_WORDS: Array<{ re: RegExp; action: CmdAction }> = [
+  { re: /\b(come here|come to me|come over|come|follow)\b/i, action: 'come' },
+  { re: /\b(fight|spar|battle|box|attack)\b/i, action: 'fight' },
+  { re: /\b(dance|dancing)\b/i, action: 'dance' },
+  { re: /\b(wave|say hi|greet)\b/i, action: 'wave' },
+  { re: /\b(build|construct)\b/i, action: 'build' },
+  { re: /\b(explore|look around|roam|wander)\b/i, action: 'explore' },
+  { re: /\b(walk|move|go for a walk)\b/i, action: 'walk' },
+  { re: /\b(rest|sit down|relax|stop|stand still)\b/i, action: 'rest' },
+]
+const CMD_SAY: Record<string, string> = {
+  come: 'On my way to you! 🏃', walk: 'Going for a walk 🚶', explore: 'Off to explore the city 🧭',
+  fight: "Let's spar! 🤺", dance: 'Time to dance 💃', wave: '👋', build: 'I’ll go build something 🔨', rest: 'Taking a breather 😌',
+}
+
+export function NpcChat({ npcId, name, emoji, level, streak, onClose, onCommand }: {
   npcId: string; name: string; emoji: string; level: number; streak: number; onClose: () => void
+  onCommand?: (action: CmdAction, targetId?: string) => void
 }) {
   const [brain] = useState<NpcBrain>(() => loadBrain(npcId, { name, emoji }))
   const internetOn = usePref('npcInternet')
@@ -67,12 +96,24 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' }) }, [msgs])
   useEffect(() => { sfx.resume(); sfx.hologram(); hap.select() }, [])
 
+  // fire a live 3D command (from a chip or detected in chat), with in-chat feedback
+  function doCommand(action: CmdAction) {
+    if (!onCommand) return
+    sfx.resume(); sfx.uiClick(); hap.tap()
+    onCommand(action)
+    const say = CMD_SAY[action] ?? 'On it!'
+    setMsgs((m) => [...m, { role: 'npc', text: say }])
+    if (voiceOn) speech.play(say)
+  }
+
   async function send(text: string) {
     const t = text.trim()
     if (!t || busy) return
     sfx.resume(); sfx.uiClick(); hap.tap()
     setInput('')
     setMsgs((m) => [...m, { role: 'player', text: t }])
+    // if the player told the citizen to DO something, carry it out in the 3D city
+    if (onCommand) { const hit = CMD_WORDS.find((c) => c.re.test(t)); if (hit) onCommand(hit.action) }
     setBusy(true)
     try {
       const ctx = { level, streak, timeOfDay: new Date().getHours() }
@@ -185,6 +226,19 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
               ))}
               {busy && <div className="text-sm text-white/45">{brain.name} is thinking…</div>}
             </div>
+
+            {/* command chips — tell them what to do, live in the 3D city */}
+            {onCommand && (
+              <div className="flex items-center gap-1.5 overflow-x-auto px-4 pb-1.5 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+                <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-white/35">Tell them</span>
+                {CMD_CHIPS.map((c) => (
+                  <button key={c.action} onClick={() => doCommand(c.action)}
+                    className="flex shrink-0 items-center gap-1 rounded-full bg-purple-500/12 px-3 py-1.5 text-xs font-semibold text-purple-100 ring-1 ring-purple-400/25 transition active:scale-95">
+                    <span>{c.emoji}</span>{c.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* quick chips */}
             <div className="flex gap-1.5 overflow-x-auto px-4 pb-2 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>

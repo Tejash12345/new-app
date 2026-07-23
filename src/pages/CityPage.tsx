@@ -16,6 +16,7 @@ import { sfx } from '../game/sfx'
 import { hap } from '../lib/haptics'
 import { NpcChat } from '../components/NpcChat'
 import { CityMinds } from '../components/CityMinds'
+import type { CmdAction } from '../game/city3d' // type-only — city3d stays lazily loaded
 
 /** Free run every day, +1 per completed focus session, capped. */
 const MAX_RUNS_PER_DAY = 3
@@ -45,6 +46,7 @@ export function CityPage() {
   const cityRef = useRef<HTMLCanvasElement>(null)
   const captureRef = useRef<(() => string | null) | null>(null)
   const citySetAvatar = useRef<((id: string) => void) | null>(null)
+  const cityCommand = useRef<((npcId: string, action: CmdAction, targetId?: string) => void) | null>(null)
   const [cityPickerOpen, setCityPickerOpen] = useState(false)
   // tapped a living citizen → open its offline-brain chat
   const [chatNpc, setChatNpc] = useState<{ id: string; name: string; emoji: string } | null>(null)
@@ -86,6 +88,7 @@ export function CityPage() {
           stop = h.stop
           captureRef.current = h.capture
           citySetAvatar.current = h.setAvatar
+          cityCommand.current = h.command
         } else fallback2d()
       })
       .catch(() => {
@@ -95,6 +98,7 @@ export function CityPage() {
       cancelled = true
       captureRef.current = null
       citySetAvatar.current = null
+      cityCommand.current = null
       stop?.()
     }
   }, [level, streak, cityFull])
@@ -118,9 +122,10 @@ export function CityPage() {
         if (cancelled) return
         const h = startCity3D(el, sceneOpts)
         stop = h ? h.stop : startCityScene(el, sceneOpts)
+        if (h) cityCommand.current = h.command
       })
       .catch(() => { if (!cancelled) stop = startCityScene(el, sceneOpts) })
-    return () => { cancelled = true; stop?.() }
+    return () => { cancelled = true; cityCommand.current = null; stop?.() }
   }, [cityFull, level, streak])
 
   // Photo Mode — share the current city view, or download it if sharing isn't available
@@ -877,7 +882,8 @@ export function CityPage() {
       <AnimatePresence>
         {chatNpc && (
           <NpcChat key={chatNpc.id} npcId={chatNpc.id} name={chatNpc.name} emoji={chatNpc.emoji}
-            level={level} streak={streak} onClose={() => setChatNpc(null)} />
+            level={level} streak={streak} onClose={() => setChatNpc(null)}
+            onCommand={(action, targetId) => cityCommand.current?.(chatNpc.id, action, targetId)} />
         )}
       </AnimatePresence>
     </Page>
