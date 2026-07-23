@@ -87,11 +87,34 @@ export async function fetchDuckDuckGo(query: string): Promise<WebFact | null> {
   return { title: d.Heading || q, summary: trunc(text, 320), url: link || googleSearchUrl(q), source: 'web' }
 }
 
+type WikiSearch = { query?: { search?: Array<{ title?: string; snippet?: string }> } }
+
 /**
- * Learn from the open web using free, keyless sources: Wikipedia first, then
- * DuckDuckGo. Returns the first good result, or null. This is the citizens'
- * autonomous "search the internet" — no API key, no paid service.
+ * Wikipedia FULL-TEXT search — broader than opensearch (matches on article
+ * content, not just titles), so it finds a relevant page for far more queries.
+ * Keyless + CORS-enabled (origin=*).
+ */
+export async function fetchWikiSearch(query: string): Promise<WebFact | null> {
+  const q = query.trim()
+  if (!q) return null
+  const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&srprop=snippet&format=json&origin=*&srsearch=${encodeURIComponent(q)}`
+  const d = await fetchJson<WikiSearch>(url)
+  const hit = d?.query?.search?.[0]
+  if (!hit?.title) return null
+  const wikiUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(hit.title.replace(/\s/g, '_'))}`
+  // prefer a clean summary; fall back to the (HTML) search snippet
+  const sum = await fetchJson<Summary>(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(hit.title)}`)
+  if (sum?.extract) return { title: sum.title || hit.title, summary: trunc(sum.extract, 320), url: sum.content_urls?.desktop?.page || wikiUrl, source: 'wikipedia' }
+  const snip = (hit.snippet || '').replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim()
+  return snip ? { title: hit.title, summary: trunc(snip, 320), url: wikiUrl, source: 'wikipedia' } : null
+}
+
+/**
+ * Learn from the open web using free, keyless, CORS-enabled sources: Wikipedia
+ * (exact title → full-text search), then DuckDuckGo. Returns the first good
+ * result, or null. This is the citizens' client-side "search the internet" — no
+ * API key, no server. (Deeper live scraping goes through the npc-web function.)
  */
 export async function webLookup(query: string): Promise<WebFact | null> {
-  return (await fetchPublicKnowledge(query)) || (await fetchDuckDuckGo(query))
+  return (await fetchPublicKnowledge(query)) || (await fetchWikiSearch(query)) || (await fetchDuckDuckGo(query))
 }

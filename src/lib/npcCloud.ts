@@ -22,6 +22,7 @@ import { neuralLearn, neuralTokens } from './npcNeural'
 import { webLookup, type WebFact } from './npcOnline'
 import { getPref } from './prefs'
 import { askLion } from './ai'
+import { supabase } from './supabase'
 
 function online(): boolean {
   return typeof navigator === 'undefined' || navigator.onLine !== false
@@ -92,16 +93,72 @@ export async function cloudFact(topic: string): Promise<WebFact | null> {
   }
 }
 
+// ---------------------------------------------------------------- live web scraping (server-side)
+
+type WebSearchResult = { title: string; snippet: string; url: string }
+
+/** SEARCH the live web (server-side, via the npc-web function → DuckDuckGo HTML).
+ *  Works where the browser can't (no CORS). Returns [] on any failure. */
+export async function webSearch(query: string): Promise<WebSearchResult[]> {
+  try {
+    const { data, error } = await supabase.functions.invoke('npc-web', { body: { action: 'search', query } })
+    const results = (data as { results?: WebSearchResult[] } | null)?.results
+    if (error || !Array.isArray(results)) return []
+    return results
+  } catch { return [] }
+}
+
+/** Scrape a page's readable text (server-side). Returns null on any failure. */
+export async function readPage(url: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke('npc-web', { body: { action: 'read', url } })
+    const text = (data as { text?: string } | null)?.text
+    if (error || !text) return null
+    return String(text)
+  } catch { return null }
+}
+
 /**
- * Research any topic from the internet: Wikipedia first (free, keyless), then
- * the genius brain for anything Wikipedia doesn't cover. Respects both toggles.
+ * SCRAPE the live internet for a topic → a compact, attributed fact. Searches
+ * the open web server-side, takes the top result, and (if the snippet is thin)
+ * reads the actual page for more. This is the citizens' real "scrape the web".
+ */
+export async function scrapeWeb(topic: string): Promise<WebFact | null> {
+  const results = await webSearch(topic)
+  if (!results.length) return null
+  const top = results[0]
+  let summary = (top.snippet || '').trim()
+  if (summary.length < 80) {
+    const page = await readPage(top.url)
+    if (page) summary = page.trim().slice(0, 320)
+  }
+  if (!summary || summary.length < 8) return null
+  return { title: top.title || topic, summary: summary.slice(0, 320), url: top.url, source: 'web' }
+}
+
+/**
+ * Autonomous-learning lookup: free keyless sources, then a live server-side web
+ * SCRAPE. No AI — keeps the player's daily AI allowance untouched. Gated on the
+ * internet-learning toggle.
+ */
+export async function learnLookup(topic: string): Promise<WebFact | null> {
+  if (!getPref('npcInternet') || !online()) return null
+  return (await webLookup(topic)) || (await scrapeWeb(topic))
+}
+
+/**
+ * Research any topic from the internet: free keyless web (Wikipedia/DuckDuckGo),
+ * then a live server-side scrape, then the genius brain for anything still
+ * uncovered. Respects both toggles.
  */
 export async function researchTopic(query: string): Promise<WebFact | null> {
   const q = query.trim()
   if (!q) return null
   if (getPref('npcInternet') && online()) {
-    const web = await webLookup(q) // Wikipedia + DuckDuckGo (free)
+    const web = await webLookup(q) // keyless: Wikipedia + DuckDuckGo
     if (web) return web
+    const scraped = await scrapeWeb(q) // live server-side scrape of the open web
+    if (scraped) return scraped
   }
   if (cloudBrainOn()) return cloudFact(q) // internet-scale AI knowledge, in reserve
   return null

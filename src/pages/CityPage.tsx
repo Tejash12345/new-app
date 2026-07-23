@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Brain, Camera, ChevronRight, Flame, Gamepad2, Maximize2, Play, Star, Trophy, X, Zap } from 'lucide-react'
+import { Brain, Camera, ChevronDown, ChevronRight, Flame, Gamepad2, Maximize2, Minus, Play, Star, Trophy, X, Zap } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { AiMission, Habit, StudySession, Task } from '../lib/types'
@@ -49,6 +49,8 @@ export function CityPage() {
   // tapped a living citizen → open its offline-brain chat
   const [chatNpc, setChatNpc] = useState<{ id: string; name: string; emoji: string } | null>(null)
   const [mindsOpen, setMindsOpen] = useState(false) // City Minds dashboard (watch citizens develop)
+  const [feedOpen, setFeedOpen] = useState(true) // fullscreen live-activity panel visible
+  const [feedMin, setFeedMin] = useState(false) // …minimised to just its header
   // live feed of what citizens are doing (building/learning/thinking/talking)
   const [activity, setActivity] = useState<CityActivity[]>([])
   const pushActivity = (a: CityActivity) => setActivity((list) => [a, ...list].slice(0, 30))
@@ -811,13 +813,33 @@ export function CityPage() {
               <div className="pointer-events-none absolute left-3 top-[calc(0.75rem+env(safe-area-inset-top))] rounded-full bg-black/50 px-3 py-1.5 text-[11px] font-semibold text-white/80 backdrop-blur-md">
                 Lion City · drag to look around · tap a citizen to chat
               </div>
-              {activity.length > 0 && (
-                <div className="pointer-events-auto absolute left-3 top-[calc(3.2rem+env(safe-area-inset-top))] max-h-[42vh] w-[min(80vw,340px)] overflow-y-auto rounded-2xl bg-black/45 p-2 backdrop-blur-md [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-                  <div className="mb-1 flex items-center gap-1 px-1 text-[9px] font-bold uppercase tracking-[0.2em] text-white/50">
+              {activity.length > 0 && feedOpen && (
+                <div className="pointer-events-auto absolute left-3 top-[calc(3.2rem+env(safe-area-inset-top))] w-[min(80vw,340px)] rounded-2xl bg-black/45 p-2 backdrop-blur-md">
+                  <div className="flex items-center gap-1 px-1 text-[9px] font-bold uppercase tracking-[0.2em] text-white/50">
                     <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live activity
+                    <div className="ml-auto flex items-center gap-0.5">
+                      <button onClick={() => { sfx.uiClick(); hap.tap(); setFeedMin((m) => !m) }} aria-label={feedMin ? 'Expand live activity' : 'Minimise live activity'}
+                        className="rounded-full p-1 text-white/60 transition hover:bg-white/10 active:scale-90">
+                        {feedMin ? <ChevronDown size={13} /> : <Minus size={13} />}
+                      </button>
+                      <button onClick={() => { sfx.uiClick(); hap.tap(); setFeedOpen(false) }} aria-label="Close live activity"
+                        className="rounded-full p-1 text-white/60 transition hover:bg-white/10 active:scale-90">
+                        <X size={13} />
+                      </button>
+                    </div>
                   </div>
-                  <ActivityFeed items={activity} max={10} onPick={(a) => setChatNpc({ id: a.id, name: a.name, emoji: a.emoji })} />
+                  {!feedMin && (
+                    <div className="mt-1 max-h-[42vh] overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+                      <ActivityFeed items={activity} max={10} onPick={(a) => setChatNpc({ id: a.id, name: a.name, emoji: a.emoji })} />
+                    </div>
+                  )}
                 </div>
+              )}
+              {activity.length > 0 && !feedOpen && (
+                <button onClick={() => { sfx.uiClick(); hap.tap(); setFeedOpen(true) }} aria-label="Show live activity"
+                  className="pointer-events-auto absolute left-3 top-[calc(3.2rem+env(safe-area-inset-top))] flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-2 text-[11px] font-bold text-white/85 ring-1 ring-white/15 backdrop-blur-md transition active:scale-95">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live activity
+                </button>
               )}
               <button onClick={() => { sfx.uiClick(); hap.tap(); setCityFull(false) }} aria-label="Exit fullscreen"
                 className="absolute right-3 top-[calc(0.75rem+env(safe-area-inset-top))] z-10 rounded-full bg-black/55 p-2.5 text-white backdrop-blur-md transition active:scale-90">

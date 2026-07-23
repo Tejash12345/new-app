@@ -11,7 +11,7 @@
  */
 import { learnWebFact, saveBrain, type NpcBrain } from './npcMind'
 import { neuralTokens } from './npcNeural'
-import { webLookup } from './npcOnline'
+import { learnLookup } from './npcCloud'
 import { getPref } from './prefs'
 
 // A broad concept pool so citizens grow real, wide-ranging knowledge — not just
@@ -77,7 +77,7 @@ export async function autoLearnStep(brains: NpcBrain[]): Promise<{ id: string; t
   inFlight = true
   lastFetch = now
   try {
-    const fact = await webLookup(topic) // Wikipedia + DuckDuckGo (free, keyless)
+    const fact = await learnLookup(topic) // keyless web + live server-side scrape
     if (!fact) return null
     learnWebFact(brain, topic, fact.summary, fact.url) // also wires the neural model
     // it satisfied its curiosity — drop the topic from the self-directed queue
