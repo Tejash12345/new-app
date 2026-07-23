@@ -33,12 +33,16 @@ import { autoLearnStep } from '../lib/npcLearn'
 
 /** Actions the player can order a citizen to perform, live in the 3D city. */
 export type CmdAction = 'come' | 'walk' | 'explore' | 'dance' | 'fight' | 'wave' | 'build' | 'rest'
+/** On-screen camera control operations (buttons in the UI). */
+export type ViewOp = 'in' | 'out' | 'left' | 'right' | 'up' | 'down' | 'rotL' | 'rotR' | 'reset'
 export type City3DHandle = {
   stop: () => void
   capture: () => string | null
   setAvatar: (id: string) => void
   /** tell a citizen to do something (walk, fight, come here…) — it obeys, in 3D. */
   command: (npcId: string, action: CmdAction, targetId?: string) => void
+  /** drive the camera from UI buttons (zoom / pan / rotate / recenter). */
+  view: (op: ViewOp) => void
 }
 
 // ---------- tiny seeded RNG (mulberry32) ----------
@@ -1649,6 +1653,23 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     emitAct(c, 'say', CMD_FEED[c.cmd.action])
   }
 
+  // drive the camera from on-screen buttons — precise control when the touch
+  // pinch/pan is fiddly. placeCamera() (each frame) reads these live.
+  function viewControl(op: ViewOp) {
+    const step = radius() * zoom * 0.2
+    const rx = -Math.sin(azimuth), rz = Math.cos(azimuth) // screen-right in world
+    const fx = -Math.cos(azimuth), fz = -Math.sin(azimuth) // screen-forward (into scene)
+    if (op === 'in') zoom = clampC(zoom * 0.8, 0.45, 2.8)
+    else if (op === 'out') zoom = clampC(zoom * 1.25, 0.45, 2.8)
+    else if (op === 'right') { panX = clampC(panX + rx * step, -240, 240); panZ = clampC(panZ + rz * step, -240, 240) }
+    else if (op === 'left') { panX = clampC(panX - rx * step, -240, 240); panZ = clampC(panZ - rz * step, -240, 240) }
+    else if (op === 'up') { panX = clampC(panX + fx * step, -240, 240); panZ = clampC(panZ + fz * step, -240, 240) }
+    else if (op === 'down') { panX = clampC(panX - fx * step, -240, 240); panZ = clampC(panZ - fz * step, -240, 240) }
+    else if (op === 'rotL') azimuth -= 0.32
+    else if (op === 'rotR') azimuth += 0.32
+    else if (op === 'reset') { zoom = 1; pitch = 1; panX = 0; panZ = 0; azimuth = -0.7 }
+  }
+
   return {
     // Photo Mode: render a fresh frame and read it back synchronously
     capture: () => {
@@ -1662,6 +1683,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
     },
     setAvatar,
     command,
+    view: viewControl,
     stop: () => {
       running = false
       cancelAnimationFrame(raf)

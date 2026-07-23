@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Brain, Camera, ChevronDown, ChevronRight, Flame, Gamepad2, Maximize2, Minus, Play, Star, Trophy, X, Zap } from 'lucide-react'
+import { Brain, Camera, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Crosshair, Flame, Gamepad2, Maximize2, Minus, Play, Plus, RotateCcw, RotateCw, Star, Trophy, X, Zap } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTable } from '../hooks/db'
 import type { AiMission, Habit, StudySession, Task } from '../lib/types'
@@ -16,7 +16,7 @@ import { sfx } from '../game/sfx'
 import { hap } from '../lib/haptics'
 import { NpcChat } from '../components/NpcChat'
 import { CityMinds } from '../components/CityMinds'
-import type { CmdAction } from '../game/city3d' // type-only — city3d stays lazily loaded
+import type { CmdAction, ViewOp } from '../game/city3d' // type-only — city3d stays lazily loaded
 
 /** Free run every day, +1 per completed focus session, capped. */
 const MAX_RUNS_PER_DAY = 3
@@ -47,6 +47,7 @@ export function CityPage() {
   const captureRef = useRef<(() => string | null) | null>(null)
   const citySetAvatar = useRef<((id: string) => void) | null>(null)
   const cityCommand = useRef<((npcId: string, action: CmdAction, targetId?: string) => void) | null>(null)
+  const cityView = useRef<((op: ViewOp) => void) | null>(null)
   const [cityPickerOpen, setCityPickerOpen] = useState(false)
   // tapped a living citizen → open its offline-brain chat
   const [chatNpc, setChatNpc] = useState<{ id: string; name: string; emoji: string } | null>(null)
@@ -89,6 +90,7 @@ export function CityPage() {
           captureRef.current = h.capture
           citySetAvatar.current = h.setAvatar
           cityCommand.current = h.command
+          cityView.current = h.view
         } else fallback2d()
       })
       .catch(() => {
@@ -99,6 +101,7 @@ export function CityPage() {
       captureRef.current = null
       citySetAvatar.current = null
       cityCommand.current = null
+      cityView.current = null
       stop?.()
     }
   }, [level, streak, cityFull])
@@ -122,10 +125,10 @@ export function CityPage() {
         if (cancelled) return
         const h = startCity3D(el, sceneOpts)
         stop = h ? h.stop : startCityScene(el, sceneOpts)
-        if (h) cityCommand.current = h.command
+        if (h) { cityCommand.current = h.command; cityView.current = h.view }
       })
       .catch(() => { if (!cancelled) stop = startCityScene(el, sceneOpts) })
-    return () => { cancelled = true; cityCommand.current = null; stop?.() }
+    return () => { cancelled = true; cityCommand.current = null; cityView.current = null; stop?.() }
   }, [cityFull, level, streak])
 
   // Photo Mode — share the current city view, or download it if sharing isn't available
@@ -433,6 +436,9 @@ export function CityPage() {
             Districts {districts}/{DISTRICTS.length}{upcoming && <> · {upcoming.name} opens at Lv {upcoming.level}</>}
           </div>
         </div>
+
+        {/* camera controls — zoom / pan / rotate / recenter */}
+        {citizenList.length > 0 && <CityViewControls onView={(op) => cityView.current?.(op)} />}
       </div>
 
       {/* ---- live activity — what the citizens are doing right now ---- */}
@@ -850,6 +856,7 @@ export function CityPage() {
                 className="absolute right-3 top-[calc(0.75rem+env(safe-area-inset-top))] z-10 rounded-full bg-black/55 p-2.5 text-white backdrop-blur-md transition active:scale-90">
                 <X size={20} />
               </button>
+              <CityViewControls onView={(op) => cityView.current?.(op)} />
               {citizenList.length > 0 && (
                 <div className="absolute inset-x-0 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] px-3">
                   <div className="mx-auto flex max-w-3xl gap-2 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
@@ -928,6 +935,39 @@ function ActivityFeed({ items, max = 8, onPick }: {
           )
         })}
       </AnimatePresence>
+    </div>
+  )
+}
+
+// ---- on-screen camera controls: precise zoom / pan / rotate / recenter ----
+// (buttons complement the touch gestures, which can be fiddly for landing on a
+// specific spot). Press-and-hold repeats. Calls the 3D engine's view() handle.
+function CityViewControls({ onView }: { onView: (op: ViewOp) => void }) {
+  const timer = useRef<number | null>(null)
+  const stop = () => { if (timer.current) { clearInterval(timer.current); timer.current = null } }
+  useEffect(() => stop, [])
+  const start = (op: ViewOp) => { onView(op); hap.tap(); stop(); timer.current = window.setInterval(() => onView(op), 100) }
+  const BTN = 'flex h-9 w-9 items-center justify-center rounded-lg bg-black/50 text-white/90 ring-1 ring-white/15 backdrop-blur-md transition active:scale-90 active:bg-black/70'
+  const btn = (op: ViewOp, label: string, icon: ReactNode) => (
+    <button key={op} aria-label={label} title={label} className={BTN}
+      onPointerDown={(e) => { e.preventDefault(); start(op) }}
+      onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop}>{icon}</button>
+  )
+  return (
+    <div className="pointer-events-auto absolute right-3 top-1/2 flex -translate-y-1/2 flex-col items-center gap-1.5">
+      {btn('in', 'Zoom in', <Plus size={16} />)}
+      {btn('out', 'Zoom out', <Minus size={16} />)}
+      {btn('up', 'Move up', <ChevronUp size={16} />)}
+      <div className="flex gap-1.5">
+        {btn('left', 'Move left', <ChevronLeft size={16} />)}
+        {btn('reset', 'Recenter', <Crosshair size={15} />)}
+        {btn('right', 'Move right', <ChevronRight size={16} />)}
+      </div>
+      {btn('down', 'Move down', <ChevronDown size={16} />)}
+      <div className="flex gap-1.5">
+        {btn('rotL', 'Rotate left', <RotateCcw size={15} />)}
+        {btn('rotR', 'Rotate right', <RotateCw size={15} />)}
+      </div>
     </div>
   )
 }

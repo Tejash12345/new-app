@@ -96,14 +96,21 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose, onCommand 
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' }) }, [msgs])
   useEffect(() => { sfx.resume(); sfx.hologram(); hap.select() }, [])
 
-  // fire a live 3D command (from a chip or detected in chat), with in-chat feedback
+  // fire a live 3D command (from a chip or detected in chat), with in-chat feedback.
+  // Keep the click handler trivial (unlock audio + haptic in-gesture) and DEFER the
+  // heavier work (sound synth, the 3D command + bubble draw, the re-render) to a
+  // separate task so the tap stays responsive — the city's rAF runs behind this
+  // overlay, so a synchronous handler otherwise blocks paint (INP).
   function doCommand(action: CmdAction) {
     if (!onCommand) return
-    sfx.resume(); sfx.uiClick(); hap.tap()
-    onCommand(action)
+    sfx.resume(); hap.tap()
     const say = CMD_SAY[action] ?? 'On it!'
-    setMsgs((m) => [...m, { role: 'npc', text: say }])
-    if (voiceOn) speech.play(say)
+    setTimeout(() => {
+      sfx.uiClick()
+      onCommand(action)
+      setMsgs((m) => [...m, { role: 'npc', text: say }])
+      if (voiceOn) speech.play(say)
+    }, 0)
   }
 
   async function send(text: string) {
@@ -113,7 +120,8 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose, onCommand 
     setInput('')
     setMsgs((m) => [...m, { role: 'player', text: t }])
     // if the player told the citizen to DO something, carry it out in the 3D city
-    if (onCommand) { const hit = CMD_WORDS.find((c) => c.re.test(t)); if (hit) onCommand(hit.action) }
+    // (deferred so the 3D call doesn't block the tap — see doCommand)
+    if (onCommand) { const hit = CMD_WORDS.find((c) => c.re.test(t)); if (hit) setTimeout(() => onCommand(hit.action), 0) }
     setBusy(true)
     try {
       const ctx = { level, streak, timeOfDay: new Date().getHours() }
