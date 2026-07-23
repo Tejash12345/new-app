@@ -28,7 +28,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { CITY_TOTAL_BUILDINGS, cityUnlocked, nextDistrict, type CityOpts } from './cityScene'
 import { buildCharacter, type CharacterRig } from './characterModel'
 import { PLAYABLE_CHARACTERS, characterById } from '../lib/characters'
-import { loadBrain, saveBrain, idleLine, rememberEvent, gossip, chooseBuildKind, recordBuild, type NpcBrain } from '../lib/npcMind'
+import { loadBrain, saveBrain, idleLine, rememberEvent, gossip, reflect, chooseBuildKind, recordBuild, type NpcBrain } from '../lib/npcMind'
 import { autoLearnStep } from '../lib/npcLearn'
 
 export type City3DHandle = { stop: () => void; capture: () => string | null; setAvatar: (id: string) => void }
@@ -979,6 +979,7 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
   }
   let learnT = 0 // seconds since the last autonomous internet-learning attempt
   let gossipT = 0 // seconds since the last offline peer-gossip attempt
+  let reflectT = 0 // seconds since a citizen last "thought" (formed an insight)
   // a citizen has walked to a chosen spot → construct what its brain decided on
   function doBuild(c: Citizen) {
     if (buildRecords.length >= MAX_BUILDS) return
@@ -1049,6 +1050,15 @@ export function startCity3D(canvas: HTMLCanvasElement, opts: CityOpts): City3DHa
           }
         }
       }
+    }
+    // autonomous THINKING (fully offline): a citizen reflects on its neural model
+    // and forms a new insight, shown as a thought bubble. Works with no network.
+    reflectT += dt
+    if (reflectT >= 12 && citizens.length) {
+      reflectT = 0
+      const c = citizens[Math.floor(Math.random() * citizens.length)]
+      const idea = reflect(c.brain)
+      if (idea) { c.bubble.draw(`💡 ${idea.length > 46 ? idea.slice(0, 45) + '…' : idea}`, true); c.showing = true; c.speakT = 5 }
     }
   }
 

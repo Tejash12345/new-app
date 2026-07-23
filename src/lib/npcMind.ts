@@ -16,7 +16,15 @@
  * — can register as a responder and will be preferred WHEN AVAILABLE, otherwise we
  * fall back to the offline engine. Nothing here ever reaches the internet; the
  * optional online-knowledge lookup lives in a separate, opt-in module.
+ *
+ * Every brain also grows its OWN neural network (see ./npcNeural): concepts it
+ * meets become neurons, ideas that co-occur become weighted synapses, and it
+ * "thinks" by spreading activation across them to form associations + insights.
  */
+import {
+  ensureNet, freshNet, neuralInsight, neuralLearn, neuralStats, neuralThink, neuralTokens,
+  type NeuralNet, type NeuralStats,
+} from './npcNeural'
 
 // ---------------------------------------------------------------- types
 
@@ -27,7 +35,7 @@ export type Mood = { valence: number; energy: number } // valence -1..1, energy 
 export type Step = { text: string; done: boolean }
 export type Goal = { id: string; text: string; progress: number; done: boolean; t: number; steps: Step[] }
 export type MemoryEvent = { t: number; kind: 'life' | 'chat' | 'taught' | 'milestone'; text: string; salience: number }
-export type KnowledgeItem = { topic: string; text: string; source: 'taught' | 'web'; url?: string; t: number }
+export type KnowledgeItem = { topic: string; text: string; source: 'taught' | 'web' | 'insight'; url?: string; t: number }
 export type ChatTurn = { role: 'player' | 'npc'; text: string; t: number; source?: 'sim' | 'web' | 'llm' }
 export type Relationship = { affinity: number } // -100..100 (toward another npc)
 
@@ -49,6 +57,7 @@ export type NpcBrain = {
   convo: ChatTurn[]
   bonds: Record<string, Relationship> // otherNpcId → relationship
   wantsToLearn: string[] // self-directed curiosity queue — topics to look up when online
+  net: NeuralNet // the citizen's own neural model — concepts + weighted connections
   player: { affinity: number; familiarity: number; interactions: number } // affinity 0..100
 }
 
@@ -64,7 +73,7 @@ export type Reply = {
 export type ResponderCtx = { level: number; streak: number; timeOfDay: number /* 0..24 */ }
 
 export type Responder = {
-  id: 'sim' | 'llm-webgpu' | 'llm-native'
+  id: 'sim' | 'llm-webgpu' | 'llm-native' | 'llm-cloud'
   label: string
   available(): Promise<boolean>
   respond(brain: NpcBrain, text: string, ctx: ResponderCtx): Promise<Reply>
@@ -179,8 +188,19 @@ function freshBrain(id: string, name: string, emoji: string): NpcBrain {
     convo: [],
     bonds: {},
     wantsToLearn: [],
+    net: seedNet(id, interests),
     player: { affinity: 8, familiarity: 0, interactions: 0 },
   }
+}
+
+/** Give a new mind a small starter neural web from its seeded interests, so it
+ *  begins with a few connected concepts instead of a blank slate. */
+function seedNet(id: string, interests: Record<string, number>): NeuralNet {
+  const net = freshNet()
+  const seeds = Object.keys(interests).flatMap((t) => neuralTokens(t))
+  seeds.push(...neuralTokens(professionFor(id)))
+  if (seeds.length) neuralLearn(net, seeds, 0.8)
+  return net
 }
 
 // A profession per citizen — flavours who they are and how they speak.
@@ -234,6 +254,13 @@ export function loadBrain(id: string, seed: { name: string; emoji: string }): Np
     if (!Array.isArray(brain.wantsToLearn)) brain.wantsToLearn = [] // migrate older saves
     if (!brain.profession) brain.profession = professionFor(brain.id)
     if (Array.isArray(brain.goals)) brain.goals.forEach((g) => { if (!Array.isArray(g.steps)) g.steps = [] })
+    // migrate saves from before the neural model — build one from what they know
+    if (!brain.net || typeof brain.net !== 'object') {
+      brain.net = seedNet(brain.id, brain.interests || {})
+      for (const k of brain.knowledge || []) neuralLearn(brain.net, neuralTokens(k.topic + ' ' + k.text), 0.7)
+    } else {
+      ensureNet(brain.net)
+    }
   } catch {
     brain = freshBrain(id, seed.name, seed.emoji)
   }
@@ -281,6 +308,7 @@ export function learnWebFact(brain: NpcBrain, topic: string, text: string, url: 
   brain.knowledge.push({ topic: topic.toLowerCase(), text, source: 'web', url, t: Date.now() })
   rememberEvent(brain, 'taught', `I read about ${topic} online.`, 0.6)
   bumpInterest(brain, topic, 0.8)
+  neuralLearn(brain.net, neuralTokens(topic + ' ' + text), 1) // wire it into the neural model
   saveBrain(brain)
 }
 
@@ -297,6 +325,7 @@ export function gossip(from: NpcBrain, to: NpcBrain): string | null {
   to.knowledge.push({ topic: k.topic, text: k.text, source: k.source, url: k.url, t: Date.now() })
   rememberEvent(to, 'life', `Learned about ${k.topic} from ${from.name}.`, 0.45)
   bumpInterest(to, k.topic, 0.4)
+  neuralLearn(to.net, neuralTokens(k.topic + ' ' + k.text), 0.7) // the idea wires into the listener's mind
   to.skills['social learning'] = Math.round(((to.skills['social learning'] || 0) + 0.34) * 100) / 100
   to.bonds[from.id] = { affinity: Math.min(100, (to.bonds[from.id]?.affinity || 0) + 3) }
   saveBrain(to)
@@ -336,6 +365,51 @@ export function recordBuild(brain: NpcBrain, kind: string) {
   rememberEvent(brain, 'milestone', `Built a ${kind} in the city.`, 0.6)
   bumpInterest(brain, 'building', 0.5)
   saveBrain(brain)
+}
+
+// ---------------------------------------------------------------- reasoning (thinks with its neural model)
+
+const INSIGHT_TEMPLATES: Array<(a: string, b: string) => string> = [
+  (a, b) => `I keep connecting "${a}" and "${b}" — I think they go together.`,
+  (a, b) => `Been thinking… maybe "${a}" is the key to "${b}".`,
+  (a, b) => `It just clicked: "${a}" and "${b}" feel like two sides of one thing.`,
+  (a, b) => `My mind links "${a}" with "${b}". I wonder what else connects.`,
+  (a, b) => `Idea: if I get better at "${a}", I bet "${b}" follows.`,
+]
+
+/**
+ * Let the citizen THINK: spread activation across its neural model, form one
+ * fresh insight from a strongly-wired pair of concepts, and remember it.
+ * Reflecting reinforces that connection (thinking about something strengthens
+ * it) and levels a "reasoning" skill. Returns the insight text, or null if the
+ * mind is still too small or it just had this exact thought.
+ */
+export function reflect(brain: NpcBrain): string | null {
+  const ins = neuralInsight(brain.net)
+  if (!ins) return null
+  const topic = `${ins.a}+${ins.b}`
+  const recent = brain.knowledge.filter((k) => k.source === 'insight').slice(-6)
+  if (recent.some((k) => k.topic === topic)) return null // don't repeat the same thought
+  const text = pick(INSIGHT_TEMPLATES)(ins.a, ins.b)
+  brain.knowledge.push({ topic, text, source: 'insight', t: Date.now() })
+  rememberEvent(brain, 'life', `Had a thought — ${text}`, 0.4)
+  brain.skills['reasoning'] = Math.round(((brain.skills['reasoning'] || 0) + 0.3) * 100) / 100
+  neuralLearn(brain.net, [ins.a, ins.b], 0.5)
+  saveBrain(brain)
+  return text
+}
+
+/** Concepts the citizen associates with a topic — its own "thinking" about it. */
+export function associate(brain: NpcBrain, topic: string, n = 4): string[] {
+  return neuralThink(brain.net, neuralTokens(topic), 2, n)
+}
+
+export type Intelligence = NeuralStats & { knowledge: number; skills: number }
+
+/** How "smart" this citizen has become — driven by the size + wiring of its neural model. */
+export function intelligence(brain: NpcBrain): Intelligence {
+  const s = neuralStats(brain.net)
+  return { ...s, knowledge: brain.knowledge.length, skills: Object.keys(brain.skills).length }
 }
 
 // ---------------------------------------------------------------- offline "life"
@@ -473,6 +547,7 @@ export function ruleRespond(brain: NpcBrain, raw: string, ctx: ResponderCtx): Re
   const tags: string[] = []
   brain.player.interactions++
   brain.player.familiarity = clamp(brain.player.familiarity + 0.02, 0, 1)
+  if (kw.length) neuralLearn(brain.net, kw.slice(0, 6), 0.35) // every chat wires the neural model a little
   let out: string
 
   const bump = (d: number) => (brain.player.affinity = clamp(brain.player.affinity + d, 0, 100))
@@ -669,11 +744,20 @@ export const nativeLlmResponder: Responder = {
   },
 }
 
-const RESPONDERS: Responder[] = [nativeLlmResponder, ruleResponder]
+// Extra responders registered by optional modules (e.g. the online genius brain
+// in ./npcCloud). Kept as a seam so npcMind stays free of any cloud/network code.
+const EXTRA_RESPONDERS: Responder[] = []
 
-/** Prefer a local model if the device provides one; otherwise the offline engine. */
+/** Register an additional responder. Consulted before the offline rule engine,
+ *  after any on-device model. Idempotent. */
+export function registerResponder(r: Responder) {
+  if (!EXTRA_RESPONDERS.some((x) => x.id === r.id)) EXTRA_RESPONDERS.push(r)
+}
+
+/** Prefer an on-device model, then any registered responder (genius brain),
+ *  then the always-available offline engine. */
 export async function pickResponder(): Promise<Responder> {
-  for (const r of RESPONDERS) {
+  for (const r of [nativeLlmResponder, ...EXTRA_RESPONDERS, ruleResponder]) {
     try { if (await r.available()) return r } catch { /* try next */ }
   }
   return ruleResponder
@@ -693,6 +777,12 @@ export async function converse(brain: NpcBrain, text: string, ctx: ResponderCtx)
 /** A short, brain-driven idle thought/line for the floating city bubbles. */
 export function idleLine(brain: NpcBrain, state: string): { text: string; think: boolean } {
   const r = Math.random()
+  if (r < 0.14) {
+    // surface a recent self-generated insight — the citizen "thinking"
+    for (let i = brain.knowledge.length - 1; i >= 0; i--) {
+      if (brain.knowledge[i].source === 'insight') return { text: `💡 ${trunc(brain.knowledge[i].text, 40)}`, think: true }
+    }
+  }
   if (r < 0.2) {
     const wf = recentWeb(brain)
     if (wf) return { text: `🌐 Learned about ${trunc(wf.topic, 20)}`, think: true }

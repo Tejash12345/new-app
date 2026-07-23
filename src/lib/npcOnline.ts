@@ -10,7 +10,7 @@
  * the NPC falls back to its offline brain.
  */
 
-export type WebFact = { title: string; summary: string; url: string; source: 'wikipedia' }
+export type WebFact = { title: string; summary: string; url: string; source: 'wikipedia' | 'ai' }
 
 type OpenSearch = [string, string[], string[], string[]]
 type Summary = { title?: string; extract?: string; content_urls?: { desktop?: { page?: string } } }

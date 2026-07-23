@@ -10,20 +10,31 @@
  * hammers the network, and a no-op offline or when the toggle is off.
  */
 import { learnWebFact, saveBrain, type NpcBrain } from './npcMind'
+import { neuralTokens } from './npcNeural'
 import { fetchPublicKnowledge } from './npcOnline'
 import { getPref } from './prefs'
 
-// A focus/productivity-leaning topic pool (fits the app) — citizens also learn
-// about whatever the player has made them interested in.
+// A broad concept pool so citizens grow real, wide-ranging knowledge — not just
+// the app's focus/productivity themes, but science, nature, history and ideas.
+// They also learn about whatever the player has made them curious about, and
+// each fact sparks follow-up curiosity (chained learning), so the mind expands
+// fast. Background learning uses only free, keyless Wikipedia (no AI quota).
 const POOL = [
+  // focus / productivity (fits the app)
   'focus', 'productivity', 'motivation', 'discipline', 'habit formation', 'meditation',
   'flow state', 'dopamine', 'time management', 'goal setting', 'sleep', 'exercise',
   'learning', 'memory', 'mindfulness', 'procrastination', 'self-improvement', 'creativity',
+  // broad general knowledge (real concepts, "more concepts as soon as possible")
+  'science', 'space exploration', 'the universe', 'physics', 'biology', 'history',
+  'philosophy', 'mathematics', 'technology', 'artificial intelligence', 'the human brain',
+  'psychology', 'nature', 'the ocean', 'animals', 'language', 'the internet', 'robotics',
+  'energy', 'art', 'music', 'architecture', 'evolution', 'the future', 'emotions',
+  'friendship', 'leadership', 'courage', 'teamwork', 'curiosity',
 ]
 
 let lastFetch = 0
 let inFlight = false
-const MIN_GAP_MS = 25_000 // never auto-fetch more often than this (global)
+const MIN_GAP_MS = 18_000 // never auto-fetch more often than this (global) — fast but network-polite
 
 function knownTopics(b: NpcBrain): Set<string> {
   return new Set(b.knowledge.map((k) => k.topic.toLowerCase()))
@@ -68,9 +79,16 @@ export async function autoLearnStep(brains: NpcBrain[]): Promise<{ id: string; t
   try {
     const fact = await fetchPublicKnowledge(topic)
     if (!fact) return null
-    learnWebFact(brain, topic, fact.summary, fact.url)
+    learnWebFact(brain, topic, fact.summary, fact.url) // also wires the neural model
     // it satisfied its curiosity — drop the topic from the self-directed queue
     if (brain.wantsToLearn?.length) brain.wantsToLearn = brain.wantsToLearn.filter((t) => t.toLowerCase() !== topic.toLowerCase())
+    // CHAINED CURIOSITY: pull a couple of new concepts out of what it just read
+    // and queue them — so one fact leads to the next and knowledge grows fast.
+    const known = knownTopics(brain)
+    const followups = neuralTokens(fact.summary)
+      .filter((t) => t.length > 3 && !known.has(t) && t !== topic.toLowerCase() && !brain.wantsToLearn.includes(t))
+    for (const f of followups.slice(0, 2)) brain.wantsToLearn.push(f)
+    if (brain.wantsToLearn.length > 16) brain.wantsToLearn = brain.wantsToLearn.slice(-16)
     brain.skills['research'] = Math.round(((brain.skills['research'] || 0) + 0.5) * 100) / 100
     // learning about the built/natural world makes them better builders
     if (/build|architect|garden|forest|city|design|engineer|nature|tree|structure|house|tower/i.test(topic)) {

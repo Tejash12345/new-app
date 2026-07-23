@@ -17,10 +17,11 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { Brain, Globe, Send, Sparkles, Target, Trash2, Volume2, VolumeX, X } from 'lucide-react'
 import {
-  clearBrain, clearWebKnowledge, converse, deviceAiProfile, friendTier, learnWebFact, loadBrain, moodLabel,
+  clearBrain, clearWebKnowledge, converse, deviceAiProfile, friendTier, intelligence, learnWebFact, loadBrain, moodLabel,
   type NpcBrain,
 } from '../lib/npcMind'
-import { fetchPublicKnowledge } from '../lib/npcOnline'
+import { edgesAmong, topConcepts } from '../lib/npcNeural'
+import { researchTopic } from '../lib/npcCloud' // importing also registers the genius-brain responder
 import { setPref, usePref } from '../lib/prefs'
 import { speech } from '../lib/speak'
 import { confirmDialog } from '../store/app'
@@ -36,16 +37,19 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
 }) {
   const [brain] = useState<NpcBrain>(() => loadBrain(npcId, { name, emoji }))
   const internetOn = usePref('npcInternet')
+  const cloudOn = usePref('npcCloudBrain')
   const voiceOn = usePref('npcVoice')
   const [speaking, setSpeaking] = useState(false)
   useEffect(() => speech.subscribe((s) => setSpeaking(s === 'playing')), [])
   useEffect(() => () => speech.stop(), []) // stop reading aloud when the chat closes
   const prof = useMemo(() => deviceAiProfile(), [])
-  const badge = prof.nativeBridge
-    ? { icon: '🤖', label: 'On-device model' }
-    : prof.tier === 'accelerated'
-      ? { icon: '⚡', label: 'Accelerated brain' }
-      : { icon: '🧠', label: 'Offline brain' }
+  const badge = cloudOn
+    ? { icon: '🧠', label: 'Genius brain' }
+    : prof.nativeBridge
+      ? { icon: '🤖', label: 'On-device model' }
+      : prof.tier === 'accelerated'
+        ? { icon: '⚡', label: 'Accelerated brain' }
+        : { icon: '🧠', label: 'Offline brain' }
 
   const [tab, setTab] = useState<'chat' | 'mind'>('chat')
   const [input, setInput] = useState('')
@@ -74,18 +78,20 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
       const reply = await converse(brain, t, ctx)
       setMsgs((m) => [...m, { role: 'npc', text: reply.text, source: reply.source }])
       if (voiceOn) speech.play(reply.text)
-      // opt-in, per-lookup-confirmed online learning
-      if (reply.lookup && internetOn) {
+      // opt-in, per-lookup-confirmed online learning (offline brain only — the
+      // genius brain answers directly, so it never reaches this branch)
+      if (reply.lookup && (internetOn || cloudOn)) {
         const ok = await confirmDialog(
-          `Let ${brain.name} look up “${reply.lookup}” on Wikipedia? Their personal memories stay on your device.`,
+          `Let ${brain.name} look up “${reply.lookup}” online? Their personal memories stay on your device.`,
           { yesLabel: 'Look it up', noLabel: 'No' },
         )
         if (ok) {
           setMsgs((m) => [...m, { role: 'npc', text: '🌐 Looking that up…', source: 'web' }])
-          const fact = await fetchPublicKnowledge(reply.lookup)
+          const fact = await researchTopic(reply.lookup)
           if (fact) {
             learnWebFact(brain, reply.lookup, fact.summary, fact.url)
-            setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: `🌐 From Wikipedia — ${fact.summary}`, source: 'web' }])
+            const src = fact.source === 'ai' ? 'the web' : 'Wikipedia'
+            setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: `🌐 From ${src} — ${fact.summary}`, source: 'web' }])
             if (voiceOn) speech.play(fact.summary)
           } else {
             setMsgs((m) => [...m.slice(0, -1), { role: 'npc', text: "I couldn't reach anything online just now, so I'll stick with what I know.", source: 'web' }])
@@ -103,6 +109,8 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
   const interests = Object.entries(brain.interests).sort((a, b) => b[1] - a[1]).slice(0, 5)
   const skills = Object.entries(brain.skills)
   const webFacts = brain.knowledge.filter((k) => k.source === 'web')
+  const iq = intelligence(brain) // neural-model snapshot (recomputed each render)
+  const insights = brain.knowledge.filter((k) => k.source === 'insight').slice(-5).reverse()
 
   return createPortal(
     <motion.div className="fixed inset-0 z-[90] flex flex-col justify-end bg-black/60 backdrop-blur-[2px]"
@@ -198,11 +206,37 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
               </button>
             </div>
             <div className="px-4 pb-2 text-center text-[10px] text-white/35">
-              {internetOn ? '🌐 Internet learning ON — citizens also learn in the background · your lookups ask first' : '🔒 Fully offline · enable internet learning in Settings'}
+              {cloudOn ? '🧠 Genius brain ON — answers anything, in character · uses your daily AI allowance'
+                : internetOn ? '🌐 Internet learning ON — citizens also learn in the background · your lookups ask first'
+                  : '🔒 Fully offline · enable internet learning or the genius brain in Settings'}
             </div>
           </>
         ) : (
           <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm" style={{ minHeight: 220 }}>
+            <MindRow icon={<span className="text-xs">🧠</span>} title="Neural model — its own mind">
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="rounded-full bg-purple-500/20 px-2.5 py-1 font-bold text-purple-200 ring-1 ring-purple-400/30">{iq.label} · IQ {iq.iq}</span>
+                <span className="text-white/60">{iq.neurons} neurons</span>
+                <span className="text-white/60">{iq.synapses} connections</span>
+                <span className="text-white/60">Lv {iq.level}</span>
+              </div>
+              <div className="rounded-2xl bg-black/30 p-2 ring-1 ring-white/10">
+                <NeuralMap brain={brain} />
+              </div>
+              <div className="mt-1 text-[10px] text-white/40">
+                Concepts it meets become neurons; ideas that occur together wire up. It thinks by firing across them.
+                {' '}{internetOn || cloudOn ? 'Growing from the internet too.' : 'Enable internet learning to grow it faster.'}
+              </div>
+            </MindRow>
+
+            {insights.length > 0 && (
+              <MindRow icon={<span className="text-xs">💡</span>} title="Its own ideas (insights it formed)">
+                <div className="space-y-1 text-white/75">
+                  {insights.map((k, i) => <div key={i} className="text-[12px]">💡 {k.text}</div>)}
+                </div>
+              </MindRow>
+            )}
+
             <MindRow icon={<Target size={14} />} title="Goals & plans">
               {active.length ? active.map((g) => {
                 const pct = g.steps.length ? g.steps.filter((s) => s.done).length / g.steps.length : g.progress
@@ -263,7 +297,7 @@ export function NpcChat({ npcId, name, emoji, level, streak, onClose }: {
                 <div className="space-y-1.5">
                   {[...brain.knowledge].slice(-6).reverse().map((k, i) => (
                     <div key={i} className="text-[12px] text-white/75">
-                      <span className={k.source === 'web' ? 'text-sky-300' : 'text-amber-300'}>{k.source === 'web' ? '🌐' : '📘'}</span> {k.text}
+                      <span className={k.source === 'web' ? 'text-sky-300' : k.source === 'insight' ? 'text-purple-300' : 'text-amber-300'}>{k.source === 'web' ? '🌐' : k.source === 'insight' ? '💡' : '📘'}</span> {k.text}
                     </div>
                   ))}
                 </div>
@@ -303,5 +337,44 @@ function MindRow({ icon, title, children }: { icon: ReactNode; title: string; ch
       <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-white/45">{icon} {title}</div>
       {children}
     </div>
+  )
+}
+
+/** A compact live picture of the citizen's neural model: nodes = its strongest
+ *  concepts (neurons), lines = the connections (synapses) it has wired between
+ *  them. Node size tracks how reinforced a concept is; line strength tracks the
+ *  connection weight. Purely a readout of the brain's own numbers. */
+function NeuralMap({ brain }: { brain: NpcBrain }) {
+  const nodes = topConcepts(brain.net, 9)
+  if (nodes.length < 2) {
+    return <div className="py-3 text-center text-[12px] text-white/45">This mind is just waking up — chat and let it learn to grow its neural web. 🌱</div>
+  }
+  const ids = nodes.map((n) => n.concept)
+  const edges = edgesAmong(brain.net, ids)
+  const W = 260, H = 168, cx = W / 2, cy = H / 2, R = 62
+  const pos: Record<string, { x: number; y: number }> = {}
+  nodes.forEach((n, i) => {
+    const a = (i / nodes.length) * Math.PI * 2 - Math.PI / 2
+    pos[n.concept] = { x: cx + Math.cos(a) * R, y: cy + Math.sin(a) * R }
+  })
+  const maxAct = Math.max(...nodes.map((n) => n.act), 0.5)
+  const maxW = Math.max(...edges.map((e) => e.w), 0.5)
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 190 }} role="img" aria-label="Neural model map">
+      {edges.map((e, i) => {
+        const p = pos[e.a], q = pos[e.b]
+        return <line key={i} x1={p.x} y1={p.y} x2={q.x} y2={q.y} stroke="#a78bfa" strokeOpacity={0.12 + 0.5 * (e.w / maxW)} strokeWidth={0.4 + 1.6 * (e.w / maxW)} />
+      })}
+      {nodes.map((n) => {
+        const p = pos[n.concept]
+        const r = 3 + 5 * (n.act / maxAct)
+        return (
+          <g key={n.concept}>
+            <circle cx={p.x} cy={p.y} r={r} fill="#f59e0b" fillOpacity={0.9} />
+            <text x={p.x} y={p.y - r - 2.5} textAnchor="middle" fontSize="7.5" fill="#e5e7eb">{n.concept.slice(0, 12)}</text>
+          </g>
+        )
+      })}
+    </svg>
   )
 }

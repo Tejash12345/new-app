@@ -33,6 +33,10 @@ export type Prefs = {
   // questions. OFF by default; every lookup still asks first. Personal NPC
   // memories always stay on-device regardless of this.
   npcInternet: boolean
+  // NPC "genius brain": let citizens think through the online Lion AI so they can
+  // answer about anything, in character. OFF by default; needs internet + sign-in
+  // and uses your daily AI allowance. Falls back to the offline brain otherwise.
+  npcCloudBrain: boolean
   // Read NPC chat replies aloud with the device's text-to-speech. OFF by default.
   npcVoice: boolean
   // media
@@ -58,6 +62,7 @@ export const DEFAULT_PREFS: Prefs = {
   music: true,
   reduceMotion: false,
   npcInternet: false,
+  npcCloudBrain: false,
   npcVoice: false,
   autoDownloadMedia: true,
 }
