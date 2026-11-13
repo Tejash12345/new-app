@@ -43,7 +43,7 @@ export const LEAVES_APP = new Set([
   'open_app', 'call', 'sms', 'whatsapp', 'settings', 'youtube', 'music', 'maps', 'web', 'camera',
   'video', 'url', 'email', 'calendar', 'share',
   'power_menu', 'lock', 'screenshot', 'home', 'back', 'recents', 'notifications', 'quick_settings',
-  'send_whatsapp', 'close_app', // these switch away from FocusLion
+  'send_whatsapp', 'close_app', 'open_focuslion', // these switch away from FocusLion
 ])
 
 // ---- Leo settings (per device, user-controlled) ----
@@ -55,10 +55,11 @@ export type LeoPrefs = {
   phoneControl: boolean // allow Leo to control the phone (Android app)
   heyLeo: boolean       // listen for "Hey Leo" (Android app, opt-in)
   bubble: boolean       // floating Leo bubble over other apps (Android app, opt-in)
+  confirmSend: boolean  // Leo asks "shall I send?" before WhatsApp/SMS (off = sends right away)
 }
 const PREFS_KEY = 'fl:leo-prefs'
 export const LEO_PREFS_EVENT = 'focuslion:leo-prefs'
-const DEFAULT_PREFS: LeoPrefs = { enabled: true, handsFree: true, aiVoice: true, briefing: true, phoneControl: true, heyLeo: false, bubble: false }
+const DEFAULT_PREFS: LeoPrefs = { enabled: true, handsFree: true, aiVoice: true, briefing: true, phoneControl: true, heyLeo: false, bubble: false, confirmSend: true }
 
 export function leoPrefs(): LeoPrefs {
   try {

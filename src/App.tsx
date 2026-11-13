@@ -8,6 +8,7 @@ import { StoriesProvider } from './components/Stories'
 import { Layout } from './components/Layout'
 import { AuthPage } from './pages/AuthPage'
 import { Dashboard } from './pages/Dashboard'
+import { LeoPage } from './pages/LeoPage'
 
 // Pages load on demand (code splitting): the app starts with only the shell,
 // the dashboard and the login page instead of all 27 pages at once, which is
@@ -55,6 +56,8 @@ function Gate() {
   return (
     <StoriesProvider>
     <Routes>
+      {/* Leo-only pop-up (Android floating bubble / "Hey Leo") — no app chrome */}
+      <Route path="leo" element={<LeoPage />} />
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="planner" element={<PlannerPage />} />

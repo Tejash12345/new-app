@@ -52,10 +52,12 @@ const SUGGESTIONS = [
   'Save a note: buy lab record',
 ]
 
-export function LeoLive() {
+export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   const { user, profile } = useAuth()
   const navigate = useNavigate()
-  const [open, setOpen] = useState(false)
+  // standalone = the Android "Leo only" pop-up window (LeoActivity): Leo is
+  // open from the start, and closing him closes that window (not FocusLion)
+  const [open, setOpen] = useState(standalone)
   const [phase, setPhase] = useState<Phase>('idle')
   const [lines, setLines] = useState<Line[]>([])
   const [error, setError] = useState('')
@@ -131,7 +133,22 @@ export function LeoLive() {
     setPhase('idle')
   }, [setLevel])
 
-  const close = useCallback(() => { stopAll(); setOpen(false) }, [stopAll])
+  const close = useCallback(() => {
+    stopAll()
+    if (standalone) {
+      const bridge = (window as Window & { FLLeo?: { postMessage: (m: string) => void } }).FLLeo
+      if (bridge) bridge.postMessage('close')
+      else navigate('/')
+      return
+    }
+    setOpen(false)
+  }, [stopAll, standalone, navigate])
+
+  /** Go to a FocusLion page. In the Leo-only window this opens the full app there. */
+  function goApp(path: string) {
+    if (standalone && hasPhonePowers()) deferredRef.current.push({ act: 'open_focuslion', args: { path } })
+    else navigate(path)
+  }
 
   /** Live context the assistant reasons over. */
   async function buildContext(): Promise<string> {
@@ -156,6 +173,7 @@ export function LeoLive() {
       const mins = ((sessions.data ?? []) as { duration_min: number }[]).reduce((s, x) => s + (x.duration_min || 0), 0)
       parts.push(`Studied today: ${mins} minutes`)
     }
+    parts.push(`Message confirmation: ${leoPrefs().confirmSend ? 'ON — ask before sending' : 'OFF — the user chose instant sending: include the send/schedule action immediately'}`)
     const mem = loadMemory()
     if (mem.length) parts.push(`Things the user asked you to remember:\n${mem.map((m) => `- ${m}`).join('\n')}`)
     const skills = loadSkills()
@@ -200,10 +218,10 @@ export function LeoLive() {
         } else if (a.type === 'start_focus') {
           const min = Math.max(5, Math.min(120, Math.round(Number(a.minutes) || 25)))
           const qs = new URLSearchParams({ start: String(min), ...(a.subject ? { subject: String(a.subject) } : {}) })
-          navigate(`/focus?${qs}`)
+          goApp(`/focus?${qs}`)
           done.push(`Focus started: ${min} min`)
         } else if (a.type === 'open' && PAGES[a.page]) {
-          navigate(PAGES[a.page])
+          goApp(PAGES[a.page])
           done.push(`Opened ${a.page}`)
         } else if (a.type === 'theme') {
           const app = useApp.getState()
@@ -232,8 +250,10 @@ export function LeoLive() {
         } else if (a.type === 'unlearn' && a.phrase) {
           if (forgetSkill(String(a.phrase))) done.push(`Forgot skill: "${a.phrase}"`)
         } else if (a.type === 'phone' && typeof a.do === 'string') {
-          const { type: _t, do: act, ...args } = a
+          const { type: _t, do: act, ...rawArgs } = a
           void _t
+          // instant mode (confirmation off): calls are placed directly
+          const args = act === 'call' ? { ...rawArgs, direct: !leoPrefs().confirmSend } : rawArgs
           // switching to another app would cut Leo off mid-sentence, so those
           // run right after he finishes speaking (see spokeEnd)
           if (LEAVES_APP.has(act)) deferredRef.current.push({ act, args })
@@ -297,7 +317,7 @@ export function LeoLive() {
       // a navigation action closes the overlay so the user sees the page,
       // but Leo still answers out loud (hands-free won't re-open the mic)
       if (reply.actions.some((a) => a.type === 'open' || a.type === 'start_focus')) {
-        setTimeout(() => { openRef.current = false; setOpen(false) }, 900)
+        if (!standalone) setTimeout(() => { openRef.current = false; setOpen(false) }, 900)
       }
       await speakOut(reply.say, reply.lang)
     } catch (e) {
@@ -470,7 +490,7 @@ export function LeoLive() {
     }
   })
   useEffect(() => {
-    if (!user || !prefs.enabled || !prefs.heyLeo) return
+    if (!user || !prefs.enabled || !prefs.heyLeo || standalone) return
     const w = window as Window & { __flWake?: (rest: string) => void }
     w.__flWake = (rest) => wakeRef.current(rest)
     let tries = 0
@@ -488,12 +508,12 @@ export function LeoLive() {
       if (hasPhonePowers()) void phone('wake_stop')
       delete w.__flWake
     }
-  }, [user, prefs.enabled, prefs.heyLeo, open])
+  }, [user, prefs.enabled, prefs.heyLeo, open, standalone])
 
   // floating bubble service (Android): follow the setting; also re-starts it
   // after a reboot the first time FocusLion is opened
   useEffect(() => {
-    if (!user || !prefs.enabled) return
+    if (!user || !prefs.enabled || standalone) return
     let tries = 0
     let t: ReturnType<typeof setTimeout> | undefined
     const apply = () => {
@@ -502,7 +522,7 @@ export function LeoLive() {
     }
     apply()
     return () => clearTimeout(t)
-  }, [user, prefs.enabled, prefs.bubble, prefs.heyLeo])
+  }, [user, prefs.enabled, prefs.bubble, prefs.heyLeo, standalone])
 
   // the bubble or "Hey Leo" (outside the app) brought FocusLion up — open Leo
   useEffect(() => {
@@ -517,6 +537,20 @@ export function LeoLive() {
     document.addEventListener('visibilitychange', pull)
     return () => { clearTimeout(t); document.removeEventListener('visibilitychange', pull) }
   }, [user, prefs.enabled])
+
+  // full app: the Leo-only window asked to open a FocusLion page ("open my tasks")
+  useEffect(() => {
+    if (!user || standalone) return
+    let tries = 0
+    const pull = () => {
+      if (document.visibilityState !== 'visible') return
+      if (!hasPhonePowers()) { if (tries++ < 6) setTimeout(pull, 1000); return }
+      void phone('take_route', {}, 3000).then((r) => { if (r.ok && r.msg.startsWith('/')) navigate(r.msg) })
+    }
+    const t = setTimeout(pull, 700)
+    document.addEventListener('visibilitychange', pull)
+    return () => { clearTimeout(t); document.removeEventListener('visibilitychange', pull) }
+  }, [user, standalone, navigate])
 
   // never leave the mic on if the component goes away
   useEffect(() => () => { listenerRef.current?.cancel() }, [])
@@ -550,7 +584,7 @@ export function LeoLive() {
   const thinkRef = useRef(think)
   useEffect(() => { thinkRef.current = think })
 
-  if (!user || !prefs.enabled) return null
+  if (!user || (!prefs.enabled && !standalone)) return null
 
   const status = {
     idle: online ? 'Tap the orb and talk' : 'Offline mode — phone commands only',
@@ -562,14 +596,14 @@ export function LeoLive() {
   return (
     <>
       {/* floating launcher — stacked above the Lion AI chat button */}
-      <button
+      {!standalone && <button
         onClick={openLeo}
         aria-label="Leo Live voice assistant"
         className="fixed bottom-[calc(11.5rem+env(safe-area-inset-bottom))] left-5 z-[55] flex h-12 w-12 items-center justify-center rounded-full shadow-xl ring-2 ring-sky-300/70 transition active:scale-95 lg:bottom-24 lg:left-auto lg:right-7"
         style={{ background: 'radial-gradient(circle at 35% 30%,#7dd3fc,#2563eb 60%,#1e1b4b)', boxShadow: '0 8px 22px rgba(37,99,235,.45)' }}
       >
         <AiLion className="h-8" />
-      </button>
+      </button>}
 
       <AnimatePresence>
         {open && (
@@ -735,6 +769,7 @@ export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurn
     { key: 'aiVoice', label: 'Natural AI voice', hint: "Off = your phone's built-in voice (faster, works offline)" },
     { key: 'briefing', label: 'Daily briefing', hint: 'Brief you on your day the first time you open Leo' },
     { key: 'phoneControl', label: 'Phone control', hint: 'Let Leo open apps, set alarms, control your phone (Android app)' },
+    { key: 'confirmSend', label: 'Confirm before calls & messages', hint: 'On: Leo reads messages back and waits for "yes"; calls open the dialer. Off: calls and WhatsApp/SMS go out the moment you ask.' },
     { key: 'bubble', label: 'Floating Leo bubble', hint: 'A lion bubble over other apps — tap it to talk, drag to move, long-press to hide (Android app)' },
     { key: 'heyLeo', label: '"Hey Leo" wake word', hint: 'Say "Hey Leo" to open him — inside FocusLion, and with the bubble on, over other apps too. Listens on-device only.' },
   ]
