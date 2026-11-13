@@ -255,8 +255,8 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
         } else if (a.type === 'phone' && typeof a.do === 'string') {
           const { type: _t, do: act, ...rawArgs } = a
           void _t
-          // instant mode (confirmation off): calls are placed directly
-          const args = act === 'call' ? { ...rawArgs, direct: !leoPrefs().confirmSend } : rawArgs
+          // calls are always placed directly ("call Ravi" = it rings, no tap)
+          const args = act === 'call' ? { ...rawArgs, direct: true } : rawArgs
           // switching to another app would cut Leo off mid-sentence, so those
           // run right after he finishes speaking (see spokeEnd)
           if (LEAVES_APP.has(act)) deferredRef.current.push({ act, args })
@@ -796,7 +796,7 @@ export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurn
     { key: 'aiVoice', label: 'Natural AI voice', hint: "Off = your phone's built-in voice (faster, works offline)" },
     { key: 'briefing', label: 'Daily briefing', hint: 'Brief you on your day the first time you open Leo' },
     { key: 'phoneControl', label: 'Phone control', hint: 'Let Leo open apps, set alarms, control your phone (Android app)' },
-    { key: 'confirmSend', label: 'Confirm before calls & messages', hint: 'On: Leo reads messages back and waits for "yes"; calls open the dialer. Off: calls and WhatsApp/SMS go out the moment you ask.' },
+    { key: 'confirmSend', label: 'Confirm before sending messages', hint: 'On: Leo reads WhatsApp/SMS back and waits for "yes". Off: they go out the moment you ask. (Calls are always placed right away.)' },
     { key: 'bubble', label: 'Floating Leo bubble', hint: 'A lion bubble over other apps — tap it to talk, drag to move, long-press to hide (Android app)' },
     { key: 'heyLeo', label: '"Hey Leo" wake word', hint: 'Say "Hey Leo" to open him — inside FocusLion, and with the bubble on, over other apps too. Listens on-device only.' },
   ]
