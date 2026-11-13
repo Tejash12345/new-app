@@ -53,10 +53,11 @@ export type LeoPrefs = {
   aiVoice: boolean      // natural Gemini voice (off = phone's built-in voice)
   briefing: boolean     // greet with a day briefing on the first open each day
   phoneControl: boolean // allow Leo to control the phone (Android app)
+  heyLeo: boolean       // listen for "Hey Leo" while FocusLion is open (Android app, opt-in)
 }
 const PREFS_KEY = 'fl:leo-prefs'
 export const LEO_PREFS_EVENT = 'focuslion:leo-prefs'
-const DEFAULT_PREFS: LeoPrefs = { enabled: true, handsFree: true, aiVoice: true, briefing: true, phoneControl: true }
+const DEFAULT_PREFS: LeoPrefs = { enabled: true, handsFree: true, aiVoice: true, briefing: true, phoneControl: true, heyLeo: false }
 
 export function leoPrefs(): LeoPrefs {
   try {

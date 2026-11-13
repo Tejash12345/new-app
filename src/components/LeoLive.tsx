@@ -26,6 +26,9 @@ import { cn } from '../lib/utils'
 
 export const LEO_LIVE_EVENT = 'focuslion:leo-live'
 
+// "bye leo", "goodbye", "that's all", "stop listening", Telugu/Hindi byes
+const BYE = /^(?:ok(?:ay)?[, ]+)?(?:bye|bye bye|goodbye|good bye|bye leo|tata|see you|that'?s all|thats it|stop listening|close|go to sleep|sleep|alvida|बाय|अलविदा|బై|బాయ్|ఇక చాలు)(?:[ ,]+(?:leo|now|thanks|thank you))*[ .!]*$/i
+
 type Phase = 'idle' | 'listening' | 'thinking' | 'speaking'
 type Line = { who: 'you' | 'leo'; text: string; done?: string[] }
 
@@ -71,6 +74,8 @@ export function LeoLive() {
   // which speakOut started the device voice — a manual stop bumps speakGen,
   // so its 'idle' event no longer counts as "finished speaking"
   const ttsGenRef = useRef(-1)
+  // "bye": close the overlay once the goodbye has been spoken
+  const closeAfterSpeakRef = useRef(false)
   const deferredRef = useRef<{ act: string; args: Record<string, unknown> }[]>([])
   // data the phone reported this turn (screen time, screen text…) for Leo to talk about
   const phoneDataRef = useRef<string[]>([])
@@ -246,6 +251,13 @@ export function LeoLive() {
     deferredRef.current = [] // never carry phone actions over from an earlier turn
     const q = text.trim()
     if (!q) { setPhase('idle'); return }
+    // "bye" / "that's all" — say goodbye and close (works offline, no AI)
+    if (BYE.test(q)) {
+      setLines((l) => [...l, { who: 'you', text: q }, { who: 'leo', text: 'Bye! Say "Hey Leo" or tap me anytime. 🦁' }])
+      closeAfterSpeakRef.current = true
+      await speakOut('Bye! Call me anytime.', 'en')
+      return
+    }
     setLines((l) => [...l, { who: 'you', text: q }])
     historyRef.current = [...historyRef.current, { role: 'user', content: q }]
     setPhase('thinking')
@@ -358,6 +370,7 @@ export function LeoLive() {
   }
 
   function spokeEnd() {
+    if (closeAfterSpeakRef.current) { closeAfterSpeakRef.current = false; close(); return }
     // phone actions that open another app (WhatsApp, YouTube, dialer…) run now
     if (deferredRef.current.length) {
       setPhase('idle')
@@ -441,6 +454,38 @@ export function LeoLive() {
       spokeEndRef.current()
     }
   }), [])
+
+  // "Hey Leo" wake word (Android app, opt-in): the phone listens on-device only
+  // while FocusLion is on screen and Leo is closed; hearing it opens Leo and
+  // runs the rest of the sentence ("hey leo, open whatsapp")
+  const wakeRef = useRef<(rest: string) => void>(() => {})
+  useEffect(() => {
+    wakeRef.current = (rest: string) => {
+      openRef.current = true
+      setOpen(true)
+      setTimeout(() => { if (rest.trim()) void thinkRef.current(rest); else void startRef.current() }, 250)
+    }
+  })
+  useEffect(() => {
+    if (!user || !prefs.enabled || !prefs.heyLeo) return
+    const w = window as Window & { __flWake?: (rest: string) => void }
+    w.__flWake = (rest) => wakeRef.current(rest)
+    let tries = 0
+    let retry: ReturnType<typeof setTimeout> | undefined
+    const sync = () => {
+      if (!hasPhonePowers()) { if (tries++ < 8) retry = setTimeout(sync, 1500); return } // bridge not ready yet
+      if (!open && document.visibilityState === 'visible') void phone('wake_start')
+      else void phone('wake_stop')
+    }
+    sync()
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      clearTimeout(retry)
+      document.removeEventListener('visibilitychange', sync)
+      if (hasPhonePowers()) void phone('wake_stop')
+      delete w.__flWake
+    }
+  }, [user, prefs.enabled, prefs.heyLeo, open])
 
   // never leave the mic on if the component goes away
   useEffect(() => () => { listenerRef.current?.cancel() }, [])
@@ -631,6 +676,7 @@ export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurn
     { key: 'aiVoice', label: 'Natural AI voice', hint: "Off = your phone's built-in voice (faster, works offline)" },
     { key: 'briefing', label: 'Daily briefing', hint: 'Brief you on your day the first time you open Leo' },
     { key: 'phoneControl', label: 'Phone control', hint: 'Let Leo open apps, set alarms, control your phone (Android app)' },
+    { key: 'heyLeo', label: '"Hey Leo" wake word', hint: 'Say "Hey Leo" to open him while FocusLion is on screen (Android app). Listens on-device only.' },
   ]
   const toggle = (k: keyof LeoPrefs) => {
     const v = !p[k]
