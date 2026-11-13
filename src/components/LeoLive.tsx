@@ -610,7 +610,8 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
     let t: ReturnType<typeof setTimeout> | undefined
     const apply = () => {
       if (!hasPhonePowers()) { if (tries++ < 8) t = setTimeout(apply, 1500); return }
-      void phone(prefs.bubble ? 'bubble_start' : 'bubble_stop', { wake: prefs.heyLeo })
+      // background listener runs for the bubble OR for "Hey Leo" alone (works with FocusLion closed)
+      void phone(prefs.bubble || prefs.heyLeo ? 'bubble_start' : 'bubble_stop', { wake: prefs.heyLeo, bubble: prefs.bubble })
     }
     apply()
     return () => clearTimeout(t)
@@ -871,6 +872,16 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
 export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurnedOff?: () => void }) {
   const [p, setP] = useState<LeoPrefs>(leoPrefs)
   const [cleared, setCleared] = useState(false)
+  // live "Hey Leo" health (Android app): listening / downloading / blocked…
+  const [wakeStatus, setWakeStatus] = useState('')
+  useEffect(() => {
+    if (!p.heyLeo || !hasPhonePowers()) return
+    let alive = true
+    const check = () => { void phone('leo_status', {}, 3000).then((r) => { if (alive) setWakeStatus(r.msg) }) }
+    const t0 = setTimeout(check, 800)
+    const t = setInterval(check, 4000)
+    return () => { alive = false; clearTimeout(t0); clearInterval(t) }
+  }, [p.heyLeo])
   useEffect(() => {
     const on = () => setP(leoPrefs())
     window.addEventListener(LEO_PREFS_EVENT, on)
@@ -905,6 +916,12 @@ export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurn
           </span>
         </button>
       ))}
+      {p.heyLeo && wakeStatus && (
+        <div className={cn('mx-3 rounded-xl px-3 py-2 text-xs font-semibold', /✓/.test(wakeStatus)
+          ? 'bg-emerald-400/15 text-emerald-400' : 'bg-amber-400/15 text-amber-500')}>
+          "Hey Leo" status: {wakeStatus}
+        </div>
+      )}
       <button onClick={() => { clearLeoBrain(); setCleared(true) }}
         className={cn('w-full rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-rose-400', dark ? 'hover:bg-white/5' : 'hover:bg-rose-500/5')}>
         {cleared ? '✓ Memory and taught skills cleared' : "Clear Leo's memory and taught skills"}
