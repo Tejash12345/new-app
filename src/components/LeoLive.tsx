@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Send, Check, Repeat, Settings as SettingsIcon } from 'lucide-react'
 import { AiLion } from './ui'
+import { mascotSrc } from '../lib/mascot'
+import { hap } from '../lib/haptics'
 import { useAuth } from '../hooks/useAuth'
 import { useApp } from '../store/app'
 import { supabase } from '../lib/supabase'
@@ -419,6 +421,7 @@ export function LeoLive() {
       if (!openRef.current) { l.cancel(); return } // Leo was closed while the mic was starting
       listenerRef.current = l
       setPhase('listening')
+      hap.tap()
       const clip = await l.done
       listenerRef.current = null
       setLevel(0)
@@ -487,6 +490,34 @@ export function LeoLive() {
     }
   }, [user, prefs.enabled, prefs.heyLeo, open])
 
+  // floating bubble service (Android): follow the setting; also re-starts it
+  // after a reboot the first time FocusLion is opened
+  useEffect(() => {
+    if (!user || !prefs.enabled) return
+    let tries = 0
+    let t: ReturnType<typeof setTimeout> | undefined
+    const apply = () => {
+      if (!hasPhonePowers()) { if (tries++ < 8) t = setTimeout(apply, 1500); return }
+      void phone(prefs.bubble ? 'bubble_start' : 'bubble_stop', { wake: prefs.heyLeo })
+    }
+    apply()
+    return () => clearTimeout(t)
+  }, [user, prefs.enabled, prefs.bubble, prefs.heyLeo])
+
+  // the bubble or "Hey Leo" (outside the app) brought FocusLion up — open Leo
+  useEffect(() => {
+    if (!user || !prefs.enabled) return
+    let tries = 0
+    const pull = () => {
+      if (document.visibilityState !== 'visible') return
+      if (!hasPhonePowers()) { if (tries++ < 6) setTimeout(pull, 1000); return } // bridge not ready yet
+      void phone('take_wake', {}, 3000).then((r) => { if (r.ok) wakeRef.current(r.msg === 'none' ? '' : r.msg) })
+    }
+    const t = setTimeout(pull, 600)
+    document.addEventListener('visibilitychange', pull)
+    return () => { clearTimeout(t); document.removeEventListener('visibilitychange', pull) }
+  }, [user, prefs.enabled])
+
   // never leave the mic on if the component goes away
   useEffect(() => () => { listenerRef.current?.cancel() }, [])
 
@@ -545,7 +576,8 @@ export function LeoLive() {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[70] flex flex-col text-white"
+            ref={orbRef}
+            className="leo-stage fixed inset-0 z-[70] flex flex-col overflow-hidden text-white"
             style={{ background: 'radial-gradient(ellipse at 50% 30%,#0b2a5b 0%,#050b1f 55%,#02040c 100%)' }}
           >
             {/* top bar */}
@@ -575,18 +607,43 @@ export function LeoLive() {
               </div>
             )}
 
-            {/* orb */}
-            <div className="flex flex-col items-center pt-6">
-              <button onClick={onOrb} aria-label={status} className="relative h-48 w-48 outline-none">
-                <div ref={orbRef} className={cn('leo-orb absolute inset-0', `leo-${phase}`)}>
+            {/* holographic backdrop: drifting star grid + a slow scan line (GPU-only) */}
+            <div aria-hidden className="leo-bg pointer-events-none absolute inset-0 -z-10">
+              <span className="leo-stars" />
+              <span className="leo-scan" />
+            </div>
+
+            {/* orb — "arc reactor" */}
+            <div className="flex flex-col items-center pt-4">
+              <motion.button
+                onClick={onOrb} aria-label={status}
+                initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: 'spring', damping: 14, stiffness: 160 }}
+                className="relative h-56 w-56 outline-none"
+              >
+                <div className={cn('leo-orb absolute inset-0', `leo-${phase}`)}>
+                  <span className="leo-halo" />
+                  <span className="leo-ticks" />
+                  <span className="leo-arc" />
                   <span className="leo-ring leo-ring-1" />
                   <span className="leo-ring leo-ring-2" />
                   <span className="leo-ring leo-ring-3" />
+                  <span className="leo-orbit">
+                    {[0, 1, 2, 3, 4, 5].map((i) => <i key={i} style={{ '--i': i } as React.CSSProperties} />)}
+                  </span>
                   <span className="leo-core" />
                 </div>
-                <span className="absolute inset-0 flex items-center justify-center text-5xl">🦁</span>
-              </button>
-              <div className="mt-5 h-5 text-sm font-semibold text-sky-200">{status}</div>
+                <img src={mascotSrc('ai')} alt="" draggable={false}
+                  className={cn('leo-face pointer-events-none absolute inset-0 m-auto h-24 w-24 object-contain', `leo-face-${phase}`)} />
+              </motion.button>
+
+              {/* sound wave: follows your voice while listening, pulses while Leo talks */}
+              <div className={cn('leo-wave mt-3', `leo-wave-${phase}`)} aria-hidden>
+                {Array.from({ length: 28 }, (_, i) => <span key={i} style={{ '--i': i } as React.CSSProperties} />)}
+              </div>
+              <div className="mt-2 flex h-5 items-center gap-2 text-sm font-semibold tracking-wide text-sky-200">
+                <span className={cn('leo-dot', `leo-dot-${phase}`)} />{status}
+              </div>
             </div>
 
             {/* conversation */}
@@ -605,21 +662,23 @@ export function LeoLive() {
                 </div>
               )}
               {lines.map((l, i) => (
-                <div key={i} className={l.who === 'you' ? 'text-right' : 'text-left'}>
+                <motion.div key={i} className={l.who === 'you' ? 'text-right' : 'text-left'}
+                  initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.22 }}>
                   <div className={cn('inline-block max-w-[90%] whitespace-pre-line rounded-2xl px-3.5 py-2 text-sm',
-                    l.who === 'you' ? 'bg-white/10 text-white/80' : 'bg-sky-500/15 text-sky-50')}>
-                    {l.text}
+                    l.who === 'you' ? 'bg-white/10 text-white/80' : 'leo-msg text-sky-50')}>
+                    {l.who === 'leo' && i === lines.length - 1 ? <TypeText key={`${i}:${l.text}`} text={l.text} /> : l.text}
                   </div>
                   {!!l.done?.length && (
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       {l.done.map((d) => (
-                        <span key={d} className="inline-flex items-center gap-1 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                        <span key={d} className="leo-chip inline-flex items-center gap-1 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
                           <Check size={11} /> {d}
                         </span>
                       ))}
                     </div>
                   )}
-                </div>
+                </motion.div>
               ))}
               {error && <p className="text-center text-xs font-semibold text-rose-300">{error}</p>}
             </div>
@@ -676,7 +735,8 @@ export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurn
     { key: 'aiVoice', label: 'Natural AI voice', hint: "Off = your phone's built-in voice (faster, works offline)" },
     { key: 'briefing', label: 'Daily briefing', hint: 'Brief you on your day the first time you open Leo' },
     { key: 'phoneControl', label: 'Phone control', hint: 'Let Leo open apps, set alarms, control your phone (Android app)' },
-    { key: 'heyLeo', label: '"Hey Leo" wake word', hint: 'Say "Hey Leo" to open him while FocusLion is on screen (Android app). Listens on-device only.' },
+    { key: 'bubble', label: 'Floating Leo bubble', hint: 'A lion bubble over other apps — tap it to talk, drag to move, long-press to hide (Android app)' },
+    { key: 'heyLeo', label: '"Hey Leo" wake word', hint: 'Say "Hey Leo" to open him — inside FocusLion, and with the bubble on, over other apps too. Listens on-device only.' },
   ]
   const toggle = (k: keyof LeoPrefs) => {
     const v = !p[k]
@@ -703,4 +763,22 @@ export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurn
       </button>
     </div>
   )
+}
+
+/** Leo's latest reply "types" itself out (≈ speaking pace), then stays static. */
+function TypeText({ text }: { text: string }) {
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    // (a new reply re-mounts this via key, so n starts at 0)
+    let raf = 0
+    const start = performance.now()
+    const tick = (now: number) => {
+      const next = Math.min(text.length, Math.floor((now - start) / 18))
+      setN(next)
+      if (next < text.length) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [text])
+  return <>{text.slice(0, n)}{n < text.length && <span className="leo-caret">▍</span>}</>
 }

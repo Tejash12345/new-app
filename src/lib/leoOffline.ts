@@ -133,6 +133,9 @@ export function offlineThink(raw: string): LeoReply | null {
   if (has(t, 'selfie', 'camera', 'photo', 'కెమెరా', 'कैमरा')) return reply('Opening the camera.', [phoneA('camera')])
   if (has(t, 'wifi', 'wi-fi', 'bluetooth', 'hotspot', 'location'))
     return reply('Opening that setting.', [phoneA('settings', { panel: t.match(/wi-?fi|bluetooth|hotspot|location/)?.[0] ?? 'wifi' })])
+  const close = t.match(/^(?:close|exit|quit|kill|band karo|बंद करो)\s+(.+?)(?:\s+app)?$/)
+  if (close && !/^(leo|this chat)$/.test(close[1]))
+    return reply(`Closing ${close[1]}.`, [phoneA('close_app', { name: /^(this|it|that)( app)?$/.test(close[1]) ? '' : close[1] })])
   const open = t.match(/^(?:open|launch|start|kholo|खोलो)\s+(.+)$/) || t.match(/^(.+?)\s+(?:open|kholo|खोलो|ఓపెన్)\s*(?:karo|చెయ్యి|చేయి)?$/)
   if (open) return reply(`Opening ${open[1]}.`, [phoneA('open_app', { name: open[1].replace(/\s+app$/, '') })])
 
