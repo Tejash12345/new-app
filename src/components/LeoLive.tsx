@@ -189,6 +189,12 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
       parts.push(`Studied today: ${mins} minutes`)
     }
     parts.push(`Message confirmation: ${leoPrefs().confirmSend ? 'ON — ask before sending' : 'OFF — the user chose instant sending: include the send/schedule action immediately'}`)
+    try {
+      const ls = JSON.parse(localStorage.getItem('leo_last_send') || 'null') as { app: string; who: string; text: string; at: number } | null
+      if (ls && Date.now() - ls.at < 6 * 3600_000) {
+        parts.push(`Last message sent (${Math.round((Date.now() - ls.at) / 60000)} min ago): to ${ls.who} on ${ls.app === 'sms' ? 'SMS' : 'WhatsApp'}: "${ls.text}". "send one more message / another message / also tell him/her / send again" = same person and app.`)
+      }
+    } catch { /* ignore */ }
     const mem = loadMemory()
     if (mem.length) parts.push(`Things the user asked you to remember:\n${mem.map((m) => `- ${m}`).join('\n')}`)
     const skills = loadSkills()
@@ -279,6 +285,10 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           void _t
           // calls are always placed directly ("call Ravi" = it rings, no tap)
           const args = act === 'call' ? { ...rawArgs, direct: true } : rawArgs
+          // remember the last message (for "send one more message", "send it again", "tell him also…")
+          if (act === 'send_whatsapp' || act === 'send_sms') {
+            try { localStorage.setItem('leo_last_send', JSON.stringify({ app: act === 'send_sms' ? 'sms' : 'whatsapp', who: args.who, text: args.text, at: Date.now() })) } catch { /* ignore */ }
+          }
           // switching to another app would cut Leo off mid-sentence, so those
           // run right after he finishes speaking (see spokeEnd)
           if (act === 'youtube' && String(args.query ?? '').trim()) {
