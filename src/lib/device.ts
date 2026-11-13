@@ -43,7 +43,7 @@ export const LEAVES_APP = new Set([
   'open_app', 'call', 'sms', 'whatsapp', 'settings', 'youtube', 'music', 'maps', 'web', 'camera',
   'video', 'url', 'email', 'calendar', 'share',
   'power_menu', 'lock', 'screenshot', 'home', 'back', 'recents', 'notifications', 'quick_settings',
-  'send_whatsapp', 'close_app', 'open_focuslion', 'send_bulk', // these switch away from FocusLion
+  'send_whatsapp', 'close_app', 'open_focuslion', 'send_bulk', 'scroll', 'tap', 'type', // these switch away from FocusLion
 ])
 
 // ---- Leo settings (per device, user-controlled) ----

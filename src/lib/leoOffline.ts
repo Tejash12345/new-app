@@ -73,6 +73,18 @@ export function offlineThink(raw: string): LeoReply | null {
   if (has(t, /\b(any|new|my) (new )?messages?\b/, /\bwho (messaged|texted|sent)\b/))
     return reply('Checking your messages.', [phoneA('read_messages', { minutes: 0 })])
 
+  // ---- control the screen underneath (accessibility) ----
+  if (/^(scroll|swipe|page)( (down|up|more))?$|^next page$/.test(t))
+    return reply('Scrolling.', [phoneA('scroll', { dir: /\bup\b/.test(t) ? 'up' : 'down' })])
+  const tap = t.match(/^(?:tap|click|press|select)(?: on)? (.+)$/)
+  if (tap) return reply(`Tapping ${tap[1]}.`, [phoneA('tap', { text: tap[1] })])
+  const typ = raw.trim().match(/^(?:type|write)\s+(.+)$/i)
+  if (typ) return reply('Typing it.', [phoneA('type', { text: typ[1] })])
+  if (/^(go )?back$/.test(t)) return reply('Going back.', [phoneA('back')])
+  if (/^(go )?(to )?home( screen)?$/.test(t)) return reply('Home.', [phoneA('home')])
+  const setPage = t.match(/^open (.+?) settings?$/)
+  if (setPage) return reply(`Opening ${setPage[1]} settings.`, [phoneA('settings', { panel: setPage[1] })])
+
   // ---- system (needs the FocusLion Leo accessibility switch) ----
   if (has(t, 'shut down', 'shutdown', 'power off', 'restart', 'reboot', /\b(switch|turn|power) off (the |my )?(phone|mobile)\b/))
     return reply("Here's the power menu. Tap Power off or Restart.", [phoneA('power_menu')])
