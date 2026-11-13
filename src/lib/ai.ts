@@ -43,7 +43,7 @@ export async function askLion(
     }
     // friendly message for the free-tier daily quota / rate-limit case
     if (/RESOURCE_EXHAUSTED|exceeded your current quota|"code":\s*429|rate.?limit/i.test(detail)) {
-      throw new AiError("Lion AI has hit today's usage limit 🦁 — it resets daily. Please try again later.")
+      throw new AiError('Leo is busy right now — please try again in a minute. 🦁')
     }
     throw new AiError(
       /Failed to fetch|FunctionsFetchError/i.test(detail)
@@ -96,7 +96,7 @@ export async function askLionStream(
     if (!res.ok || body.error) {
       const detail = String(body.error ?? `AI request failed (${res.status})`)
       if (/limit|quota|RESOURCE_EXHAUSTED|429|rate.?limit/i.test(detail)) {
-        throw new AiError("Lion AI has hit today's usage limit 🦁 — it resets daily. Please try again later.")
+        throw new AiError('Leo is busy right now — please try again in a minute. 🦁')
       }
       throw new AiError(detail)
     }
