@@ -5,7 +5,7 @@
 // On the plain website none of this exists, and hasPhonePowers() is false.
 // ----------------------------------------------------------------------------
 
-export type DeviceResult = { ok: boolean; msg: string; level?: number; charging?: boolean }
+export type DeviceResult = { ok: boolean; msg: string; level?: number; charging?: boolean; lat?: number; lon?: number }
 
 type Bridge = { postMessage: (m: string) => void }
 type W = Window & {

@@ -76,9 +76,9 @@ export function offlineThink(raw: string): LeoReply | null {
   // ---- control the screen underneath (accessibility) ----
   if (/^(scroll|swipe|page)( (down|up|more))?$|^next page$/.test(t))
     return reply('Scrolling.', [phoneA('scroll', { dir: /\bup\b/.test(t) ? 'up' : 'down' })])
-  const tap = t.match(/^(?:tap|click|press|select)(?: on)? (.+)$/)
+  const tap = t.match(/^(?:tap|click|press)(?: on)? (.+)$/)
   if (tap) return reply(`Tapping ${tap[1]}.`, [phoneA('tap', { text: tap[1] })])
-  const typ = raw.trim().match(/^(?:type|write)\s+(.+)$/i)
+  const typ = raw.trim().match(/^type\s+(.+)$/i)
   if (typ) return reply('Typing it.', [phoneA('type', { text: typ[1] })])
   if (/^(go )?back$/.test(t)) return reply('Going back.', [phoneA('back')])
   if (/^(go )?(to )?home( screen)?$/.test(t)) return reply('Home.', [phoneA('home')])

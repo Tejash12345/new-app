@@ -11,7 +11,7 @@ export type AiTask =
   | 'chat' | 'summarize' | 'hashtags' | 'caption'
   | 'startup' | 'explain' | 'medical' | 'tip' | 'mission'
   | 'briefing' | 'learnpath' | 'career' | 'vision'
-  | 'transcribe' | 'agent'
+  | 'transcribe' | 'agent' | 'news'
 
 export type ChatTurn = { role: 'user' | 'assistant'; content: string }
 
@@ -176,6 +176,8 @@ export type LeoAction =
   | { type: 'remember'; fact: string }
   | { type: 'forget'; fact: string }
   | { type: 'look'; question?: string }
+  | { type: 'weather'; city?: string; day?: string }
+  | { type: 'news'; topic?: string }
   | { type: 'flashcards'; deck?: string; cards: { front: string; back: string }[] }
   | { type: 'learn'; phrase: string; say?: string; actions: Record<string, unknown>[] }
   | { type: 'unlearn'; phrase: string }
