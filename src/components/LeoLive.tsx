@@ -272,7 +272,13 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           const args = act === 'call' ? { ...rawArgs, direct: true } : rawArgs
           // switching to another app would cut Leo off mid-sentence, so those
           // run right after he finishes speaking (see spokeEnd)
-          if (LEAVES_APP.has(act)) deferredRef.current.push({ act, args })
+          if (act === 'youtube' && String(args.query ?? '').trim()) {
+            // "play <song>" -> open the top video itself so it starts playing
+            let url = ''
+            try { url = `https://www.youtube.com/watch?v=${await askLion({ task: 'youtube', input: String(args.query) })}` } catch { /* fall back to search */ }
+            deferredRef.current.push(url ? { act: 'url', args: { url } } : { act, args })
+            done.push(url ? `Playing: ${String(args.query)}` : `Searching YouTube: ${String(args.query)}`)
+          } else if (LEAVES_APP.has(act)) deferredRef.current.push({ act, args })
           else {
             const r = await phone(act, args)
             done.push(r.ok ? (act === 'read_screen' ? 'Read your screen' : act === 'read_messages' ? 'Checked your messages' : r.msg) : `⚠ ${r.msg}`)
@@ -483,6 +489,8 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   }
 
   async function startListening() {
+    // never open the mic while Leo isn't on screen (YouTube/music would be "heard")
+    if (document.visibilityState === 'hidden') return
     setError('')
     stopSpeaking()
     // OFFLINE: Whisper is in the cloud, so use the phone's own (on-device) ears
@@ -642,6 +650,20 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
     document.addEventListener('visibilitychange', pull)
     return () => { clearTimeout(t); document.removeEventListener('visibilitychange', pull) }
   }, [user, standalone, navigate])
+
+  // the moment Leo's window is hidden (he opened YouTube, the user switched
+  // apps…) the mic is released — otherwise videos/music get heard as commands
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== 'hidden') return
+      listenerRef.current?.cancel()
+      listenerRef.current = null
+      setLevel(0)
+      if (phaseRef.current === 'listening') setPhase('idle')
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [setLevel])
 
   // never leave the mic on if the component goes away
   useEffect(() => () => { listenerRef.current?.cancel() }, [])

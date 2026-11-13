@@ -11,7 +11,7 @@ export type AiTask =
   | 'chat' | 'summarize' | 'hashtags' | 'caption'
   | 'startup' | 'explain' | 'medical' | 'tip' | 'mission'
   | 'briefing' | 'learnpath' | 'career' | 'vision'
-  | 'transcribe' | 'agent' | 'news'
+  | 'transcribe' | 'agent' | 'news' | 'youtube'
 
 export type ChatTurn = { role: 'user' | 'assistant'; content: string }
 
