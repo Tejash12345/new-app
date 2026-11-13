@@ -11,6 +11,7 @@ export type AiTask =
   | 'chat' | 'summarize' | 'hashtags' | 'caption'
   | 'startup' | 'explain' | 'medical' | 'tip' | 'mission'
   | 'briefing' | 'learnpath' | 'career' | 'vision'
+  | 'transcribe' | 'agent'
 
 export type ChatTurn = { role: 'user' | 'assistant'; content: string }
 
@@ -20,12 +21,13 @@ export class AiError extends Error {}
  *  `fast: true` routes to the lighter fast model — for interactive helpers
  *  (smart replies) where a snappy answer beats maximum quality. */
 export async function askLion(
-  opts: { task: AiTask; input?: string; messages?: ChatTurn[]; fast?: boolean; image?: string },
+  opts: { task: AiTask; input?: string; messages?: ChatTurn[]; fast?: boolean; image?: string; audio?: string },
 ): Promise<string> {
   const { data, error } = await supabase.functions.invoke('lion-ai', {
     body: {
       task: opts.task, input: opts.input ?? '', messages: opts.messages ?? [],
       fast: opts.fast === true, ...(opts.image ? { image: opts.image } : {}),
+      ...(opts.audio ? { audio: opts.audio } : {}),
     },
   })
   if (error) {
@@ -140,6 +142,43 @@ export async function askLionStream(
     if (chunk) { full += chunk; onChunk(chunk) }
   }
   return full.trim()
+}
+
+// ---- Leo Live (voice assistant) ----
+
+/** Speech-to-text: a recorded clip (data URL) -> what the user said. */
+export const transcribeVoice = (audio: string) => askLion({ task: 'transcribe', audio })
+
+export type LeoAction =
+  | { type: 'add_task'; title: string; due?: string | null; priority?: number; subject?: string }
+  | { type: 'complete_task'; title: string }
+  | { type: 'add_note'; title: string; body: string }
+  | { type: 'start_focus'; minutes: number; subject?: string }
+  | { type: 'open'; page: string }
+  | { type: 'theme'; mode: 'dark' | 'light' }
+
+export type LeoReply = { say: string; lang: string; actions: LeoAction[] }
+
+/**
+ * One assistant turn: live app context + the conversation so far -> what Leo
+ * says (in the user's language) and the actions to perform in the app.
+ */
+export async function leoAgent(context: string, history: ChatTurn[]): Promise<LeoReply> {
+  const messages: ChatTurn[] = [
+    { role: 'user', content: `[Live context]\n${context}` },
+    { role: 'assistant', content: '{"say":"Got it.","lang":"en","actions":[]}' },
+    ...history.slice(-10),
+  ]
+  const raw = await askLion({ task: 'agent', messages })
+  const o = parseJson<{ say?: unknown; lang?: unknown; actions?: unknown }>(raw)
+  const say = String(o?.say ?? '').trim() || (raw && !raw.trim().startsWith('{') ? raw.trim() : '')
+  return {
+    say: say || "Sorry, I didn't catch that. Could you say it again?",
+    lang: String(o?.lang ?? 'en').toLowerCase().slice(0, 2),
+    actions: (Array.isArray(o?.actions) ? o!.actions : [])
+      .filter((a): a is LeoAction => !!a && typeof a === 'object' && typeof (a as { type?: unknown }).type === 'string')
+      .slice(0, 3),
+  }
 }
 
 // ---- feature helpers (the "AI-powered features") ----

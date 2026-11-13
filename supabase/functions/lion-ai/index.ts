@@ -128,7 +128,7 @@ const DAILY_USER_CAP = Number(env('AI_DAILY_USER_CAP', '0')) || 0
 // briefing are excluded: chat is conversational, mission/briefing are
 // personalized and already cached per-day on the client.
 const CACHEABLE = ['summarize', 'hashtags', 'caption', 'explain', 'startup', 'career', 'learnpath']
-const JSON_TASKS = ['mission', 'learnpath', 'career', 'startup']
+const JSON_TASKS = ['mission', 'learnpath', 'career', 'startup', 'agent']
 // Bump when a task's prompt/response shape changes so stale cached answers in
 // the old format aren't served. (v2: learnpath now also returns reference links.)
 const PROMPT_VERSION = 'v2'
@@ -209,6 +209,29 @@ function systemFor(task: string): string {
         `{"summary": string, "market": string, "revenueModel": [string], "competitors": [string], ` +
         `"mvpFeatures": [string], "team": [string], "roadmap": [{"phase": string, "detail": string}]}. ` +
         `Each list 3-6 items, concise and concrete. Roadmap 3-5 phases from MVP to launch.`
+    case 'agent':
+      return `You are "Leo Live", the JARVIS-style voice assistant inside FocusLion, a student productivity app. ` +
+        `The user SPOKE to you; their words were transcribed from speech, so quietly forgive small transcription mistakes. ` +
+        `The first message holds live context (local time, their open tasks, today's study). ` +
+        `You are calm, warm, witty and brief — like a brilliant personal assistant, with a light lion vibe. ` +
+        `Return STRICT JSON only, no markdown, exactly: ` +
+        `{"say": string, "lang": string, "actions": [object]}. ` +
+        `"say" = what you speak aloud: natural spoken sentences (1-3 short sentences, up to 5 only when explaining something), ` +
+        `NO markdown, NO emoji, NO bullet lists, NO URLs. Reply in the SAME language the user spoke ` +
+        `(Telugu in Telugu script, Hindi in Devanagari, etc.). ` +
+        `"lang" = ISO code of the reply language: "en","te","hi","ta","kn","ml","mr","bn","gu" or "pa". ` +
+        `"actions" = 0-3 things to DO in the app, ONLY when the user asked for them. Allowed actions: ` +
+        `{"type":"add_task","title":string,"due":"YYYY-MM-DDTHH:mm" in the user's local time or null,"priority":0|1|2 (0 low, 2 urgent),"subject":string} | ` +
+        `{"type":"complete_task","title":string} (must match one of their open tasks from context) | ` +
+        `{"type":"add_note","title":string,"body":string} | ` +
+        `{"type":"start_focus","minutes":integer 5-120,"subject":string} | ` +
+        `{"type":"open","page":"home"|"planner"|"tasks"|"focus"|"wellbeing"|"learn"|"quiz"|"lens"|"insights"|"vocab"|"diet"|"career"|"startup"|"notes"|"analytics"|"arena"|"coach"|"feed"|"chat"|"friends"|"settings"} | ` +
+        `{"type":"theme","mode":"dark"|"light"}. ` +
+        `Resolve relative times ("tomorrow 6pm", "in 2 hours") against the local time in context. ` +
+        `When you do an action, confirm it naturally in "say" (e.g. "Done — I added physics revision for 6 PM tomorrow."). ` +
+        `Never claim you did something without the matching action. For questions about their day, use the context. ` +
+        `For general questions (studies, facts, advice) just answer in "say" with no actions. ` +
+        `For medical topics give educational info and suggest a professional.`
     case 'vision':
       return `${BASE_PERSONA} You are Leo Lens, a patient tutor who reads photos of study material — ` +
         `textbook questions, equations, diagrams, handwritten notes. First read the photo carefully and ` +
@@ -224,6 +247,52 @@ function systemFor(task: string): string {
 }
 
 type InMsg = { role: 'user' | 'assistant'; content: string }
+
+// ---- speech-to-text (Leo Live) ----
+// Groq Whisper first (free, fast, multilingual incl. Telugu/Hindi), then
+// Cloudflare Workers AI Whisper as the backup. Returns null if both fail.
+async function transcribe(mime: string, b64: string, prompt: string): Promise<string | null> {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  const ext = mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac') ? 'm4a'
+    : mime.includes('ogg') ? 'ogg' : mime.includes('wav') ? 'wav' : mime.includes('mpeg') ? 'mp3' : 'webm'
+
+  const groq = ALL_PROVIDERS.groq
+  if (groq.key) {
+    try {
+      const fd = new FormData()
+      fd.append('file', new Blob([bytes], { type: mime }), `clip.${ext}`)
+      fd.append('model', env('GROQ_STT_MODEL', 'whisper-large-v3-turbo'))
+      fd.append('response_format', 'json')
+      fd.append('temperature', '0')
+      if (prompt) fd.append('prompt', prompt.slice(0, 200))
+      const r = await fetch(groq.url.replace('/chat/completions', '/audio/transcriptions'), {
+        method: 'POST', headers: { Authorization: `Bearer ${groq.key}` }, body: fd,
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (r.ok) return String(((await r.json()) as any)?.text ?? '').trim()
+      console.warn(`[STT] groq ${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}`)
+    } catch (e) { console.warn(`[STT] groq: ${String(e).slice(0, 200)}`) }
+  }
+
+  const acct = env('CLOUDFLARE_ACCOUNT_ID')
+  const cfToken = env('CLOUDFLARE_API_TOKEN')
+  if (acct && cfToken) {
+    try {
+      const r = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${acct}/ai/run/${env('CLOUDFLARE_STT_MODEL', '@cf/openai/whisper-large-v3-turbo')}`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${cfToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio: b64, ...(prompt ? { initial_prompt: prompt.slice(0, 200) } : {}) }),
+          signal: AbortSignal.timeout(30_000),
+        },
+      )
+      if (r.ok) return String(((await r.json()) as any)?.result?.text ?? '').trim()
+      console.warn(`[STT] cloudflare ${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}`)
+    } catch (e) { console.warn(`[STT] cloudflare: ${String(e).slice(0, 200)}`) }
+  }
+  return null
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
@@ -244,8 +313,18 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authErr } = await userClient.auth.getUser()
     if (authErr || !user) return json({ error: 'Unauthorized' }, 401)
 
-    const { task = 'chat', input = '', messages = [], stream: wantStreamRaw = false, fast: wantFast = false, image = '' } =
-      (await req.json().catch(() => ({}))) as { task?: string; input?: string; messages?: InMsg[]; stream?: boolean; fast?: boolean; image?: string }
+    const { task = 'chat', input = '', messages = [], stream: wantStreamRaw = false, fast: wantFast = false, image = '', audio = '' } =
+      (await req.json().catch(() => ({}))) as { task?: string; input?: string; messages?: InMsg[]; stream?: boolean; fast?: boolean; image?: string; audio?: string }
+
+    // Leo Live speech-to-text — a short voice clip as a data URL.
+    if (task === 'transcribe') {
+      const m = /^data:(audio\/[a-z0-9.+-]+)(?:;[^,]*)?;base64,(.+)$/i.exec(audio)
+      if (!m) return json({ error: 'A voice clip is required.' }, 400)
+      if (audio.length > 6_000_000) return json({ error: 'Voice clip too long — keep it under a minute.' }, 413)
+      const text = await transcribe(m[1].toLowerCase(), m[2], String(input || ''))
+      if (text === null) return json({ error: QUOTA_MSG, quota: true }, 429)
+      return json({ text, task })
+    }
 
     // Leo Lens photo input — a data URL, downscaled client-side. Reject
     // oversized payloads before they reach the model API.
@@ -335,6 +414,7 @@ Deno.serve(async (req) => {
         // the free NIM tier (a big generation is what stalls/queues for ~150s)
         useFast ? 700
         : task === 'startup' || task === 'career' || task === 'learnpath' ? 2048
+        : task === 'agent' ? 1024
         : task === 'mission' ? 1024
         // 'chat' also carries the Diet planner & recipe JSON. Non-English recipes
         // (Telugu/Hindi/Tamil…) tokenize ~3-4x heavier than English, so 1024 tokens

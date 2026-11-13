@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
+import { useSearchParams } from 'react-router-dom'
 import { Play, Pause, RotateCcw, Maximize2, X } from 'lucide-react'
 import { useTable } from '../hooks/db'
 import { useAuth } from '../hooks/useAuth'
@@ -43,6 +44,23 @@ export function FocusPage() {
   const [subject, setSubject] = useState('')
   const [deepMode, setDeepMode] = useState(false)
   const startedAt = useRef<Date | null>(null)
+
+  // Leo Live voice command: /focus?start=25&subject=Physics starts a session
+  // straight away. Params are cleared so a reload doesn't restart it.
+  const [params, setParams] = useSearchParams()
+  useEffect(() => {
+    const min = Math.round(Number(params.get('start')))
+    if (!min || min < 1) return
+    const m = Math.min(180, min)
+    const p = { label: `${m}-minute session`, min: m, mode: (m >= 45 ? 'focus' : 'pomodoro') as 'focus' | 'pomodoro' }
+    setPreset(p)
+    setSecondsLeft(m * 60)
+    setSubject(params.get('subject') ?? '')
+    startedAt.current = new Date()
+    setRunning(true)
+    if (p.mode === 'focus') setDeepMode(true)
+    setParams({}, { replace: true })
+  }, [params])
 
   useEffect(() => {
     if (!running) return

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { Suspense, useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -16,6 +16,7 @@ import { Onboarding } from './Onboarding'
 import { PresenceTracker } from './PresenceTracker'
 import { StoryRing, useStories } from './Stories'
 import { LionAI } from './LionAI'
+import { LeoLive } from './LeoLive'
 import { CallHost } from './CallHost'
 import { MascotImg } from './ui'
 import { useNotificationEngine, useDMNotifications, useFriendRequestNotifications, requestNotifPermission } from '../hooks/useNotifications'
@@ -65,6 +66,22 @@ export function Layout() {
   useFriendRequestNotifications()
   // ask once so reminders (study, deadlines, time-almost-up) can actually fire
   useEffect(() => { requestNotifPermission() }, [])
+
+  // warm up the most-used pages once the app is idle, so opening them later
+  // is instant even though they're split out of the startup bundle
+  useEffect(() => {
+    const warm = () => {
+      for (const load of [
+        () => import('../pages/TasksPage'), () => import('../pages/FocusPage'),
+        () => import('../pages/PlannerPage'), () => import('../pages/ChatPage'),
+        () => import('../pages/NotesPage'), () => import('../pages/FeedPage'),
+      ]) load().catch(() => {})
+    }
+    // older Android WebViews lack requestIdleCallback — fall back to a timer
+    const idle = 'requestIdleCallback' in window
+    const id = idle ? window.requestIdleCallback(warm, { timeout: 6000 }) : window.setTimeout(warm, 3000)
+    return () => { if (idle) window.cancelIdleCallback(id); else clearTimeout(id) }
+  }, [])
   // tell the native wrapper the current route so it can hide the floating Guard
   // shield on the chat pages (no-op in the browser — FLRoute exists only in the app)
   useEffect(() => {
@@ -91,6 +108,7 @@ export function Layout() {
       <Onboarding />
       <PresenceTracker />
       <LionAI />
+      <LeoLive />
       {/* voice calls ring on every page, WhatsApp-style */}
       <CallHost />
 
@@ -306,7 +324,10 @@ export function Layout() {
           button (bottom-28 + h-14 = 168px) plus any gesture-bar safe area */}
       <main className="min-w-0 overflow-x-hidden pb-[calc(11.5rem+env(safe-area-inset-bottom))] lg:pb-8 lg:pl-68" key={location.pathname}>
         <div className="min-w-0 lg:pl-4">
-          <Outlet />
+          {/* pages are lazy-loaded; the shell and nav stay put while one loads */}
+          <Suspense fallback={<PageLoading />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
 
@@ -426,6 +447,15 @@ export function Layout() {
           </div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+/** Shown for a split second while a lazy-loaded page downloads. */
+function PageLoading() {
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center" aria-busy="true">
+      <div className="h-9 w-9 animate-spin rounded-full border-[3px] border-amber-400/30 border-t-amber-400" />
     </div>
   )
 }

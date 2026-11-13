@@ -1,3 +1,4 @@
+import { lazy } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './hooks/useAuth'
@@ -7,31 +8,35 @@ import { StoriesProvider } from './components/Stories'
 import { Layout } from './components/Layout'
 import { AuthPage } from './pages/AuthPage'
 import { Dashboard } from './pages/Dashboard'
-import { PlannerPage } from './pages/PlannerPage'
-import { TasksPage } from './pages/TasksPage'
-import { FocusPage } from './pages/FocusPage'
-import { WellbeingPage } from './pages/WellbeingPage'
-import { CapsulePage } from './pages/CapsulePage'
-import { LearnPage } from './pages/LearnPage'
-import { QuizPage } from './pages/QuizPage'
-import { LensPage } from './pages/LensPage'
-import { InsightsPage } from './pages/InsightsPage'
-import { VocabPage } from './pages/VocabPage'
-import { DietPage } from './pages/DietPage'
-import { CareerPage } from './pages/CareerPage'
-import { StartupPage } from './pages/StartupPage'
-import { NotesPage } from './pages/NotesPage'
-import { AnalyticsPage } from './pages/AnalyticsPage'
-import { ArenaPage } from './pages/ArenaPage'
-import { CityPage } from './pages/CityPage'
-import { CoachPage } from './pages/CoachPage'
-import { ReportPage } from './pages/ReportPage'
-import { ChatPage } from './pages/ChatPage'
-import { FeedPage } from './pages/FeedPage'
-import { FriendsPage } from './pages/FriendsPage'
-import { InstallPage } from './pages/InstallPage'
-import { SettingsPage } from './pages/SettingsPage'
-import { AdminPage } from './pages/AdminPage'
+
+// Pages load on demand (code splitting): the app starts with only the shell,
+// the dashboard and the login page instead of all 27 pages at once, which is
+// what made startup on phones slow. Popular pages are prefetched when idle.
+const PlannerPage = lazy(() => import('./pages/PlannerPage').then((m) => ({ default: m.PlannerPage })))
+const TasksPage = lazy(() => import('./pages/TasksPage').then((m) => ({ default: m.TasksPage })))
+const FocusPage = lazy(() => import('./pages/FocusPage').then((m) => ({ default: m.FocusPage })))
+const WellbeingPage = lazy(() => import('./pages/WellbeingPage').then((m) => ({ default: m.WellbeingPage })))
+const CapsulePage = lazy(() => import('./pages/CapsulePage').then((m) => ({ default: m.CapsulePage })))
+const LearnPage = lazy(() => import('./pages/LearnPage').then((m) => ({ default: m.LearnPage })))
+const QuizPage = lazy(() => import('./pages/QuizPage').then((m) => ({ default: m.QuizPage })))
+const LensPage = lazy(() => import('./pages/LensPage').then((m) => ({ default: m.LensPage })))
+const InsightsPage = lazy(() => import('./pages/InsightsPage').then((m) => ({ default: m.InsightsPage })))
+const VocabPage = lazy(() => import('./pages/VocabPage').then((m) => ({ default: m.VocabPage })))
+const DietPage = lazy(() => import('./pages/DietPage').then((m) => ({ default: m.DietPage })))
+const CareerPage = lazy(() => import('./pages/CareerPage').then((m) => ({ default: m.CareerPage })))
+const StartupPage = lazy(() => import('./pages/StartupPage').then((m) => ({ default: m.StartupPage })))
+const NotesPage = lazy(() => import('./pages/NotesPage').then((m) => ({ default: m.NotesPage })))
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })))
+const ArenaPage = lazy(() => import('./pages/ArenaPage').then((m) => ({ default: m.ArenaPage })))
+const CityPage = lazy(() => import('./pages/CityPage').then((m) => ({ default: m.CityPage })))
+const CoachPage = lazy(() => import('./pages/CoachPage').then((m) => ({ default: m.CoachPage })))
+const ReportPage = lazy(() => import('./pages/ReportPage').then((m) => ({ default: m.ReportPage })))
+const ChatPage = lazy(() => import('./pages/ChatPage').then((m) => ({ default: m.ChatPage })))
+const FeedPage = lazy(() => import('./pages/FeedPage').then((m) => ({ default: m.FeedPage })))
+const FriendsPage = lazy(() => import('./pages/FriendsPage').then((m) => ({ default: m.FriendsPage })))
+const InstallPage = lazy(() => import('./pages/InstallPage').then((m) => ({ default: m.InstallPage })))
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })))
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },

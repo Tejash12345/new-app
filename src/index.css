@@ -207,3 +207,48 @@ body {
   to { opacity: 1; transform: scale(1); }
 }
 .wasted-in { animation: wasted-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* ---------- Leo Live orb (JARVIS-style) ----------
+   --lvl (0..1) is set straight from the mic analyser, so the orb breathes
+   with your voice without React re-renders. Transform/opacity only = GPU. */
+.leo-orb { --lvl: 0; }
+.leo-orb > span { position: absolute; inset: 0; border-radius: 9999px; will-change: transform, opacity; }
+.leo-core {
+  inset: 22% !important;
+  background: radial-gradient(circle at 40% 35%, #e0f2fe 0%, #38bdf8 35%, #1d4ed8 70%, #1e1b4b 100%);
+  box-shadow: 0 0 40px 8px rgba(56,189,248,.55), inset 0 0 24px rgba(255,255,255,.35);
+  transform: scale(calc(1 + var(--lvl) * 0.35));
+  transition: transform 80ms linear;
+}
+.leo-ring { border: 2px solid rgba(125,211,252,.45); }
+.leo-ring-1 { inset: 12% !important; border-style: dashed; animation: leo-spin 9s linear infinite; }
+.leo-ring-2 { inset: 4% !important; border-color: rgba(56,189,248,.25); border-top-color: rgba(186,230,253,.9); animation: leo-spin 2.8s linear infinite reverse; }
+.leo-ring-3 { border-color: rgba(56,189,248,.15); transform: scale(calc(1 + var(--lvl) * 0.25)); transition: transform 80ms linear; }
+.leo-listening .leo-ring-3 { animation: leo-pulse 1.4s ease-out infinite; }
+.leo-thinking .leo-ring-2 { animation-duration: 0.9s; border-top-color: #fbbf24; }
+.leo-thinking .leo-core { animation: leo-breathe 1.1s ease-in-out infinite; }
+.leo-speaking .leo-core { animation: leo-breathe 0.6s ease-in-out infinite; box-shadow: 0 0 60px 14px rgba(56,189,248,.6), inset 0 0 24px rgba(255,255,255,.35); }
+.leo-idle .leo-ring-2 { animation-duration: 6s; }
+@keyframes leo-spin { to { transform: rotate(360deg); } }
+@keyframes leo-pulse { 0% { opacity: .9; transform: scale(1); } 100% { opacity: 0; transform: scale(1.35); } }
+@keyframes leo-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+@media (prefers-reduced-motion: reduce) {
+  .leo-ring-1, .leo-ring-2, .leo-listening .leo-ring-3, .leo-thinking .leo-core, .leo-speaking .leo-core { animation: none; }
+}
+
+/* ---------- Performance on phones ----------
+   backdrop-filter blur is the single most expensive effect in the Android
+   WebView: every frosted card re-blurs the gradient behind it on every scroll
+   frame, which is what made scrolling hang. On touch devices we swap the blur
+   for slightly more opaque solid cards — visually almost identical, far
+   smoother. Desktop keeps the full frosted-glass look. */
+@media (hover: none) and (pointer: coarse) {
+  .glass, .glass-strong, [class*="backdrop-blur"] {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .glass { background: rgba(255, 255, 255, 0.93); }
+  .dark .glass { background: rgba(23, 26, 38, 0.95); }
+  .glass-strong { background: rgba(255, 255, 255, 0.97); }
+  .dark .glass-strong { background: rgba(26, 30, 44, 0.97); }
+}
