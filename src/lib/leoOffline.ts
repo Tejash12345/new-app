@@ -66,6 +66,13 @@ export function offlineThink(raw: string): LeoReply | null {
       level: t.match(/(\d{1,3})/)?.[1] ?? (has(t, 'down', 'dim', 'low') ? 'down' : has(t, 'max', 'full') ? 'max' : 'up'),
     })])
 
+  // ---- alarms off / messages ----
+  if (has(t, /\b(turn|switch) off (the |my )?alarms?\b/, /\b(stop|dismiss|cancel) (the |my )?alarms?\b/, /^alarm off$/))
+    return reply('Alarm off.', [phoneA('alarm_off', { label: has(t, /\ball alarms\b/) ? 'all' : '' })])
+  if (has(t, /\b(stop|cancel|turn off) (the |my )?timer\b/)) return reply('Timer stopped.', [phoneA('timer_off')])
+  if (has(t, /\b(any|new|my) (new )?messages?\b/, /\bwho (messaged|texted|sent)\b/))
+    return reply('Checking your messages.', [phoneA('read_messages', { minutes: 0 })])
+
   // ---- system (needs the FocusLion Leo accessibility switch) ----
   if (has(t, 'shut down', 'shutdown', 'power off', 'restart', 'reboot', /\b(switch|turn|power) off (the |my )?(phone|mobile)\b/))
     return reply("Here's the power menu. Tap Power off or Restart.", [phoneA('power_menu')])

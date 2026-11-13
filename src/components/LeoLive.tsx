@@ -59,6 +59,9 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   // open from the start, and closing him closes that window (not FocusLion)
   const [open, setOpen] = useState(standalone)
   const [phase, setPhase] = useState<Phase>('idle')
+  const phaseRef = useRef<Phase>('idle')
+  useEffect(() => { phaseRef.current = phase }, [phase])
+  const micRetryRef = useRef(0)
   const [lines, setLines] = useState<Line[]>([])
   const [error, setError] = useState('')
   const [typed, setTyped] = useState('')
@@ -259,8 +262,8 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           if (LEAVES_APP.has(act)) deferredRef.current.push({ act, args })
           else {
             const r = await phone(act, args)
-            done.push(r.ok ? (act === 'read_screen' ? 'Read your screen' : r.msg) : `⚠ ${r.msg}`)
-            if (r.ok && (act === 'screen_time' || act === 'info' || act === 'read_screen')) phoneDataRef.current.push(r.msg)
+            done.push(r.ok ? (act === 'read_screen' ? 'Read your screen' : act === 'read_messages' ? 'Checked your messages' : r.msg) : `⚠ ${r.msg}`)
+            if (r.ok && (act === 'screen_time' || act === 'info' || act === 'read_screen' || act === 'read_messages')) phoneDataRef.current.push(r.msg)
           }
         }
       } catch { /* skip a failed action, keep going */ }
@@ -352,6 +355,13 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   async function offlineReply(q: string): Promise<LeoReply> {
     const r = offlineThink(q)
     if (!r) return { say: OFFLINE_HELP, lang: 'en', actions: [] }
+    // offline "any new messages?": read the newest few out loud ourselves
+    if (r.actions.some((a) => a.type === 'phone' && a.do === 'read_messages')) {
+      const res = await phone('read_messages', { minutes: 0 })
+      if (!res.ok) return { say: res.msg, lang: 'en', actions: [] }
+      const items = res.msg.replace(/^Recent messages \(newest first\): /, '').split(' | ').slice(0, 3)
+      return { say: items.length ? `Your latest messages. ${items.map((x) => x.replace(/^\S+ \S+ /, '')).join('. ')}.` : res.msg, lang: 'en', actions: [] }
+    }
     const info = r.actions.find((a) => a.type === 'phone' && a.do === 'info')
     if (info) {
       const res = await phone('info')
@@ -440,6 +450,7 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
       const l = await listen(setLevel)
       if (!openRef.current) { l.cancel(); return } // Leo was closed while the mic was starting
       listenerRef.current = l
+      micRetryRef.current = 0
       setPhase('listening')
       hap.tap()
       const clip = await l.done
@@ -456,6 +467,14 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
       setLevel(0)
       if (e instanceof Error && e.message === 'cancelled') return
       const msg = e instanceof Error ? e.message : String(e)
+      // the mic can be briefly busy right after "Hey Leo" (the wake listener is
+      // releasing it) — retry once quietly instead of showing an error
+      if (!/NotAllowed|Permission|denied/i.test(msg) && micRetryRef.current < 1 && openRef.current) {
+        micRetryRef.current++
+        setPhase('idle')
+        setTimeout(() => { void startRef.current() }, 700)
+        return
+      }
       setError(/NotAllowed|Permission|denied/i.test(msg)
         ? 'Microphone is blocked. Allow mic access for FocusLion, then try again.'
         : msg)
@@ -483,10 +502,14 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   // runs the rest of the sentence ("hey leo, open whatsapp")
   const wakeRef = useRef<(rest: string) => void>(() => {})
   useEffect(() => {
-    wakeRef.current = (rest: string) => {
+    wakeRef.current = (raw: string) => {
+      // "hey leo, open whatsapp" -> "open whatsapp"
+      const rest = raw.replace(/^\s*(hey|hi|ok|okay|hello)?\s*leo\b[\s,.!]*/i, '').trim()
       openRef.current = true
       setOpen(true)
-      setTimeout(() => { if (rest.trim()) void thinkRef.current(rest); else void startRef.current() }, 250)
+      // already busy with a turn (e.g. a repeated wake) — don't start a second one
+      if (phaseRef.current !== 'idle' && !rest) return
+      setTimeout(() => { if (rest) void thinkRef.current(rest); else void startRef.current() }, 200)
     }
   })
   useEffect(() => {
@@ -531,12 +554,16 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
     const pull = () => {
       if (document.visibilityState !== 'visible') return
       if (!hasPhonePowers()) { if (tries++ < 6) setTimeout(pull, 1000); return } // bridge not ready yet
-      void phone('take_wake', {}, 3000).then((r) => { if (r.ok) wakeRef.current(r.msg === 'none' ? '' : r.msg) })
+      void phone('take_wake', {}, 3000).then((r) => {
+        if (r.ok) wakeRef.current(r.msg === 'none' ? '' : r.msg)
+        // the Leo-only pop-up always starts listening by itself — no tap needed
+        else if (standalone && phaseRef.current === 'idle') wakeRef.current('')
+      })
     }
     const t = setTimeout(pull, 600)
     document.addEventListener('visibilitychange', pull)
     return () => { clearTimeout(t); document.removeEventListener('visibilitychange', pull) }
-  }, [user, prefs.enabled])
+  }, [user, prefs.enabled, standalone])
 
   // full app: the Leo-only window asked to open a FocusLion page ("open my tasks")
   useEffect(() => {
