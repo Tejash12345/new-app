@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Send, Check, Repeat, Settings as SettingsIcon } from 'lucide-react'
 import { AiLion } from './ui'
+import { LeoGuide, LeoSetupChecklist, VoiceLockPanel } from './LeoSetup'
+import { usePermStatus, ESSENTIAL } from '../lib/leoPerms'
 import { mascotSrc } from '../lib/mascot'
 import { hap } from '../lib/haptics'
 import { useAuth } from '../hooks/useAuth'
@@ -71,6 +73,13 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   // user-controlled Leo settings (on/off, hands-free, voice, briefing, phone control)
   const [prefs, setPrefs] = useState<LeoPrefs>(leoPrefs)
   const [showSettings, setShowSettings] = useState(false)
+  const [showGuide, setShowGuide] = useState(false)
+  // first time (Android app): show the setup checklist until the essentials are done
+  const perms = usePermStatus(open)
+  const [setupDismissed, setSetupDismissed] = useState(() => {
+    try { return localStorage.getItem('fl:leo-setup-dismissed') === '1' } catch { return false }
+  })
+  const needsSetup = !!perms && !ESSENTIAL.every((k) => perms[k]) && !setupDismissed
   const handsFree = prefs.handsFree
   useEffect(() => {
     const onPrefs = () => setPrefs(leoPrefs())
@@ -458,6 +467,8 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   }
 
   function spokeEnd() {
+    // Leo-only window: tell the phone he's done talking (music/video may resume)
+    if (standalone) (window as Window & { FLLeo?: { postMessage: (m: string) => void } }).FLLeo?.postMessage('spoke_end')
     if (closeAfterSpeakRef.current) { closeAfterSpeakRef.current = false; close(); return }
     // phone actions that open another app (WhatsApp, YouTube, dialer…) run now
     if (deferredRef.current.length) {
@@ -578,6 +589,8 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
       setOpen(true)
       // already busy with a turn (e.g. a repeated wake) — don't start a second one
       if (phaseRef.current !== 'idle' && !rest) return
+      // a new command interrupts the previous answer (no two voices at once)
+      if (rest) { stopSpeaking(); deferredRef.current = [] }
       setTimeout(() => { if (rest) void thinkRef.current(rest); else void startRef.current() }, 200)
     }
   })
@@ -637,6 +650,15 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
     document.addEventListener('visibilitychange', pull)
     return () => { clearTimeout(t); document.removeEventListener('visibilitychange', pull) }
   }, [user, prefs.enabled, standalone])
+
+  // Leo-only window kept in the background: later "Hey Leo, <command>" arrives
+  // here and is handled without the window coming back up (answer + action)
+  useEffect(() => {
+    if (!standalone) return
+    const w = window as Window & { __flWake?: (rest: string) => void }
+    w.__flWake = (rest) => wakeRef.current(rest)
+    return () => { delete w.__flWake }
+  }, [standalone])
 
   // full app: the Leo-only window asked to open a FocusLion page ("open my tasks")
   useEffect(() => {
@@ -740,6 +762,10 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
                     handsFree ? 'bg-sky-400/20 text-sky-200' : 'bg-white/5 text-white/50')}>
                   <Repeat size={13} /> Hands-free {handsFree ? 'on' : 'off'}
                 </button>
+                <button onClick={() => { setShowGuide((v) => !v); setShowSettings(false) }} aria-label="What can I say?"
+                  className={cn('rounded-full px-3 py-1.5 text-xs font-bold hover:bg-white/20', showGuide ? 'bg-sky-400/30' : 'bg-white/10')}>
+                  ? Help
+                </button>
                 <button onClick={() => setShowSettings((v) => !v)} aria-label="Leo settings" className={cn('rounded-full p-2 hover:bg-white/20', showSettings ? 'bg-sky-400/30' : 'bg-white/10')}>
                   <SettingsIcon size={18} />
                 </button>
@@ -750,8 +776,26 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
             </div>
 
             {showSettings && (
-              <div className="mx-auto mt-3 w-full max-w-xl px-4">
+              <div className="mx-auto mt-3 max-h-[55vh] w-full max-w-xl overflow-y-auto px-4">
                 <LeoSettingsPanel dark onTurnedOff={close} />
+              </div>
+            )}
+
+            {/* "What can I say?" — tap an example to try it */}
+            {showGuide && !showSettings && (
+              <div className="mx-auto mt-3 max-h-[55vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white/5 p-4">
+                <LeoGuide dark onTry={(t) => { setShowGuide(false); stopAll(); void think(t) }} />
+              </div>
+            )}
+
+            {/* first run: set Leo up in a few taps */}
+            {needsSetup && !showSettings && !showGuide && (
+              <div className="mx-auto mt-3 max-h-[50vh] w-full max-w-xl overflow-y-auto px-4">
+                <div className="mb-1 text-sm font-bold text-white">Set up Leo (one time)</div>
+                <LeoSetupChecklist dark onDone={() => {
+                  setSetupDismissed(true)
+                  try { localStorage.setItem('fl:leo-setup-dismissed', '1') } catch { /* ignore */ }
+                }} />
               </div>
             )}
 
@@ -916,6 +960,13 @@ export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurn
           </span>
         </button>
       ))}
+      {p.heyLeo && hasPhonePowers() && <VoiceLockPanel dark={dark} />}
+      <details className="mx-3 rounded-xl">
+        <summary className={cn('cursor-pointer py-2 text-sm font-semibold', dark ? 'text-sky-200' : 'text-slate-700 dark:text-slate-200')}>
+          Permissions & setup
+        </summary>
+        <LeoSetupChecklist dark={dark} />
+      </details>
       {p.heyLeo && wakeStatus && (
         <div className={cn('mx-3 rounded-xl px-3 py-2 text-xs font-semibold', /✓/.test(wakeStatus)
           ? 'bg-emerald-400/15 text-emerald-400' : 'bg-amber-400/15 text-amber-500')}>
