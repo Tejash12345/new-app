@@ -175,6 +175,7 @@ export type LeoAction =
   | { type: 'remember'; fact: string }
   | { type: 'forget'; fact: string }
   | { type: 'look'; question?: string }
+  | { type: 'flashcards'; deck?: string; cards: { front: string; back: string }[] }
   | { type: 'learn'; phrase: string; say?: string; actions: Record<string, unknown>[] }
   | { type: 'unlearn'; phrase: string }
 

@@ -207,6 +207,16 @@ export function LeoLive() {
           done.push(`Remembered: ${a.fact}`)
         } else if (a.type === 'forget' && a.fact) {
           if (forget(String(a.fact))) done.push(`Forgot: ${a.fact}`)
+        } else if (a.type === 'flashcards' && user && Array.isArray(a.cards)) {
+          const deck = String(a.deck || 'Leo').slice(0, 40)
+          const rows = a.cards
+            .map((c) => ({ front: String(c?.front ?? '').trim().slice(0, 300), back: String(c?.back ?? '').trim().slice(0, 400) }))
+            .filter((c) => c.front && c.back).slice(0, 20)
+            .map((c) => ({ ...c, deck, user_id: user.id }))
+          if (rows.length) {
+            const { error } = await supabase.from('flashcards').insert(rows)
+            if (!error) done.push(`${rows.length} flashcards added to "${deck}"`)
+          }
         } else if (a.type === 'look') {
           setLookQ(String(a.question || 'What is this? Explain it simply.'))
         } else if (a.type === 'learn' && a.phrase && Array.isArray(a.actions)) {

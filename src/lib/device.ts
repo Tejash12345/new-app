@@ -43,6 +43,7 @@ export const LEAVES_APP = new Set([
   'open_app', 'call', 'sms', 'whatsapp', 'settings', 'youtube', 'music', 'maps', 'web', 'camera',
   'video', 'url', 'email', 'calendar', 'share',
   'power_menu', 'lock', 'screenshot', 'home', 'back', 'recents', 'notifications', 'quick_settings',
+  'send_whatsapp', // opens WhatsApp and taps Send
 ])
 
 // ---- Leo settings (per device, user-controlled) ----
