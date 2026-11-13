@@ -8,6 +8,7 @@ import { cn } from '../lib/utils'
 import { prepareMascotImage, setMascotLocal, useMascot, type MascotKind } from '../lib/mascot'
 import { THEMES, getStoredTheme, setTheme as applyAccentTheme, type ThemeId } from '../lib/theme'
 import { usePrefs, setPref, DEFAULT_PREFS, type Prefs } from '../lib/prefs'
+import { LeoSettingsPanel } from '../components/LeoLive'
 
 function MascotRow({ kind, title, desc, busy, onPick, onReset }: {
   kind: MascotKind; title: string; desc: string
@@ -499,6 +500,12 @@ export function SettingsPage() {
               </select>
             </div>
           </div>
+        </GlassCard>
+
+        {/* Leo Live voice assistant — turn him on/off and pick how he works */}
+        <GlassCard>
+          <SectionTitle>🎙️ Leo Live assistant</SectionTitle>
+          <LeoSettingsPanel />
         </GlassCard>
 
         <GlassCard>

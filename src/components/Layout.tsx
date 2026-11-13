@@ -1,9 +1,9 @@
 import { Suspense, useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useDragControls } from 'framer-motion'
 import {
   LayoutDashboard, CalendarDays, CheckCircle2, Timer, Shield,
-  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard, Eye, Hourglass, GraduationCap, Briefcase, Rocket, BookOpen, Salad, Search, Swords, Sparkles, Camera, Gamepad2,
+  BarChart3, NotebookPen, Trophy, Bot, Settings, Moon, Sun, LogOut, Crown, FileText, MessageCircle, Users, Download, Clapperboard, Eye, Hourglass, GraduationCap, Briefcase, Rocket, BookOpen, Salad, Search, Swords, Sparkles, Camera, Gamepad2, X,
 } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useAuth } from '../hooks/useAuth'
@@ -60,6 +60,7 @@ export function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
+  const sheetDrag = useDragControls()
   useNotificationEngine()
   // app-wide incoming-DM + friend-request notifications (fire on any page)
   useDMNotifications()
@@ -370,12 +371,32 @@ export function Layout() {
               className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-sm"
               onClick={() => setMenuOpen(false)}
             />
+            {/* Easy to close: tap the dimmed area (the sheet is capped at 78% of
+                the screen so there's always room above it), tap ✕, or swipe the
+                top bar down. Long content scrolls inside the sheet. */}
             <motion.div
-              initial={{ y: 320 }} animate={{ y: 0 }} exit={{ y: 320 }}
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 30, stiffness: 320 }}
-              className="glass-strong fixed inset-x-3 bottom-3 z-[61] rounded-3xl p-4"
+              drag="y" dragListener={false} dragControls={sheetDrag}
+              dragConstraints={{ top: 0, bottom: 0 }} dragElastic={{ top: 0, bottom: 0.7 }}
+              onDragEnd={(_, info) => { if (info.offset.y > 80 || info.velocity.y > 500) setMenuOpen(false) }}
+              className="glass-strong fixed inset-x-3 bottom-3 z-[61] flex max-h-[78vh] flex-col rounded-3xl"
             >
-              <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
+              <div
+                onPointerDown={(e) => sheetDrag.start(e)}
+                className="relative shrink-0 cursor-grab touch-none px-4 pb-1 pt-3"
+              >
+                <div className="mx-auto h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
+                <button
+                  onClick={() => setMenuOpen(false)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  aria-label="Close"
+                  className="absolute right-3 top-2 rounded-full bg-slate-500/10 p-1.5 text-slate-500 dark:text-slate-300"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="overflow-y-auto overscroll-contain px-4 pb-4">
               <div className="flex items-center gap-3 px-2 py-2">
                 {withRing(
                   <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-lg font-bold text-white">
@@ -443,6 +464,7 @@ export function Layout() {
                 className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-rose-500 hover:bg-rose-500/10">
                 <LogOut size={18} /> Log out
               </button>
+              </div>
             </motion.div>
           </div>
         )}

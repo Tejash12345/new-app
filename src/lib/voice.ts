@@ -39,15 +39,21 @@ export async function listen(onLevel?: (level: number) => void): Promise<Listene
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   })
   const mime = pickMime()
-  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+  let rec: MediaRecorder
+  let ctx: AudioContext
+  let analyser: AnalyserNode
+  try {
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+    ctx = new AudioContext()
+    analyser = ctx.createAnalyser()
+    analyser.fftSize = 512
+    ctx.createMediaStreamSource(stream).connect(analyser)
+  } catch (e) {
+    stream.getTracks().forEach((t) => t.stop()) // never leave the mic on
+    throw e
+  }
   const chunks: BlobPart[] = []
   rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
-
-  const ctx = new AudioContext()
-  const src = ctx.createMediaStreamSource(stream)
-  const analyser = ctx.createAnalyser()
-  analyser.fftSize = 512
-  src.connect(analyser)
   const buf = new Uint8Array(analyser.fftSize)
 
   const started = Date.now()
@@ -62,7 +68,12 @@ export async function listen(onLevel?: (level: number) => void): Promise<Listene
   let rejectDone!: (e: unknown) => void
   const done = new Promise<Recording>((res, rej) => { resolveDone = res; rejectDone = rej })
 
+  // backstop: rAF pauses when the app goes to the background, so a plain
+  // timer guarantees the mic is released and the turn ends
+  const hardStop = setTimeout(() => finish(), MAX_MS + 1000)
+
   const cleanup = () => {
+    clearTimeout(hardStop)
     cancelAnimationFrame(raf)
     stream.getTracks().forEach((t) => t.stop())
     ctx.close().catch(() => {})

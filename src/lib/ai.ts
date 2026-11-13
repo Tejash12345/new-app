@@ -149,6 +149,21 @@ export async function askLionStream(
 /** Speech-to-text: a recorded clip (data URL) -> what the user said. */
 export const transcribeVoice = (audio: string) => askLion({ task: 'transcribe', audio })
 
+/**
+ * Leo's natural AI voice (Gemini TTS) for a reply. Resolves to a playable
+ * audio data URL, or null if it's unavailable/slow — callers then fall back
+ * to the phone's built-in voice.
+ */
+export async function leoVoice(text: string, timeoutMs = 9000): Promise<string | null> {
+  try {
+    const call = supabase.functions.invoke('lion-ai', { body: { task: 'speak', input: text } })
+    const timer = new Promise<null>((res) => setTimeout(() => res(null), timeoutMs))
+    const r = await Promise.race([call, timer])
+    const audio = r && !r.error ? (r.data as { audio?: string } | null)?.audio : null
+    return typeof audio === 'string' && audio.startsWith('data:audio') ? audio : null
+  } catch { return null }
+}
+
 export type LeoAction =
   | { type: 'add_task'; title: string; due?: string | null; priority?: number; subject?: string }
   | { type: 'complete_task'; title: string }
@@ -156,6 +171,12 @@ export type LeoAction =
   | { type: 'start_focus'; minutes: number; subject?: string }
   | { type: 'open'; page: string }
   | { type: 'theme'; mode: 'dark' | 'light' }
+  | ({ type: 'phone'; do: string } & Record<string, unknown>)
+  | { type: 'remember'; fact: string }
+  | { type: 'forget'; fact: string }
+  | { type: 'look'; question?: string }
+  | { type: 'learn'; phrase: string; say?: string; actions: Record<string, unknown>[] }
+  | { type: 'unlearn'; phrase: string }
 
 export type LeoReply = { say: string; lang: string; actions: LeoAction[] }
 
@@ -177,7 +198,7 @@ export async function leoAgent(context: string, history: ChatTurn[]): Promise<Le
     lang: String(o?.lang ?? 'en').toLowerCase().slice(0, 2),
     actions: (Array.isArray(o?.actions) ? o!.actions : [])
       .filter((a): a is LeoAction => !!a && typeof a === 'object' && typeof (a as { type?: unknown }).type === 'string')
-      .slice(0, 3),
+      .slice(0, 5),
   }
 }
 

@@ -220,13 +220,23 @@ function systemFor(task: string): string {
         `NO markdown, NO emoji, NO bullet lists, NO URLs. Reply in the SAME language the user spoke ` +
         `(Telugu in Telugu script, Hindi in Devanagari, etc.). ` +
         `"lang" = ISO code of the reply language: "en","te","hi","ta","kn","ml","mr","bn","gu" or "pa". ` +
-        `"actions" = 0-3 things to DO in the app, ONLY when the user asked for them. Allowed actions: ` +
+        `"actions" = 0-5 things to DO in the app, ONLY when the user asked for them. Allowed actions: ` +
         `{"type":"add_task","title":string,"due":"YYYY-MM-DDTHH:mm" in the user's local time or null,"priority":0|1|2 (0 low, 2 urgent),"subject":string} | ` +
         `{"type":"complete_task","title":string} (must match one of their open tasks from context) | ` +
         `{"type":"add_note","title":string,"body":string} | ` +
         `{"type":"start_focus","minutes":integer 5-120,"subject":string} | ` +
         `{"type":"open","page":"home"|"planner"|"tasks"|"focus"|"wellbeing"|"learn"|"quiz"|"lens"|"insights"|"vocab"|"diet"|"career"|"startup"|"notes"|"analytics"|"arena"|"coach"|"feed"|"chat"|"friends"|"settings"} | ` +
-        `{"type":"theme","mode":"dark"|"light"}. ` +
+        `{"type":"theme","mode":"dark"|"light"} | ` +
+        `{"type":"phone", ...} — controls the user's Android phone, ONLY if context says "Phone control: available". Forms: ` +
+        `{"type":"phone","do":"open_app","name":string} | {"type":"phone","do":"call","who":contact} where contact = a phone number, or the name as it is likely saved in contacts written in English letters, with alternatives separated by "|" (e.g. అమ్మ -> "Amma|Mom|Mother", पापा -> "Papa|Dad") | ` +
+        `{"type":"phone","do":"whatsapp","who":string,"text":string} | {"type":"phone","do":"sms","who":string,"text":string} | ` +
+        `{"type":"phone","do":"alarm","hour":0-23,"minute":0-59,"label":string} | {"type":"phone","do":"timer","seconds":integer,"label":string} | ` +
+        `{"type":"phone","do":"torch","on":boolean} | {"type":"phone","do":"volume","level":"up"|"down"|"mute"|"max"|"0-100"} | ` +
+        `{"type":"phone","do":"settings","panel":"wifi"|"bluetooth"|"internet"|"volume"|"display"|"battery"|"location"|"hotspot"} | ` +
+        `{"type":"phone","do":"youtube","query":string} | {"type":"phone","do":"music","query":string} | ` +
+        `{"type":"phone","do":"maps","query":string,"navigate":boolean} | {"type":"phone","do":"web","query":string} | {"type":"phone","do":"camera"} | {"type":"phone","do":"video"} | {"type":"phone","do":"url","url":string} | {"type":"phone","do":"dnd","on":boolean} (Do Not Disturb — offer it when they start studying) | {"type":"phone","do":"ringer","mode":"silent"|"vibrate"|"normal"} | {"type":"phone","do":"media","key":"play"|"pause"|"next"|"previous"} | {"type":"phone","do":"brightness","level":"up"|"down"|"max"|"min"|"0-100"} | {"type":"phone","do":"email","to":string,"subject":string,"body":string} | {"type":"phone","do":"calendar","title":string,"start":"YYYY-MM-DDTHH:mm","minutes":integer} | {"type":"phone","do":"share","text":string} | {"type":"phone","do":"copy","text":string} | {"type":"phone","do":"info"} | {"type":"phone","do":"screen_time"} (today's per-app screen time — the app reads it and you will be told the result; for "how long was I on X") | {"type":"phone","do":"power_menu"} (shows Power off / Restart — apps cannot power the phone off or on by themselves; say so) | {"type":"phone","do":"lock"} | {"type":"phone","do":"screenshot"} | {"type":"phone","do":"home"|"back"|"recents"|"notifications"|"quick_settings"} | {"type":"phone","do":"read_screen"} (reads the last screen the user had open in another app — ALWAYS use it when they say "this message", "this chat", "this page", "my screen", "what should I reply", "summarise this", "explain what I was reading" without pasting the text; you will be told the text) | {"type":"look","question":string} — opens the camera so the user can show you something (homework, a plant, a label, a diagram); use it for "what is this", "look at this", "solve this question", "read this". DAILY COACH: when asked about their habits, their day or for suggestions, use phone screen_time and give kind, specific suggestions (e.g. lots of Instagram -> suggest a limit or a focus block). ROUTINES — chain actions: "study mode" = dnd on + media pause + start_focus 50; "break time" = dnd off + timer 300 "Break over"; "good night" = alarm (ask or use 06:30) + dnd on + brightness min; "good morning" = dnd off + brief the day from context. Reminders: "remind me at 7 PM to X" -> phone alarm with label X; "remind me in 20 minutes" -> phone timer with label. You also have a MEMORY: {"type":"remember","fact":string} saves a fact about the user (exam dates, goals, preferences, names); {"type":"forget","fact":string} removes one. Remembered facts appear in context — use them naturally. You can LEARN SKILLS the user teaches you ("when I say exam mode, turn on DND and start a 60 minute focus"): {"type":"learn","phrase":the trigger words,"say":short spoken confirmation for when it runs,"actions":[the actions to run, same formats as above]} — do NOT also run those actions now unless asked; confirm what you learned. {"type":"unlearn","phrase":string} deletes a skill. Learned skills are listed in context; if the user asks what you can do, mention them. ` +
+        `Calls, SMS and WhatsApp only open ready-to-send — say "tap call/send to confirm". Keep any message text exactly as the user dictated. ` +
+        `Use 24-hour time for alarms. If phone control is NOT available, say it works in the FocusLion Android app. ` +
         `Resolve relative times ("tomorrow 6pm", "in 2 hours") against the local time in context. ` +
         `When you do an action, confirm it naturally in "say" (e.g. "Done — I added physics revision for 6 PM tomorrow."). ` +
         `Never claim you did something without the matching action. For questions about their day, use the context. ` +
@@ -248,6 +258,58 @@ function systemFor(task: string): string {
 
 type InMsg = { role: 'user' | 'assistant'; content: string }
 
+// ---- text-to-speech (Leo Live's voice) ----
+// Gemini TTS: natural, deep "AI butler" voice that speaks Telugu, Hindi,
+// English and more. Returns a WAV data URL, or null (the app then falls back
+// to the phone's built-in voice). Voice is overridable with LEO_VOICE.
+async function speakAudio(text: string): Promise<string | null> {
+  const key = GEMINI_KEY
+  if (!key || !text) return null
+  const voice = env('LEO_VOICE', 'Charon')
+  const models = env('LEO_TTS_MODELS', 'gemini-3.8-flash-lite-tts,gemini-3.8-flash-tts').split(',').map((s) => s.trim()).filter(Boolean)
+  for (const model of models) {
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: text.slice(0, 700) }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+          },
+        }),
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (!r.ok) { console.warn(`[TTS] ${model} ${r.status}: ${(await r.text().catch(() => '')).slice(0, 160)}`); continue }
+      const d = await r.json() as any
+      const part = d?.candidates?.[0]?.content?.parts?.find((p: any) => p?.inlineData?.data)?.inlineData
+      if (!part?.data) continue
+      const mime = String(part.mimeType ?? '').toLowerCase()
+      if (mime.includes('wav')) return `data:audio/wav;base64,${part.data}`
+      // raw 16-bit PCM (older models) -> wrap in a WAV header
+      const rate = Number(/rate=(\d+)/.exec(mime)?.[1] ?? 24000)
+      return `data:audio/wav;base64,${pcmToWavB64(part.data, rate)}`
+    } catch (e) { console.warn(`[TTS] ${model}: ${String(e).slice(0, 160)}`) }
+  }
+  return null
+}
+
+function pcmToWavB64(pcmB64: string, rate: number): string {
+  const pcm = Uint8Array.from(atob(pcmB64), (c) => c.charCodeAt(0))
+  const h = new DataView(new ArrayBuffer(44))
+  const w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) h.setUint8(o + i, s.charCodeAt(i)) }
+  w(0, 'RIFF'); h.setUint32(4, 36 + pcm.length, true); w(8, 'WAVE'); w(12, 'fmt ')
+  h.setUint32(16, 16, true); h.setUint16(20, 1, true); h.setUint16(22, 1, true)
+  h.setUint32(24, rate, true); h.setUint32(28, rate * 2, true); h.setUint16(32, 2, true); h.setUint16(34, 16, true)
+  w(36, 'data'); h.setUint32(40, pcm.length, true)
+  const all = new Uint8Array(44 + pcm.length)
+  all.set(new Uint8Array(h.buffer), 0); all.set(pcm, 44)
+  let bin = ''
+  for (let i = 0; i < all.length; i += 0x8000) bin += String.fromCharCode(...all.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
+
 // ---- speech-to-text (Leo Live) ----
 // Groq Whisper first (free, fast, multilingual incl. Telugu/Hindi), then
 // Cloudflare Workers AI Whisper as the backup. Returns null if both fail.
@@ -261,7 +323,8 @@ async function transcribe(mime: string, b64: string, prompt: string): Promise<st
     try {
       const fd = new FormData()
       fd.append('file', new Blob([bytes], { type: mime }), `clip.${ext}`)
-      fd.append('model', env('GROQ_STT_MODEL', 'whisper-large-v3-turbo'))
+      // full model: more accurate for Telugu/Hindi than the turbo version
+      fd.append('model', env('GROQ_STT_MODEL', 'whisper-large-v3'))
       fd.append('response_format', 'json')
       fd.append('temperature', '0')
       if (prompt) fd.append('prompt', prompt.slice(0, 200))
@@ -315,6 +378,13 @@ Deno.serve(async (req) => {
 
     const { task = 'chat', input = '', messages = [], stream: wantStreamRaw = false, fast: wantFast = false, image = '', audio = '' } =
       (await req.json().catch(() => ({}))) as { task?: string; input?: string; messages?: InMsg[]; stream?: boolean; fast?: boolean; image?: string; audio?: string }
+
+    // Leo Live voice — text -> spoken audio (WAV data URL).
+    if (task === 'speak') {
+      const audioUrl = await speakAudio(String(input || '').trim())
+      if (!audioUrl) return json({ error: 'Voice unavailable', fallback: true }, 503)
+      return json({ audio: audioUrl, task })
+    }
 
     // Leo Live speech-to-text — a short voice clip as a data URL.
     if (task === 'transcribe') {
@@ -483,6 +553,7 @@ Deno.serve(async (req) => {
       const encoder = new TextEncoder()
       let sseBuf = ''
       let startedContent = false
+      let emitted = 0
       // Process one SSE line. When emit=true we forward its content delta; the
       // trailing (still-partial) buffer is peeked with emit=false so we can spot
       // a completion signal without double-emitting when the frame completes.
@@ -498,7 +569,7 @@ Deno.serve(async (req) => {
           if (emit) {
             // strip any reasoning-model <think> markers if a model emits them
             const delta = String(choice?.delta?.content ?? '').replace(/<\/?think>/gi, '')
-            if (delta) { controller.enqueue(encoder.encode(delta)); startedContent = true }
+            if (delta) { controller.enqueue(encoder.encode(delta)); startedContent = true; emitted++ }
           }
           // close as soon as the model signals completion — some NIM endpoints
           // never send [DONE] and hold the connection open until the worker limit
@@ -509,25 +580,33 @@ Deno.serve(async (req) => {
       const out = new ReadableStream({
         async pull(controller) {
           try {
-            // Wait patiently for the FIRST token (a cold model can take ~1min),
-            // but once tokens are flowing a multi-second gap means the endpoint
-            // finished and just isn't closing — so we close it ourselves.
-            const idleMs = startedContent ? 6000 : 140000
-            let timer: number | undefined
-            const idle = new Promise((res) => { timer = setTimeout(() => res('IDLE'), idleMs) })
-            const result: any = await Promise.race([reader.read(), idle])
-            clearTimeout(timer)
-            if (result === 'IDLE') { controller.close(); try { await reader.cancel() } catch { /* noop */ } return }
-            if (result.done) { controller.close(); return }
-            sseBuf += decoder.decode(result.value, { stream: true })
-            const lines = sseBuf.split('\n')
-            sseBuf = lines.pop() ?? '' // keep the trailing partial line for next read
-            for (const line of lines) {
-              if (handleLine(line, true, controller)) { controller.close(); return }
+            // Keep reading until at least one text delta was forwarded (or the
+            // stream ends). A pull that enqueues nothing is NOT called again by
+            // the stream, so returning early on a chunk with no visible text —
+            // e.g. the "reasoning" chunks thinking models (gpt-oss, Nemotron)
+            // send before the answer — would hang the reply forever.
+            const before = emitted
+            while (emitted === before) {
+              // Wait patiently for the FIRST token (a cold model can take ~1min),
+              // but once tokens are flowing a multi-second gap means the endpoint
+              // finished and just isn't closing — so we close it ourselves.
+              const idleMs = startedContent ? 6000 : 140000
+              let timer: number | undefined
+              const idle = new Promise((res) => { timer = setTimeout(() => res('IDLE'), idleMs) })
+              const result: any = await Promise.race([reader.read(), idle])
+              clearTimeout(timer)
+              if (result === 'IDLE') { controller.close(); try { await reader.cancel() } catch { /* noop */ } return }
+              if (result.done) { controller.close(); return }
+              sseBuf += decoder.decode(result.value, { stream: true })
+              const lines = sseBuf.split('\n')
+              sseBuf = lines.pop() ?? '' // keep the trailing partial line for next read
+              for (const line of lines) {
+                if (handleLine(line, true, controller)) { controller.close(); return }
+              }
+              // terminal frame may arrive without its trailing newline (stuck in
+              // sseBuf) — peek for a completion signal so we don't hang waiting
+              if (handleLine(sseBuf, false, controller)) { controller.close(); return }
             }
-            // terminal frame may arrive without its trailing newline (stuck in
-            // sseBuf) — peek for a completion signal so we don't hang waiting
-            if (handleLine(sseBuf, false, controller)) { controller.close(); return }
           } catch (e) {
             controller.error(e)
           }
