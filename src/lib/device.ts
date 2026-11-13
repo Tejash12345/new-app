@@ -43,7 +43,7 @@ export const LEAVES_APP = new Set([
   'open_app', 'call', 'sms', 'whatsapp', 'settings', 'youtube', 'music', 'maps', 'web', 'camera',
   'video', 'url', 'email', 'calendar', 'share',
   'power_menu', 'lock', 'screenshot', 'home', 'back', 'recents', 'notifications', 'quick_settings',
-  'send_whatsapp', 'close_app', 'open_focuslion', // these switch away from FocusLion
+  'send_whatsapp', 'close_app', 'open_focuslion', 'send_bulk', // these switch away from FocusLion
 ])
 
 // ---- Leo settings (per device, user-controlled) ----
@@ -59,10 +59,19 @@ export type LeoPrefs = {
 }
 const PREFS_KEY = 'fl:leo-prefs'
 export const LEO_PREFS_EVENT = 'focuslion:leo-prefs'
-const DEFAULT_PREFS: LeoPrefs = { enabled: true, handsFree: true, aiVoice: true, briefing: true, phoneControl: true, heyLeo: false, bubble: false, confirmSend: true }
+const DEFAULT_PREFS: LeoPrefs = { enabled: true, handsFree: true, aiVoice: true, briefing: true, phoneControl: true, heyLeo: false, bubble: false, confirmSend: false }
 
 export function leoPrefs(): LeoPrefs {
   try {
+    // one-time update (v1.7.80): sending became automatic by default — older
+    // saved settings still carry the previous "confirm: on" default
+    if (!localStorage.getItem('fl:leo-prefs-v2')) {
+      localStorage.setItem('fl:leo-prefs-v2', '1')
+      const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+      if (saved && typeof saved === 'object' && 'confirmSend' in saved) {
+        localStorage.setItem(PREFS_KEY, JSON.stringify({ ...saved, confirmSend: false }))
+      }
+    }
     const legacyHands = localStorage.getItem('fl:leo-handsfree')
     const base = { ...DEFAULT_PREFS, ...(legacyHands === '0' ? { handsFree: false } : {}) }
     return { ...base, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }

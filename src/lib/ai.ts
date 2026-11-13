@@ -147,7 +147,8 @@ export async function askLionStream(
 // ---- Leo Live (voice assistant) ----
 
 /** Speech-to-text: a recorded clip (data URL) -> what the user said. */
-export const transcribeVoice = (audio: string) => askLion({ task: 'transcribe', audio })
+/** `hint` = words likely to be said (names, skills) — Whisper spells them right. */
+export const transcribeVoice = (audio: string, hint = '') => askLion({ task: 'transcribe', audio, input: hint })
 
 /**
  * Leo's natural AI voice (Gemini TTS) for a reply. Resolves to a playable

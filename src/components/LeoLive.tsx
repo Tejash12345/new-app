@@ -62,6 +62,8 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   const phaseRef = useRef<Phase>('idle')
   useEffect(() => { phaseRef.current = phase }, [phase])
   const micRetryRef = useRef(0)
+  // Leo-only window: keep listening hands-free, but close after ~25 s of silence
+  const idleSinceRef = useRef(Date.now())
   const [lines, setLines] = useState<Line[]>([])
   const [error, setError] = useState('')
   const [typed, setTyped] = useState('')
@@ -276,6 +278,12 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
     deferredRef.current = [] // never carry phone actions over from an earlier turn
     const q = text.trim()
     if (!q) { setPhase('idle'); return }
+    // just "Hey Leo" again while Leo is open -> an instant "Yes?" and keep listening
+    if (/^(hey|hi|ok|okay|hello)?\s*leo[\s.!?,]*$/i.test(q)) {
+      setLines((l) => [...l, { who: 'leo', text: "Yes? I'm listening." }])
+      await speakOut('Yes?', 'en')
+      return
+    }
     // "bye" / "that's all" — say goodbye and close (works offline, no AI)
     if (BYE.test(q)) {
       setLines((l) => [...l, { who: 'you', text: q }, { who: 'leo', text: 'Bye! Say "Hey Leo" or tap me anytime. 🦁' }])
@@ -377,7 +385,7 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
    */
   async function speakOut(text: string, lang: string) {
     const gen = ++speakGen.current
-    const url = leoPrefs().aiVoice ? await leoVoice(text) : null
+    const url = leoPrefs().aiVoice && text.length > 14 ? await leoVoice(text) : null // tiny replies: instant phone voice
     if (gen !== speakGen.current) return // stopped or superseded meanwhile
     if (url) {
       const a = new Audio(url)
@@ -411,7 +419,7 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
     }
     setPhase((p) => {
       if (p !== 'speaking') return p
-      if (openRef.current && handsFreeRef.current) setTimeout(() => { if (openRef.current) startRef.current() }, 350)
+      if (openRef.current && (handsFreeRef.current || standalone)) { idleSinceRef.current = Date.now(); setTimeout(() => { if (openRef.current) startRef.current() }, 300) }
       return 'idle'
     })
   }
@@ -456,9 +464,20 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
       const clip = await l.done
       listenerRef.current = null
       setLevel(0)
-      if (!clip.spoke) { setPhase('idle'); return }
+      if (!clip.spoke) {
+        setPhase('idle')
+        if (standalone && openRef.current) {
+          if (Date.now() - idleSinceRef.current < 25_000) setTimeout(() => { if (openRef.current && phaseRef.current === 'idle') void startRef.current() }, 150)
+          else close() // quiet for a while: step aside so "Hey Leo" works again
+        }
+        return
+      }
+      idleSinceRef.current = Date.now()
       setPhase('thinking')
-      const text = await transcribeVoice(clip.dataUrl)
+      // vocabulary hint: Leo's name, apps and the user's own skill phrases
+      const hint = ['Hey Leo', 'FocusLion', 'WhatsApp', 'YouTube', 'Instagram', 'study mode', 'exam mode', 'focus mode',
+        ...loadSkills().map((k) => k.phrase)].join(', ').slice(0, 200)
+      const text = await transcribeVoice(clip.dataUrl, hint)
       if (!openRef.current) return
       if (!text) { setError("I didn't catch that — try again."); setPhase('idle'); return }
       await think(text)
@@ -551,10 +570,13 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   useEffect(() => {
     if (!user || !prefs.enabled) return
     let tries = 0
+    let waits = 0
     const pull = () => {
       if (document.visibilityState !== 'visible') return
       if (!hasPhonePowers()) { if (tries++ < 6) setTimeout(pull, 1000); return } // bridge not ready yet
+      idleSinceRef.current = Date.now()
       void phone('take_wake', {}, 3000).then((r) => {
+        if (!r.ok && r.msg === 'wait' && waits++ < 25) { setTimeout(pull, 300); return } // still hearing the command
         if (r.ok) wakeRef.current(r.msg === 'none' ? '' : r.msg)
         // the Leo-only pop-up always starts listening by itself — no tap needed
         else if (standalone && phaseRef.current === 'idle') wakeRef.current('')
