@@ -74,7 +74,10 @@ export function InstallPage() {
             </Button>
           </a>
           <p className="mt-2 text-xs text-slate-400">
-            Android asks to allow "Install unknown apps" the first time — tap Allow, then Install.
+            About 32 MB. Android asks to allow "Install unknown apps" the first time — tap Allow, then Install.
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            “Package appears to be invalid”? The download didn't finish — delete it from Downloads and download again on Wi-Fi.
           </p>
           <p className="mt-2 text-center text-[11px] font-semibold text-slate-400">Version {APP_VERSION}</p>
 
