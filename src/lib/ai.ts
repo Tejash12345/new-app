@@ -155,7 +155,7 @@ export const transcribeVoice = (audio: string, hint = '') => askLion({ task: 'tr
  * audio data URL, or null if it's unavailable/slow — callers then fall back
  * to the phone's built-in voice.
  */
-export async function leoVoice(text: string, timeoutMs = 9000): Promise<string | null> {
+export async function leoVoice(text: string, timeoutMs = 3500): Promise<string | null> {
   try {
     const call = supabase.functions.invoke('lion-ai', { body: { task: 'speak', input: text } })
     const timer = new Promise<null>((res) => setTimeout(() => res(null), timeoutMs))

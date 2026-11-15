@@ -66,6 +66,11 @@ export function offlineThink(raw: string): LeoReply | null {
       level: t.match(/(\d{1,3})/)?.[1] ?? (has(t, 'down', 'dim', 'low') ? 'down' : has(t, 'max', 'full') ? 'max' : 'up'),
     })])
 
+  // ---- clear memory / forget all ----
+  if (has(t, /\b(clear|reset|forget|delete)\s*(all|everything|leo['’]?s?\s*memory|memory|skills)\b/)) {
+    return reply("Memory cleared! I've forgotten all saved facts and custom skills.", [{ type: 'phone', do: 'clear_memory' } as LeoAction])
+  }
+
   // ---- alarms off / messages ----
   if (has(t, /\b(turn|switch) off (the |my )?alarms?\b/, /\b(stop|dismiss|cancel) (the |my )?alarms?\b/, /^alarm off$/))
     return reply('Alarm off.', [phoneA('alarm_off', { label: has(t, /\ball alarms\b/) ? 'all' : '' })])

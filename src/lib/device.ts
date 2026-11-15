@@ -85,7 +85,14 @@ export function setLeoPrefs(patch: Partial<LeoPrefs>) {
 }
 
 export function clearLeoBrain() {
-  try { localStorage.removeItem('fl:leo-memory'); localStorage.removeItem('fl:leo-skills') } catch { /* ignore */ }
+  try {
+    localStorage.removeItem('fl:leo-memory')
+    localStorage.removeItem('fl:leo-skills')
+    localStorage.removeItem('fl:leo-brief-day')
+  } catch { /* ignore */ }
+}
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { clearLeoBrain?: () => void }).clearLeoBrain = clearLeoBrain
 }
 
 // ---- Leo's learned skills: "when I say X, do Y" (kept on this device) ----

@@ -283,6 +283,10 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
         } else if (a.type === 'phone' && typeof a.do === 'string') {
           const { type: _t, do: act, ...rawArgs } = a
           void _t
+          if (act === 'clear_memory') {
+            clearLeoBrain()
+            done.push('Memory and taught skills cleared')
+          }
           // calls are always placed directly ("call Ravi" = it rings, no tap)
           const args = act === 'call' ? { ...rawArgs, direct: true } : rawArgs
           // remember the last message (for "send one more message", "send it again", "tell him also…")
@@ -325,6 +329,12 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
       setLines((l) => [...l, { who: 'you', text: q }, { who: 'leo', text: 'Bye! Say "Hey Leo" or tap me anytime. 🦁' }])
       closeAfterSpeakRef.current = true
       await speakOut('Bye! Call me anytime.', 'en')
+      return
+    }
+    if (/\b(clear|reset|forget)\s*(all|everything|leo['’]?s?\s*memory|memory|skills)\b/i.test(q)) {
+      clearLeoBrain()
+      setLines((l) => [...l, { who: 'you', text: q }, { who: 'leo', text: "Memory cleared! I've forgotten all saved facts and custom skills. 🦁" }])
+      await speakOut("Memory cleared! I've forgotten all saved facts and custom skills.", 'en')
       return
     }
     setLines((l) => [...l, { who: 'you', text: q }])
@@ -683,10 +693,15 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
       }
       void (async () => {
         let text = ''
-        try {
-          const vocab = ['Hey Leo', 'WhatsApp', 'YouTube', 'Instagram', 'reels', 'shorts', ...loadSkills().map((k) => k.phrase)].join(', ').slice(0, 200)
-          text = (await transcribeVoice(clip, vocab)).trim()
-        } catch { log('Whisper unreachable — using what the phone heard') }
+        const phoneSure = hint.trim() !== '' && conf >= 0.70
+        if (phoneSure) {
+          text = hint.trim()
+        } else {
+          try {
+            const vocab = ['Hey Leo', 'WhatsApp', 'YouTube', 'Instagram', 'reels', 'shorts', ...loadSkills().map((k) => k.phrase)].join(', ').slice(0, 200)
+            text = (await transcribeVoice(clip, vocab)).trim()
+          } catch { log('Whisper unreachable — using what the phone heard') }
+        }
         if (gen !== audioGenRef.current) return // a newer command arrived meanwhile
         // Whisper INVENTS text on (near-)silence: "Thank you.", "All rights reserved"
         // in Polish, a Japanese syllable… Treat that as "Whisper heard nothing".
@@ -696,7 +711,6 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           /wszelkie prawa|subtitles by|amara\.org|продолжение следует|ご視聴|字幕/i.test(text) ||
           // only English / Hindi / Telugu are expected — another script means it was made up
           /[^\p{Script=Latin}\p{Script=Devanagari}\p{Script=Telugu}\p{N}\p{P}\p{S}\s]/u.test(text)
-        const phoneSure = hint.trim() !== '' && conf >= 0.85
         const m = junk ? null : /(?:^|[^a-z])(?:(?:hey|hi|hay|ok|okay|hello)[\s,]*)?(?:leo|lio|liyo|leyo|cleo|leon|neo)\b|లియో|लियो/i.exec(text)
         if (m) {
           text = text.slice(m.index + m[0].length).replace(/^[\s,.!?:;-]+/, '').trim()
@@ -704,7 +718,7 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           text = text.trim() // Whisper missed "Leo" but heard real words: use them
         } else if (hint.trim() && (phoneSure || !media)) {
           // Whisper heard nothing useful: the phone heard the command clearly — use that
-          if (raw) log(`Whisper unclear ("${raw.slice(0, 30)}") — using the phone's words`)
+          if (raw && raw !== hint) log(`Whisper unclear ("${raw.slice(0, 30)}") — using the phone's words`)
           text = hint.trim()
         } else if (media) {
           log(`ignored: no "Leo" in "${raw.slice(0, 40)}" (media playing)`); doneSilently(); return
@@ -726,6 +740,7 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           log('done on the phone')
           setLines((l) => [...l, { who: 'you', text }])
           setPhase('idle')
+          doneSilently()
           return
         }
         log('Leo is answering')
