@@ -694,8 +694,12 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           // the clip starts with "Hey Leo": Whisper must hear it too, or it was a false
           // wake (a video / someone else) — then do nothing
           const m = /(?:^|[^a-z])(?:(?:hey|hi|hay|ok|okay|hello)[\s,]*)?(?:leo|lio|liyo|leyo|cleo|leon|neo)\b|లియో|लियो/i.exec(text)
-          if (!m) { log(`ignored: no "Leo" in "${text.slice(0, 40)}"`); doneSilently(); return }
-          text = text.slice(m.index + m[0].length).replace(/^[\s,.!?:;-]+/, '').trim()
+          if (m) text = text.slice(m.index + m[0].length).replace(/^[\s,.!?:;-]+/, '').trim()
+          // no "Leo" in Whisper's text: while a video/song plays it was most likely the
+          // video — ignore it; otherwise trust the phone's wake word and use the words
+          else if (media) { log(`ignored: no "Leo" in "${text.slice(0, 40)}" (media playing)`); doneSilently(); return }
+          // a single junk syllable ("out", "あ") means Whisper got almost nothing: use the phone's text
+          if (!m && text.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(' ').length < 2) text = hint.trim()
         } else {
           text = hint.trim() // no answer from the internet: what the phone heard offline
         }
