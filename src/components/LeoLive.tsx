@@ -665,10 +665,10 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   // here and is handled without the window coming back up (answer + action)
   // …or as the recorded audio of the command: Whisper (cloud) hears it far better
   // than the phone's small offline recognizer, then it runs like any command
-  const wakeAudioRef = useRef<(clip: string, hint: string) => void>(() => {})
+  const wakeAudioRef = useRef<(clip: string, hint: string, media?: boolean) => void>(() => {})
   const audioGenRef = useRef(0)
   useEffect(() => {
-    wakeAudioRef.current = (clip, hint) => {
+    wakeAudioRef.current = (clip, hint, media = false) => {
       const gen = ++audioGenRef.current
       openRef.current = true
       setOpen(true)
@@ -689,8 +689,22 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
         if (gen !== audioGenRef.current) return // a newer command arrived meanwhile
         // Whisper invents these on near-silence
         if (/^(thank you|thanks for watching|thank you for watching|you|bye|\.|okay)[.!]*$/i.test(text)) text = ''
-        text = (text || hint).replace(/^\s*(hey|hi|ok|okay|hello)?\s*,?\s*(leo|lio|liyo)\b[\s,.!]*/i, '').trim()
-        if (!text) { doneSilently(); return }
+        if (text) {
+          // the clip starts with "Hey Leo": Whisper must hear it too, or it was a false
+          // wake (a video / someone else) — then do nothing
+          const m = /(?:^|[^a-z])(?:(?:hey|hi|hay|ok|okay|hello)[\s,]*)?(?:leo|lio|liyo|leyo|cleo|leon|neo)\b|లియో|लियो/i.exec(text)
+          if (!m) { doneSilently(); return }
+          text = text.slice(m.index + m[0].length).replace(/^[\s,.!?:;-]+/, '').trim()
+        } else {
+          text = hint.trim() // no answer from the internet: what the phone heard offline
+        }
+        if (!text) {
+          // just "Hey Leo": come up and listen (not while a video plays — likely the video)
+          if (media) { doneSilently(); return }
+          setPhase('idle')
+          ;(window as Window & { FLLeo?: { postMessage: (m: string) => void } }).FLLeo?.postMessage('show')
+          return
+        }
         // simple phone/screen commands ("scroll down", "open reels") run right away on the phone
         const q = await phone('quick', { text }, 4000)
         if (gen !== audioGenRef.current) return
@@ -705,9 +719,9 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   })
   useEffect(() => {
     if (!standalone) return
-    const w = window as Window & { __flWake?: (rest: string) => void; __flWakeAudio?: (clip: string, hint: string) => void }
+    const w = window as Window & { __flWake?: (rest: string) => void; __flWakeAudio?: (clip: string, hint: string, media?: boolean) => void }
     w.__flWake = (rest) => wakeRef.current(rest)
-    w.__flWakeAudio = (clip, hint) => wakeAudioRef.current(clip, hint)
+    w.__flWakeAudio = (clip, hint, media) => wakeAudioRef.current(clip, hint, media)
     return () => { delete w.__flWake; delete w.__flWakeAudio }
   }, [standalone])
 
