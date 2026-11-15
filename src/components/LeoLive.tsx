@@ -665,10 +665,10 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   // here and is handled without the window coming back up (answer + action)
   // …or as the recorded audio of the command: Whisper (cloud) hears it far better
   // than the phone's small offline recognizer, then it runs like any command
-  const wakeAudioRef = useRef<(clip: string, hint: string, media?: boolean) => void>(() => {})
+  const wakeAudioRef = useRef<(clip: string, hint: string, media?: boolean, conf?: number) => void>(() => {})
   const audioGenRef = useRef(0)
   useEffect(() => {
-    wakeAudioRef.current = (clip, hint, media = false) => {
+    wakeAudioRef.current = (clip, hint, media = false, conf = 0) => {
       const gen = ++audioGenRef.current
       openRef.current = true
       setOpen(true)
@@ -688,20 +688,28 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           text = (await transcribeVoice(clip, vocab)).trim()
         } catch { log('Whisper unreachable — using what the phone heard') }
         if (gen !== audioGenRef.current) return // a newer command arrived meanwhile
-        // Whisper invents these on near-silence
-        if (/^(thank you|thanks for watching|thank you for watching|you|bye|\.|okay)[.!]*$/i.test(text)) text = ''
-        if (text) {
-          // the clip starts with "Hey Leo": Whisper must hear it too, or it was a false
-          // wake (a video / someone else) — then do nothing
-          const m = /(?:^|[^a-z])(?:(?:hey|hi|hay|ok|okay|hello)[\s,]*)?(?:leo|lio|liyo|leyo|cleo|leon|neo)\b|లియో|लियो/i.exec(text)
-          if (m) text = text.slice(m.index + m[0].length).replace(/^[\s,.!?:;-]+/, '').trim()
-          // no "Leo" in Whisper's text: while a video/song plays it was most likely the
-          // video — ignore it; otherwise trust the phone's wake word and use the words
-          else if (media) { log(`ignored: no "Leo" in "${text.slice(0, 40)}" (media playing)`); doneSilently(); return }
-          // a single junk syllable ("out", "あ") means Whisper got almost nothing: use the phone's text
-          if (!m && text.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(' ').length < 2) text = hint.trim()
+        // Whisper INVENTS text on (near-)silence: "Thank you.", "All rights reserved"
+        // in Polish, a Japanese syllable… Treat that as "Whisper heard nothing".
+        const raw = text
+        const junk = !text ||
+          /^(thank you|thanks for watching|thank you for watching|you|bye|\.|okay|i'?m|out|so|yeah|oh)[.!]*$/i.test(text) ||
+          /wszelkie prawa|subtitles by|amara\.org|продолжение следует|ご視聴|字幕/i.test(text) ||
+          // only English / Hindi / Telugu are expected — another script means it was made up
+          /[^\p{Script=Latin}\p{Script=Devanagari}\p{Script=Telugu}\p{N}\p{P}\p{S}\s]/u.test(text)
+        const phoneSure = hint.trim() !== '' && conf >= 0.85
+        const m = junk ? null : /(?:^|[^a-z])(?:(?:hey|hi|hay|ok|okay|hello)[\s,]*)?(?:leo|lio|liyo|leyo|cleo|leon|neo)\b|లియో|लियो/i.exec(text)
+        if (m) {
+          text = text.slice(m.index + m[0].length).replace(/^[\s,.!?:;-]+/, '').trim()
+        } else if (!junk && !media && text.trim().split(/\s+/).length >= 2) {
+          text = text.trim() // Whisper missed "Leo" but heard real words: use them
+        } else if (hint.trim() && (phoneSure || !media)) {
+          // Whisper heard nothing useful: the phone heard the command clearly — use that
+          if (raw) log(`Whisper unclear ("${raw.slice(0, 30)}") — using the phone's words`)
+          text = hint.trim()
+        } else if (media) {
+          log(`ignored: no "Leo" in "${raw.slice(0, 40)}" (media playing)`); doneSilently(); return
         } else {
-          text = hint.trim() // no answer from the internet: what the phone heard offline
+          text = ''
         }
         if (!text) {
           // just "Hey Leo": come up and listen (not while a video plays — likely the video)
@@ -727,9 +735,9 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   })
   useEffect(() => {
     if (!standalone) return
-    const w = window as Window & { __flWake?: (rest: string) => void; __flWakeAudio?: (clip: string, hint: string, media?: boolean) => void }
+    const w = window as Window & { __flWake?: (rest: string) => void; __flWakeAudio?: (clip: string, hint: string, media?: boolean, conf?: number) => void }
     w.__flWake = (rest) => wakeRef.current(rest)
-    w.__flWakeAudio = (clip, hint, media) => wakeAudioRef.current(clip, hint, media)
+    w.__flWakeAudio = (clip, hint, media, conf) => wakeAudioRef.current(clip, hint, media, conf)
     return () => { delete w.__flWake; delete w.__flWakeAudio }
   }, [standalone])
 

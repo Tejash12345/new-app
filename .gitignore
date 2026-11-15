@@ -36,3 +36,7 @@ _city-*.png
 
 .vercel
 .env*
+ 
+# Local agent state
+.claude/
+scratchpad/
