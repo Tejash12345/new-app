@@ -678,7 +678,7 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
   const wakeAudioRef = useRef<(clip: string, hint: string, media?: boolean, conf?: number) => void>(() => {})
   const audioGenRef = useRef(0)
   useEffect(() => {
-    wakeAudioRef.current = (clip, hint, media = false, conf = 0) => {
+    wakeAudioRef.current = (clip, hint, media = false, _conf = 0) => {
       const gen = ++audioGenRef.current
       openRef.current = true
       setOpen(true)
@@ -693,14 +693,14 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
       }
       void (async () => {
         let text = ''
-        const phoneSure = hint.trim() !== '' && conf >= 0.70
-        if (phoneSure) {
+        try {
+          const vocab = ['Hey Leo', 'WhatsApp', 'YouTube', 'Instagram', 'reels', 'shorts', 'clear memory', ...loadSkills().map((k) => k.phrase)].join(', ').slice(0, 200)
+          text = (await transcribeVoice(clip, vocab)).trim()
+        } catch {
+          log('Whisper unreachable — using what the phone heard')
+        }
+        if (!text && hint.trim()) {
           text = hint.trim()
-        } else {
-          try {
-            const vocab = ['Hey Leo', 'WhatsApp', 'YouTube', 'Instagram', 'reels', 'shorts', ...loadSkills().map((k) => k.phrase)].join(', ').slice(0, 200)
-            text = (await transcribeVoice(clip, vocab)).trim()
-          } catch { log('Whisper unreachable — using what the phone heard') }
         }
         if (gen !== audioGenRef.current) return // a newer command arrived meanwhile
         // Whisper INVENTS text on (near-)silence: "Thank you.", "All rights reserved"
@@ -716,7 +716,7 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           text = text.slice(m.index + m[0].length).replace(/^[\s,.!?:;-]+/, '').trim()
         } else if (!junk && !media && text.trim().split(/\s+/).length >= 2) {
           text = text.trim() // Whisper missed "Leo" but heard real words: use them
-        } else if (hint.trim() && (phoneSure || !media)) {
+        } else if (hint.trim() && !media) {
           // Whisper heard nothing useful: the phone heard the command clearly — use that
           if (raw && raw !== hint) log(`Whisper unclear ("${raw.slice(0, 30)}") — using the phone's words`)
           text = hint.trim()
