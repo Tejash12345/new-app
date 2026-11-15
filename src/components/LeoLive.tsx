@@ -675,6 +675,7 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
       stopSpeaking()
       deferredRef.current = []
       setPhase('thinking')
+      const log = (m: string) => (window as Window & { FLLeo?: { postMessage: (m: string) => void } }).FLLeo?.postMessage('log:' + m)
       const doneSilently = () => {
         setPhase('idle')
         // nothing will be said: tell the phone so music/video resumes right away
@@ -685,7 +686,7 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
         try {
           const vocab = ['Hey Leo', 'WhatsApp', 'YouTube', 'Instagram', 'reels', 'shorts', ...loadSkills().map((k) => k.phrase)].join(', ').slice(0, 200)
           text = (await transcribeVoice(clip, vocab)).trim()
-        } catch { /* offline / busy: use what the phone heard */ }
+        } catch { log('Whisper unreachable — using what the phone heard') }
         if (gen !== audioGenRef.current) return // a newer command arrived meanwhile
         // Whisper invents these on near-silence
         if (/^(thank you|thanks for watching|thank you for watching|you|bye|\.|okay)[.!]*$/i.test(text)) text = ''
@@ -693,14 +694,14 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
           // the clip starts with "Hey Leo": Whisper must hear it too, or it was a false
           // wake (a video / someone else) — then do nothing
           const m = /(?:^|[^a-z])(?:(?:hey|hi|hay|ok|okay|hello)[\s,]*)?(?:leo|lio|liyo|leyo|cleo|leon|neo)\b|లియో|लियो/i.exec(text)
-          if (!m) { doneSilently(); return }
+          if (!m) { log(`ignored: no "Leo" in "${text.slice(0, 40)}"`); doneSilently(); return }
           text = text.slice(m.index + m[0].length).replace(/^[\s,.!?:;-]+/, '').trim()
         } else {
           text = hint.trim() // no answer from the internet: what the phone heard offline
         }
         if (!text) {
           // just "Hey Leo": come up and listen (not while a video plays — likely the video)
-          if (media) { doneSilently(); return }
+          if (media) { log('only "Hey Leo" while media plays — ignored'); doneSilently(); return }
           setPhase('idle')
           ;(window as Window & { FLLeo?: { postMessage: (m: string) => void } }).FLLeo?.postMessage('show')
           return
@@ -708,11 +709,14 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
         // simple phone/screen commands ("scroll down", "open reels") run right away on the phone
         const q = await phone('quick', { text }, 4000)
         if (gen !== audioGenRef.current) return
+        log(`heard "${text.slice(0, 50)}"`)
         if (q.ok) {
+          log('done on the phone')
           setLines((l) => [...l, { who: 'you', text }])
           setPhase('idle')
           return
         }
+        log('Leo is answering')
         await thinkRef.current(text)
       })()
     }
