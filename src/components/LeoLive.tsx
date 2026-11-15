@@ -928,10 +928,15 @@ export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurn
   const [cleared, setCleared] = useState(false)
   // live "Hey Leo" health (Android app): listening / downloading / blocked…
   const [wakeStatus, setWakeStatus] = useState('')
+  const [leoLog, setLeoLog] = useState('')
   useEffect(() => {
     if (!p.heyLeo || !hasPhonePowers()) return
     let alive = true
-    const check = () => { void phone('leo_status', {}, 3000).then((r) => { if (alive) setWakeStatus(r.msg) }) }
+    const check = () => { void phone('leo_status', {}, 3000).then((r) => {
+      if (!alive) return
+      setWakeStatus(r.msg)
+      setLeoLog(String((r as unknown as { leoLog?: string }).leoLog ?? ''))
+    }) }
     const t0 = setTimeout(check, 800)
     const t = setInterval(check, 4000)
     return () => { alive = false; clearTimeout(t0); clearInterval(t) }
@@ -982,6 +987,14 @@ export function LeoSettingsPanel({ dark, onTurnedOff }: { dark?: boolean; onTurn
           ? 'bg-emerald-400/15 text-emerald-400' : 'bg-amber-400/15 text-amber-500')}>
           "Hey Leo" status: {wakeStatus}
         </div>
+      )}
+      {p.heyLeo && leoLog && (
+        <details className="mx-3 rounded-xl">
+          <summary className={cn('cursor-pointer py-2 text-sm font-semibold', dark ? 'text-sky-200' : 'text-slate-700 dark:text-slate-200')}>
+            Leo log (newest first)
+          </summary>
+          <pre className={cn('max-h-64 overflow-auto whitespace-pre-wrap rounded-xl p-2 text-[11px] leading-snug', dark ? 'bg-black/30 text-white/80' : 'bg-slate-500/10 text-slate-700 dark:text-slate-200')}>{leoLog}</pre>
+        </details>
       )}
       <button onClick={() => { clearLeoBrain(); setCleared(true) }}
         className={cn('w-full rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-rose-400', dark ? 'hover:bg-white/5' : 'hover:bg-rose-500/5')}>
