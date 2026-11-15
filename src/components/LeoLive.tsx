@@ -663,11 +663,52 @@ export function LeoLive({ standalone = false }: { standalone?: boolean } = {}) {
 
   // Leo-only window kept in the background: later "Hey Leo, <command>" arrives
   // here and is handled without the window coming back up (answer + action)
+  // …or as the recorded audio of the command: Whisper (cloud) hears it far better
+  // than the phone's small offline recognizer, then it runs like any command
+  const wakeAudioRef = useRef<(clip: string, hint: string) => void>(() => {})
+  const audioGenRef = useRef(0)
+  useEffect(() => {
+    wakeAudioRef.current = (clip, hint) => {
+      const gen = ++audioGenRef.current
+      openRef.current = true
+      setOpen(true)
+      stopSpeaking()
+      deferredRef.current = []
+      setPhase('thinking')
+      const doneSilently = () => {
+        setPhase('idle')
+        // nothing will be said: tell the phone so music/video resumes right away
+        ;(window as Window & { FLLeo?: { postMessage: (m: string) => void } }).FLLeo?.postMessage('spoke_end')
+      }
+      void (async () => {
+        let text = ''
+        try {
+          const vocab = ['Hey Leo', 'WhatsApp', 'YouTube', 'Instagram', 'reels', 'shorts', ...loadSkills().map((k) => k.phrase)].join(', ').slice(0, 200)
+          text = (await transcribeVoice(clip, vocab)).trim()
+        } catch { /* offline / busy: use what the phone heard */ }
+        if (gen !== audioGenRef.current) return // a newer command arrived meanwhile
+        // Whisper invents these on near-silence
+        if (/^(thank you|thanks for watching|thank you for watching|you|bye|\.|okay)[.!]*$/i.test(text)) text = ''
+        text = (text || hint).replace(/^\s*(hey|hi|ok|okay|hello)?\s*,?\s*(leo|lio|liyo)\b[\s,.!]*/i, '').trim()
+        if (!text) { doneSilently(); return }
+        // simple phone/screen commands ("scroll down", "open reels") run right away on the phone
+        const q = await phone('quick', { text }, 4000)
+        if (gen !== audioGenRef.current) return
+        if (q.ok) {
+          setLines((l) => [...l, { who: 'you', text }])
+          setPhase('idle')
+          return
+        }
+        await thinkRef.current(text)
+      })()
+    }
+  })
   useEffect(() => {
     if (!standalone) return
-    const w = window as Window & { __flWake?: (rest: string) => void }
+    const w = window as Window & { __flWake?: (rest: string) => void; __flWakeAudio?: (clip: string, hint: string) => void }
     w.__flWake = (rest) => wakeRef.current(rest)
-    return () => { delete w.__flWake }
+    w.__flWakeAudio = (clip, hint) => wakeAudioRef.current(clip, hint)
+    return () => { delete w.__flWake; delete w.__flWakeAudio }
   }, [standalone])
 
   // full app: the Leo-only window asked to open a FocusLion page ("open my tasks")
